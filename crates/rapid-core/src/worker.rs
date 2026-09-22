@@ -1,4 +1,4 @@
-﻿use crate::error::{RapidError, Result};
+use crate::error::{RapidError, Result};
 use crate::types::Segment;
 use futures_util::StreamExt;
 use reqwest::header::RANGE;
@@ -25,6 +25,8 @@ impl DownloadWorker {
         progress_tx: UnboundedSender<(usize, u64)>,
         cancel_token: CancellationToken,
         use_range: bool,
+        cookies: Option<String>,
+        referrer: Option<String>,
     ) -> Result<()> {
         let (seg_index, start_byte, end_byte, mut downloaded) = {
             let s = segment.lock().await;
@@ -72,6 +74,18 @@ impl DownloadWorker {
             }
 
             let mut req = client.get(&url);
+
+            if let Some(ref c) = cookies {
+                if let Ok(c_val) = reqwest::header::HeaderValue::from_str(c) {
+                    req = req.header(reqwest::header::COOKIE, c_val);
+                }
+            }
+
+            if let Some(ref r) = referrer {
+                if let Ok(r_val) = reqwest::header::HeaderValue::from_str(r) {
+                    req = req.header(reqwest::header::REFERER, r_val);
+                }
+            }
 
             if use_range && end_byte > 0 {
                 let range_val = format!("bytes={}-{}", current_offset, end_byte);

@@ -1,4 +1,4 @@
-﻿use crate::error::{RapidError, Result};
+use crate::error::{RapidError, Result};
 use crate::probe::Probe;
 use crate::segment::SegmentPlanner;
 use crate::types::{
@@ -32,7 +32,9 @@ impl DownloadTask {
     pub async fn create(id: String, mut config: DownloadConfig) -> Result<Self> {
         let is_gdrive = config.is_gdrive
             || config.url.contains("drive.google.com")
-            || config.url.contains("googleusercontent.com");
+            || config.url.contains("googleusercontent.com")
+            || config.url.contains("usercontent.google.com")
+            || config.url.contains("docs.google.com");
         config.is_gdrive = is_gdrive;
         if is_gdrive {
             config.num_segments = 1;
@@ -194,9 +196,11 @@ impl DownloadTask {
                 let tx = chunk_tx.clone();
                 let token = self.cancel_token.clone();
                 let use_range = self.accept_ranges;
+                let worker_cookies = self.config.cookies.clone();
+                let worker_referrer = self.config.referrer.clone();
 
                 let handle = tokio::spawn(async move {
-                    DownloadWorker::run(worker_client, url, path, seg, tx, token, use_range).await
+                    DownloadWorker::run(worker_client, url, path, seg, tx, token, use_range, worker_cookies, worker_referrer).await
                 });
                 worker_handles.push(handle);
             }
@@ -372,6 +376,9 @@ impl DownloadTask {
             status: current_status,
             created_at: self.created_at,
             updated_at: Utc::now(),
+            cookies: self.config.cookies.clone(),
+            referrer: self.config.referrer.clone(),
+            user_agent: self.config.user_agent.clone(),
         };
 
         SegmentPlanner::save_manifest(&state).await
@@ -466,6 +473,12 @@ fn build_client_with_config(config: &DownloadConfig, timeout_secs: u64) -> Resul
                         }
                         if let Ok(c_url) = reqwest::Url::parse("https://googleusercontent.com") {
                             jar.add_cookie_str(trimmed, &c_url);
+                        }
+                        if let Ok(u_url) = reqwest::Url::parse("https://usercontent.google.com") {
+                            jar.add_cookie_str(trimmed, &u_url);
+                        }
+                        if let Ok(t_url) = reqwest::Url::parse("https://takeout-download-drive.usercontent.google.com") {
+                            jar.add_cookie_str(trimmed, &t_url);
                         }
                         if let Ok(root_g) = reqwest::Url::parse("https://google.com") {
                             jar.add_cookie_str(trimmed, &root_g);

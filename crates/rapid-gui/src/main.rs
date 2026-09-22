@@ -1,4 +1,4 @@
-﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Hide console in release mode on Windows
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Console enabled for diagnostics
 
 use chrono::Utc;
 use eframe::egui::{self, Color32, Margin, RichText, Stroke, Vec2};
@@ -381,6 +381,9 @@ struct ActiveTaskUI {
     task_handle: Option<Arc<DownloadTask>>,
     num_segments: usize,
     is_resuming: bool,
+    cookies: Option<String>,
+    referrer: Option<String>,
+    user_agent: Option<String>,
 }
 
 struct RapidApp {
@@ -404,6 +407,7 @@ struct RapidApp {
     selected_tasks: HashSet<String>,
     show_delete_modal: bool,
     tasks_to_delete: HashSet<String>,
+    has_requested_initial_focus: bool,
 
     #[cfg(windows)]
     tray_handle: Option<tray::TrayHandle>,
@@ -455,6 +459,9 @@ impl RapidApp {
                                 segments: state.segments,
                                 task_handle: None,
                                 is_resuming: false,
+                                cookies: state.cookies,
+                                referrer: state.referrer,
+                                user_agent: state.user_agent,
                             };
                             initial_tasks.push(ui);
                         }
@@ -495,6 +502,7 @@ impl RapidApp {
             selected_tasks: HashSet::new(),
             show_delete_modal: false,
             tasks_to_delete: HashSet::new(),
+            has_requested_initial_focus: false,
             #[cfg(windows)]
             tray_handle,
         }
@@ -579,7 +587,7 @@ impl RapidApp {
         let rt = Arc::clone(&self.tokio_rt);
         let tasks_arc = Arc::clone(&self.tasks);
 
-        let (task_id, url, target_file, filename, segments_count) = {
+        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent) = {
             let Ok(mut list) = self.tasks.try_lock() else { return; };
             if task_index >= list.len() { return; }
             let task = &mut list[task_index];
@@ -594,6 +602,9 @@ impl RapidApp {
                 task.target_file.clone(),
                 task.filename.clone(),
                 task.num_segments,
+                task.cookies.clone(),
+                task.referrer.clone(),
+                task.user_agent.clone(),
             )
         };
 
@@ -608,6 +619,9 @@ impl RapidApp {
                 output_dir: dest_dir,
                 custom_filename: Some(filename.clone()),
                 num_segments: segments_count,
+                cookies,
+                referrer,
+                user_agent,
                 ..Default::default()
             };
 
@@ -785,6 +799,7 @@ impl RapidApp {
         }
     }
 
+    #[allow(dead_code)]
     fn remove_download(&mut self, task_index: usize) {
         if let Ok(mut list) = self.tasks.try_lock() {
             if task_index < list.len() {
@@ -911,6 +926,7 @@ impl RapidApp {
     }
 
     // Render Custom Frameless Window Title Bar
+    #[allow(dead_code)]
     fn render_custom_title_bar(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("custom_window_title_bar")
             .frame(
@@ -1020,8 +1036,12 @@ impl RapidApp {
 
 impl eframe::App for RapidApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Render custom frameless title bar at the top of the window
-        self.render_custom_title_bar(ctx);
+        if !self.has_requested_initial_focus {
+            self.has_requested_initial_focus = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
 
         // Handle animated splash screen on startup
         let elapsed = self.splash_start.elapsed();
@@ -2276,15 +2296,19 @@ fn spawn_download_task(
     let task_id = format!("task-{}", Utc::now().timestamp_millis());
 
     rt.spawn(async move {
-        let gdrive = is_gdrive || url.contains("drive.google.com") || url.contains("googleusercontent.com");
+        let gdrive = is_gdrive
+            || url.contains("drive.google.com")
+            || url.contains("googleusercontent.com")
+            || url.contains("usercontent.google.com")
+            || url.contains("docs.google.com");
         let config = DownloadConfig {
             url: url.clone(),
             output_dir: dest_dir,
             custom_filename,
             num_segments: if gdrive { 1 } else { segments },
-            cookies,
-            user_agent,
-            referrer,
+            cookies: cookies.clone(),
+            user_agent: user_agent.clone(),
+            referrer: referrer.clone(),
             is_gdrive: gdrive,
         };
 
@@ -2316,6 +2340,9 @@ fn spawn_download_task(
                     task_handle: Some(Arc::clone(&task_arc)),
                     num_segments: segments,
                     is_resuming: false,
+                    cookies: cookies.clone(),
+                    referrer: referrer.clone(),
+                    user_agent: user_agent.clone(),
                 };
 
                 {
@@ -2427,9 +2454,9 @@ async fn run_extension_server(
 
             let req_str = String::from_utf8_lossy(&buffer);
 
-            // Handle CORS preflight
+            // Handle CORS preflight (Crucial for Chrome MV3 Private Network Access)
             if req_str.starts_with("OPTIONS") {
-                let response = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS, GET\r\nAccess-Control-Allow-Headers: Content-Type\r\nContent-Length: 0\r\n\r\n";
+                let response = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS, GET\r\nAccess-Control-Allow-Headers: Content-Type, Authorization, *\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Length: 0\r\n\r\n";
                 let _ = socket.write_all(response.as_bytes()).await;
                 return;
             }
@@ -2438,7 +2465,7 @@ async fn run_extension_server(
             if req_str.starts_with("GET") {
                 let resp_body = "{\"status\":\"running\",\"app\":\"Rapid Download Manager\"}";
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                     resp_body.len(),
                     resp_body
                 );
@@ -2459,7 +2486,12 @@ async fn run_extension_server(
                             let is_gdrive = val.get("is_gdrive").and_then(|g| g.as_bool()).unwrap_or(false);
                             let url_str = url.to_string();
 
-                            let segments_count = if is_gdrive || url_str.contains("drive.google.com") || url_str.contains("googleusercontent.com") {
+                            let segments_count = if is_gdrive
+                                || url_str.contains("drive.google.com")
+                                || url_str.contains("googleusercontent.com")
+                                || url_str.contains("usercontent.google.com")
+                                || url_str.contains("docs.google.com")
+                            {
                                 1
                             } else {
                                 8
@@ -2480,7 +2512,7 @@ async fn run_extension_server(
 
                             let resp_body = "{\"status\":\"ok\"}";
                             let response = format!(
-                                "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                                "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                                 resp_body.len(),
                                 resp_body
                             );
@@ -2491,7 +2523,7 @@ async fn run_extension_server(
                 }
             }
 
-            let response = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n";
+            let response = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Length: 0\r\n\r\n";
             let _ = socket.write_all(response.as_bytes()).await;
         });
     }
@@ -2631,43 +2663,26 @@ fn dirs_or_fallback() -> PathBuf {
     PathBuf::from("./downloads")
 }
 
-#[cfg(windows)]
-fn get_primary_screen_size() -> Option<(f32, f32)> {
-    extern "system" {
-        fn GetSystemMetrics(nIndex: i32) -> i32;
-    }
-    unsafe {
-        let w = GetSystemMetrics(0); // SM_CXSCREEN
-        let h = GetSystemMetrics(1); // SM_CYSCREEN
-        if w > 0 && h > 0 {
-            Some((w as f32, h as f32))
-        } else {
-            None
-        }
-    }
-}
-
 fn main() -> Result<(), eframe::Error> {
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::capture();
+        let msg = format!("PANIC at {}: {:?}\nBacktrace:\n{:?}", chrono::Local::now(), info, backtrace);
+        let _ = std::fs::write("crash.log", msg);
+    }));
+
     let rt = Arc::new(Runtime::new().expect("Failed to initialize Tokio runtime"));
 
-    let win_w = 1240.0_f32;
-    let win_h = 740.0_f32;
+    let win_w = 1100.0_f32;
+    let win_h = 680.0_f32;
 
-    let mut viewport = egui::ViewportBuilder::default()
+    let viewport = egui::ViewportBuilder::default()
         .with_inner_size([win_w, win_h])
         .with_min_inner_size([650.0, 380.0])
-        .with_decorations(false)
+        .with_decorations(true)
         .with_resizable(true)
         .with_title("Rapid Download Manager")
         .with_visible(true)
         .with_active(true);
-
-    #[cfg(windows)]
-    if let Some((screen_w, screen_h)) = get_primary_screen_size() {
-        let pos_x = ((screen_w - win_w) / 2.0).max(0.0);
-        let pos_y = ((screen_h - win_h) / 2.0).max(0.0);
-        viewport = viewport.with_position([pos_x, pos_y]);
-    }
 
     let options = eframe::NativeOptions {
         viewport,
@@ -2676,11 +2691,13 @@ fn main() -> Result<(), eframe::Error> {
     };
 
     let rt_clone = Arc::clone(&rt);
-    eframe::run_native(
+    let res = eframe::run_native(
         "Rapid Download Manager",
         options,
         Box::new(move |cc| {
             Ok(Box::new(RapidApp::new(cc, rt_clone)))
         }),
-    )
+    );
+    let _ = std::fs::write("run_native_result.log", format!("run_native returned: {:?}", res));
+    res
 }

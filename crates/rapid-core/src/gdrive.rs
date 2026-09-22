@@ -1,4 +1,4 @@
-﻿use crate::error::{RapidError, Result};
+use crate::error::{RapidError, Result};
 use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::Client;
 use std::collections::HashSet;
@@ -30,7 +30,7 @@ pub struct GDriveResolver;
 impl GDriveResolver {
     /// Detect if a URL is a Google Drive link and identify whether it is a File or a Folder
     pub fn parse_resource_type(url: &str) -> GDriveResourceType {
-        if !url.contains("drive.google.com") && !url.contains("googleusercontent.com") {
+        if !url.contains("drive.google.com") && !url.contains("googleusercontent.com") && !url.contains("usercontent.google.com") {
             return GDriveResourceType::Unknown;
         }
 

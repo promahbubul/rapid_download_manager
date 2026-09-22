@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <style>
     body {
-      width: 280px;
+      width: 290px;
       margin: 0;
       padding: 16px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -27,36 +27,48 @@
     .status-card {
       background: #151922;
       border: 1px solid #232A38;
-      border-radius: 6px;
-      padding: 10px;
+      border-radius: 8px;
+      padding: 12px;
       margin-bottom: 12px;
+    }
+    .status-header {
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 6px;
     }
     .status-dot {
       display: inline-block;
-      width: 8px;
-      height: 8px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
+      background: #8A99AD;
+      margin-right: 8px;
+      transition: background 0.3s;
+    }
+    .status-dot.online {
       background: #2ECC71;
-      margin-right: 6px;
+      box-shadow: 0 0 8px rgba(46, 204, 113, 0.6);
+    }
+    .status-dot.offline {
+      background: #E74C3C;
+      box-shadow: 0 0 8px rgba(231, 76, 60, 0.6);
     }
     .info {
       font-size: 12px;
       color: #8A99AD;
       line-height: 1.4;
     }
-    .btn {
-      width: 100%;
-      padding: 8px;
-      background: #007ACC;
-      color: #FFF;
-      border: none;
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
       border-radius: 4px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .btn:hover {
-      background: #0098FF;
+      font-size: 10px;
+      font-weight: bold;
+      background: #232A38;
+      color: #00D2FF;
+      margin-top: 6px;
     }
   </style>
 </head>
@@ -66,12 +78,43 @@
     <span class="title">Rapid Download Manager</span>
   </div>
   <div class="status-card">
-    <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">
-      <span class="status-dot"></span>Browser Integration Active
+    <div class="status-header">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Checking Connection...</span>
     </div>
-    <div class="info">
-      Downloads are automatically intercepted and routed to Rapid Download Manager for multi-threaded speed.
+    <div class="info" id="status-desc">
+      Connecting to local Rapid Download Manager engine on port 9669...
     </div>
+    <div class="badge" id="port-badge">Port: 127.0.0.1:9669</div>
   </div>
+
+  <script>
+    async function checkEngineStatus() {
+      const dot = document.getElementById("status-dot");
+      const text = document.getElementById("status-text");
+      const desc = document.getElementById("status-desc");
+
+      for (const host of ["http://127.0.0.1:9669", "http://localhost:9669"]) {
+        try {
+          const resp = await fetch(host, { method: "GET" });
+          if (resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            dot.className = "status-dot online";
+            text.innerText = "Engine Connected & Active";
+            text.style.color = "#2ECC71";
+            desc.innerText = "Browser downloads are automatically intercepted and accelerated with high-speed multi-threading.";
+            return;
+          }
+        } catch (e) {}
+      }
+
+      dot.className = "status-dot offline";
+      text.innerText = "Desktop App Offline";
+      text.style.color = "#E74C3C";
+      desc.innerText = "Please start rapid-gui.exe on your computer. When the app is open, downloads will be intercepted automatically.";
+    }
+
+    checkEngineStatus();
+  </script>
 </body>
 </html>

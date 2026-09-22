@@ -280,7 +280,7 @@ impl TrayHandle {
                 0,
                 0,
                 0,
-                0,
+                -3, // HWND_MESSAGE (message-only window, prevents desktop window interference)
                 0,
                 h_inst,
                 std::ptr::null_mut(),
