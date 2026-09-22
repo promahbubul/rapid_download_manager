@@ -1113,61 +1113,283 @@ impl eframe::App for RapidApp {
             self.selected_task_index = selected;
         });
 
-        // Add Download Modal Dialog
+        // Modern Cyber-Obsidian Add Download Modal Dialog
         if self.show_add_dialog {
-            egui::Window::new("Add New Download")
+            // Backdrop dimming scrim
+            let screen_rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("modal_backdrop")));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(175));
+
+            let modal_frame = egui::Frame::none()
+                .fill(Color32::from_rgb(13, 17, 24))
+                .stroke(Stroke::new(1.5_f32, Color32::from_rgb(0, 210, 255)))
+                .rounding(egui::Rounding::same(12.0))
+                .inner_margin(Margin::same(20.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0.0, 8.0].into(),
+                    blur: 24.0,
+                    spread: 2.0,
+                    color: Color32::from_black_alpha(200),
+                });
+
+            let mut close_modal = false;
+            let mut start_download_req = false;
+
+            egui::Window::new("add_download_modal")
+                .title_bar(false)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(450.0, 250.0))
+                .fixed_size(Vec2::new(520.0, 360.0))
+                .frame(modal_frame)
                 .show(ctx, |ui| {
-                    ui.add_space(8.0);
-                    ui.label("Download URL:");
-                    ui.text_edit_singleline(&mut self.input_url);
+                    // Header Section
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("⚡")
+                                .size(22.0)
+                                .color(Color32::from_rgb(0, 210, 255))
+                                .strong(),
+                        );
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("Add New Download")
+                                    .size(17.0)
+                                    .color(Color32::from_rgb(240, 245, 255))
+                                    .strong(),
+                            );
+                            ui.label(
+                                RichText::new("High-Speed Multi-Thread Engine • Instant Allocation")
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(110, 125, 145)),
+                            );
+                        });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let close_btn = ui.add(
+                                egui::Button::new(RichText::new("✕").size(14.0).color(Color32::from_rgb(150, 165, 185)))
+                                    .fill(Color32::from_rgb(20, 26, 36))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 66)))
+                                    .rounding(egui::Rounding::same(6.0)),
+                            );
+                            if close_btn.on_hover_text("Close dialog").clicked() {
+                                close_modal = true;
+                            }
+                        });
+                    });
 
                     ui.add_space(8.0);
-                    ui.label("Save Directory:");
+                    ui.separator();
+                    ui.add_space(10.0);
+
+                    // Field 1: Download URL
                     ui.horizontal(|ui| {
-                        ui.text_edit_singleline(&mut self.input_dest);
-                        if ui.button("Browse...").clicked() {
+                        ui.label(
+                            RichText::new("🔗 Download URL")
+                                .size(12.5)
+                                .color(Color32::from_rgb(200, 215, 235))
+                                .strong(),
+                        );
+                        ui.label(
+                            RichText::new("(HTTP / HTTPS direct link)")
+                                .size(11.0)
+                                .color(Color32::from_rgb(100, 115, 135)),
+                        );
+                    });
+
+                    ui.add_space(4.0);
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(8, 10, 15))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(36, 46, 64)))
+                        .rounding(egui::Rounding::same(6.0))
+                        .inner_margin(Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            let edit = egui::TextEdit::singleline(&mut self.input_url)
+                                .hint_text("Paste URL here e.g. https://example.com/file.zip")
+                                .font(egui::TextStyle::Body)
+                                .desired_width(ui.available_width());
+                            ui.add(edit);
+                        });
+
+                    ui.add_space(10.0);
+
+                    // Field 2: Save Destination Directory
+                    ui.label(
+                        RichText::new("📁 Save Destination")
+                            .size(12.5)
+                            .color(Color32::from_rgb(200, 215, 235))
+                            .strong(),
+                    );
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(8, 10, 15))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(36, 46, 64)))
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(Margin::symmetric(10.0, 7.0))
+                            .show(ui, |ui| {
+                                let edit = egui::TextEdit::singleline(&mut self.input_dest)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(ui.available_width() - 85.0);
+                                ui.add(edit);
+                            });
+
+                        let browse_btn = egui::Button::new(
+                            RichText::new("📂 Browse")
+                                .size(12.0)
+                                .color(Color32::from_rgb(0, 210, 255))
+                                .strong(),
+                        )
+                        .fill(Color32::from_rgb(18, 24, 34))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0, 210, 255)))
+                        .rounding(egui::Rounding::same(6.0));
+
+                        if ui.add(browse_btn).on_hover_text("Choose download destination folder").clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                                 self.input_dest = folder.to_string_lossy().to_string();
                             }
                         }
                     });
 
-                    ui.add_space(8.0);
-                    ui.label("Parallel Connections:");
+                    ui.add_space(12.0);
+
+                    // Field 3: Parallel Connections (Modern Segmented Chips)
                     ui.horizontal(|ui| {
-                        ui.radio_value(&mut self.input_segments, 4, "4");
-                        ui.radio_value(&mut self.input_segments, 8, "8 (Default)");
-                        ui.radio_value(&mut self.input_segments, 16, "16 (Fast)");
-                        ui.radio_value(&mut self.input_segments, 32, "32 (Max)");
+                        ui.label(
+                            RichText::new("⚡ Parallel Connections")
+                                .size(12.5)
+                                .color(Color32::from_rgb(200, 215, 235))
+                                .strong(),
+                        );
+                        ui.label(
+                            RichText::new("(Multi-stream segment threads)")
+                                .size(11.0)
+                                .color(Color32::from_rgb(100, 115, 135)),
+                        );
                     });
 
-                    if let Some(ref err) = self.add_error {
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(err).color(Color32::from_rgb(231, 76, 60)));
-                    }
-
-                    ui.add_space(16.0);
+                    ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Start Download").strong()).clicked() {
-                            if self.input_url.trim().is_empty() {
-                                self.add_error = Some("Please enter a valid URL".to_string());
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+
+                        let options = [
+                            (4, "4 Streams", "Eco"),
+                            (8, "8 Streams", "Default"),
+                            (16, "16 Streams", "Turbo"),
+                            (32, "32 Streams", "Extreme"),
+                        ];
+
+                        for (val, title, sub) in options {
+                            let is_selected = self.input_segments == val;
+                            let bg = if is_selected {
+                                Color32::from_rgb(11, 38, 54)
                             } else {
-                                let url = self.input_url.trim().to_string();
-                                let dest = PathBuf::from(&self.input_dest);
-                                let segs = self.input_segments;
-                                self.start_new_download(url, dest, segs);
+                                Color32::from_rgb(16, 21, 30)
+                            };
+                            let border = if is_selected {
+                                Color32::from_rgb(0, 210, 255)
+                            } else {
+                                Color32::from_rgb(32, 40, 56)
+                            };
+                            let text_color = if is_selected {
+                                Color32::from_rgb(0, 230, 255)
+                            } else {
+                                Color32::from_rgb(160, 175, 195)
+                            };
+
+                            let frame = egui::Frame::none()
+                                .fill(bg)
+                                .stroke(Stroke::new(if is_selected { 1.5_f32 } else { 1.0_f32 }, border))
+                                .rounding(egui::Rounding::same(7.0))
+                                .inner_margin(Margin::symmetric(10.0, 6.0));
+
+                            let resp = frame.show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new(title).size(11.5).color(text_color).strong());
+                                    ui.label(RichText::new(sub).size(9.5).color(if is_selected { Color32::from_rgb(0, 210, 255) } else { Color32::GRAY }));
+                                });
+                            }).response;
+
+                            if resp.interact(egui::Sense::click()).clicked() {
+                                self.input_segments = val;
                             }
                         }
+                    });
 
-                        if ui.button("Cancel").clicked() {
-                            self.show_add_dialog = false;
-                        }
+                    // Error Message Banner (if any)
+                    if let Some(ref err) = self.add_error {
+                        ui.add_space(8.0);
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(45, 18, 22))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(231, 76, 60)))
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("⚠").color(Color32::from_rgb(231, 76, 60)).strong());
+                                    ui.label(RichText::new(err).color(Color32::from_rgb(255, 180, 185)).size(12.0));
+                                });
+                            });
+                    }
+
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+
+                    // Modal Footer Buttons
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("🔒 Dynamic Segment Planner")
+                                .size(11.0)
+                                .color(Color32::from_rgb(90, 105, 125)),
+                        );
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let start_btn = egui::Button::new(
+                                RichText::new("🚀 Start Download")
+                                    .size(13.0)
+                                    .color(Color32::from_rgb(8, 12, 18))
+                                    .strong(),
+                            )
+                            .fill(Color32::from_rgb(0, 210, 255))
+                            .rounding(egui::Rounding::same(7.0));
+
+                            if ui.add(start_btn).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                                start_download_req = true;
+                            }
+
+                            let cancel_btn = egui::Button::new(
+                                RichText::new("Cancel")
+                                    .size(13.0)
+                                    .color(Color32::from_rgb(180, 195, 215)),
+                            )
+                            .fill(Color32::from_rgb(22, 28, 38))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(42, 52, 70)))
+                            .rounding(egui::Rounding::same(7.0));
+
+                            if ui.add(cancel_btn).clicked() {
+                                close_modal = true;
+                            }
+                        });
                     });
                 });
+
+            if close_modal {
+                self.show_add_dialog = false;
+                self.add_error = None;
+            }
+
+            if start_download_req {
+                if self.input_url.trim().is_empty() {
+                    self.add_error = Some("Please enter a valid download URL (http:// or https://)".to_string());
+                } else {
+                    let url = self.input_url.trim().to_string();
+                    let dest = PathBuf::from(&self.input_dest);
+                    let segs = self.input_segments;
+                    self.start_new_download(url, dest, segs);
+                }
+            }
         }
 
         // Execute deferred actions outside of lock
