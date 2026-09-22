@@ -24,13 +24,13 @@ const PINK_ACCENT_BORDER: Color32 = Color32::from_rgb(85, 32, 70);  // Dark Rose
 
 const VELVET_BLACK: Color32 = Color32::from_rgb(13, 10, 18);       // Void Background (#0D0A12)
 const VELVET_SURFACE: Color32 = Color32::from_rgb(22, 16, 29);     // Panel Fill (#16101D)
-const VELVET_CARD: Color32 = Color32::from_rgb(28, 20, 38);        // Row / Card Fill (#1C1426)
+const _VELVET_CARD: Color32 = Color32::from_rgb(28, 20, 38);       // Row / Card Fill (#1C1426)
 const VELVET_BORDER: Color32 = Color32::from_rgb(52, 34, 64);      // Default Border (#342240)
 
-const STATUS_DOWNLOADING: Color32 = PINK_NEON;
-const STATUS_COMPLETED: Color32 = PINK_ROSE;
-const STATUS_PAUSED: Color32 = Color32::from_rgb(255, 180, 120);    // Warm Amber Rose
-const STATUS_FAILED: Color32 = Color32::from_rgb(255, 75, 105);     // Crimson Rose
+const STATUS_DOWNLOADING: Color32 = PINK_NEON;                          // Neon Pink (#FF2A85)
+const STATUS_COMPLETED: Color32 = Color32::from_rgb(60, 215, 145);      // Clean Mint Emerald (#3CD791)
+const STATUS_PAUSED: Color32 = Color32::from_rgb(255, 185, 90);         // Warm Amber (#FFB95A)
+const STATUS_FAILED: Color32 = Color32::from_rgb(255, 75, 105);         // Crimson Rose (#FF4B69)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FilterCategory {
@@ -318,12 +318,12 @@ impl RapidApp {
         let mut visuals = egui::Visuals::dark();
         visuals.window_rounding = egui::Rounding::same(8.0);
         visuals.panel_fill = VELVET_SURFACE;
-        visuals.faint_bg_color = VELVET_CARD;
-        visuals.extreme_bg_color = VELVET_BLACK;
+        visuals.faint_bg_color = Color32::from_rgb(24, 18, 32);     // Subtle alternate striped row
+        visuals.extreme_bg_color = Color32::from_rgb(18, 12, 26);   // Deep recessed groove for progress bars
         visuals.widgets.noninteractive.bg_fill = VELVET_SURFACE;
         visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, VELVET_BORDER);
-        visuals.selection.bg_fill = PINK_NEON;
-        visuals.selection.stroke = Stroke::new(1.0_f32, PINK_ROSE);
+        visuals.selection.bg_fill = Color32::from_rgb(56, 24, 52);  // Rich Midnight Velvet Wine (NOT blinding solid pink)
+        visuals.selection.stroke = Stroke::new(1.5_f32, PINK_NEON); // 1.5px crisp glowing neon pink border
         cc.egui_ctx.set_visuals(visuals);
 
         let default_download_dir = dirs_or_fallback();
@@ -1199,8 +1199,8 @@ impl eframe::App for RapidApp {
                                 }
 
                                 let avail_width = ui.available_width();
-                                let cols = ((avail_width / 270.0).floor() as usize).clamp(1, 6);
-                                let seg_bar_width = ((avail_width / cols as f32) - 130.0).clamp(60.0, 260.0);
+                                let cols = ((avail_width / 260.0).floor() as usize).clamp(1, 6);
+                                let seg_bar_width = ((avail_width / cols as f32) - 130.0).clamp(60.0, 160.0);
 
                                 egui::Grid::new("segment_grid")
                                     .spacing(Vec2::new(12.0, 6.0))
@@ -1208,12 +1208,20 @@ impl eframe::App for RapidApp {
                                         for (i, seg) in task.segments.iter().enumerate() {
                                             ui.label(RichText::new(format!("Part {}:", i + 1)).size(11.0).color(PINK_PASTEL));
                                             let ratio = seg.progress_ratio();
+                                            let (fill_col, label_text) = if seg.is_complete {
+                                                (STATUS_COMPLETED, "✔ Done".to_string())
+                                            } else if ratio > 0.0 {
+                                                (STATUS_DOWNLOADING, format!("{:.0}%", ratio * 100.0))
+                                            } else {
+                                                (Color32::from_rgb(60, 40, 65), "0%".to_string())
+                                            };
+
                                             let bar = egui::ProgressBar::new(ratio)
-                                                .show_percentage()
+                                                .text(label_text)
                                                 .desired_width(seg_bar_width)
-                                                .fill(if seg.is_complete { STATUS_COMPLETED } else { STATUS_DOWNLOADING });
+                                                .fill(fill_col);
                                             ui.add(bar);
-                                            ui.label(RichText::new(format!("{:.1} / {:.1} MB", seg.downloaded_bytes as f64 / 1_048_576.0, seg.total_bytes() as f64 / 1_048_576.0)).size(11.0).color(Color32::from_rgb(220, 200, 225)));
+                                            ui.label(RichText::new(format!("{:.1} / {:.1} MB", seg.downloaded_bytes as f64 / 1_048_576.0, seg.total_bytes() as f64 / 1_048_576.0)).size(11.0).color(Color32::from_rgb(220, 205, 230)));
                                             if (i + 1) % cols == 0 {
                                                 ui.end_row();
                                             }
@@ -1227,7 +1235,11 @@ impl eframe::App for RapidApp {
 
         // Central Table Panel
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(VELVET_SURFACE))
+            .frame(
+                egui::Frame::none()
+                    .fill(VELVET_SURFACE)
+                    .inner_margin(Margin::symmetric(14.0, 8.0)),
+            )
             .show(ctx, |ui| {
                 let mut selected = self.selected_task_index;
 
@@ -1282,12 +1294,12 @@ impl eframe::App for RapidApp {
                                     .striped(true)
                                     .resizable(true)
                                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                    .column(egui_extras::Column::remainder().at_least(200.0).resizable(true)) // Filename
-                                    .column(egui_extras::Column::initial(80.0).at_least(60.0))                 // Size
-                                    .column(egui_extras::Column::initial(95.0).at_least(75.0))                 // Status
-                                    .column(egui_extras::Column::remainder().at_least(140.0))                  // Progress
-                                    .column(egui_extras::Column::initial(85.0).at_least(65.0))                 // Speed
-                                    .column(egui_extras::Column::initial(65.0).at_least(45.0))                 // ETA
+                                    .column(egui_extras::Column::remainder().at_least(220.0).resizable(true)) // Filename
+                                    .column(egui_extras::Column::initial(80.0).at_least(65.0))                 // Size
+                                    .column(egui_extras::Column::initial(95.0).at_least(80.0))                 // Status
+                                    .column(egui_extras::Column::initial(160.0).at_least(110.0).resizable(true)) // Progress
+                                    .column(egui_extras::Column::initial(90.0).at_least(70.0))                 // Speed
+                                    .column(egui_extras::Column::initial(65.0).at_least(50.0))                 // ETA
                                     .column(egui_extras::Column::exact(140.0))                                 // Actions
                                     .header(26.0, |mut header| {
                                         header.col(|ui| { ui.strong(RichText::new("Filename").color(PINK_PASTEL)); });
@@ -1319,7 +1331,7 @@ impl eframe::App for RapidApp {
 
                                                     if is_complete {
                                                         let label_text = RichText::new(&item.filename)
-                                                            .color(PINK_ROSE)
+                                                            .color(STATUS_COMPLETED)
                                                             .underline();
                                                         let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()))
                                                             .on_hover_text("✔ Download complete! Click to open file directly");
@@ -1350,7 +1362,15 @@ impl eframe::App for RapidApp {
                                                             }
                                                         });
                                                     } else {
-                                                        let resp = ui.selectable_label(is_sel, &item.filename);
+                                                        let name_col = if is_sel {
+                                                            Color32::WHITE
+                                                        } else {
+                                                            Color32::from_rgb(240, 232, 248)
+                                                        };
+                                                        let label_text = RichText::new(&item.filename)
+                                                            .color(name_col)
+                                                            .strong();
+                                                        let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()));
                                                         if resp.clicked() {
                                                             selected = Some(i);
                                                         }
@@ -1425,18 +1445,18 @@ impl eframe::App for RapidApp {
                                                 }
                                             });
 
-                                            // 4. Progress bar with Pink styling
+                                            // 4. Progress bar with high-contrast text and dark recessed track
                                             row.col(|ui| {
                                                 let ratio = (item.progress_percent / 100.0).clamp(0.0, 1.0);
-                                                let bar_color = match item.status {
-                                                    DownloadStatus::Completed => STATUS_COMPLETED,
-                                                    DownloadStatus::Downloading => STATUS_DOWNLOADING,
-                                                    DownloadStatus::Paused => STATUS_PAUSED,
-                                                    DownloadStatus::Failed(_) => STATUS_FAILED,
-                                                    _ => Color32::from_rgb(80, 50, 80),
+                                                let (bar_color, pct_label) = match item.status {
+                                                    DownloadStatus::Completed => (STATUS_COMPLETED, "100%".to_string()),
+                                                    DownloadStatus::Downloading => (STATUS_DOWNLOADING, format!("{:.1}%", item.progress_percent)),
+                                                    DownloadStatus::Paused => (STATUS_PAUSED, format!("{:.1}% (Paused)", item.progress_percent)),
+                                                    DownloadStatus::Failed(_) => (STATUS_FAILED, "Failed".to_string()),
+                                                    _ => (Color32::from_rgb(80, 50, 80), format!("{:.0}%", item.progress_percent)),
                                                 };
                                                 let bar = egui::ProgressBar::new(ratio)
-                                                    .show_percentage()
+                                                    .text(pct_label)
                                                     .fill(bar_color);
                                                 ui.add(bar);
                                             });
