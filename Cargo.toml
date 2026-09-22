@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/rapid-core",
+    "crates/rapid-cli",
+    "crates/rapid-gui",
+]
+resolver = "2"

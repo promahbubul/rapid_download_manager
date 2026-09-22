@@ -1,0 +1,21 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Binaries & Libraries in root
+/rapid-gui.exe
+/rapid-cli.exe
+/*.dll
+
+# Output logs & temp files
+/downloads/
+/gui_log.txt
+/out.txt
+*.log
+
+# IDE & OS files
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini

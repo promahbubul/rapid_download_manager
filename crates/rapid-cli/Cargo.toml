@@ -1,0 +1,12 @@
+[package]
+name = "rapid-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI frontend for Rapid Download Manager"
+
+[dependencies]
+rapid-core = { path = "../rapid-core" }
+tokio = { version = "1.38", features = ["full"] }
+clap = { version = "4.5", features = ["derive"] }
+indicatif = "0.17"
+anyhow = "1.0"
