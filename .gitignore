@@ -19,3 +19,6 @@
 .vscode/
 Thumbs.db
 Desktop.ini
+
+# Staged build artifacts (keep installer packages)
+/dist/RapidDownloadManager/

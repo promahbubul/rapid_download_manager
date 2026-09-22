@@ -1,89 +1,203 @@
-# ⚡ Rapid Download Manager
+# ⚡ Rapid Download Manager (Neon Pink Velvet Edition)
 
-> **High-Speed Multi-Threaded Download Manager with Native Browser Interception, Cyber-Obsidian UI, and System Tray Integration.** Built in **Rust** using `tokio` and `eframe`/`egui`.
+[![Release](https://img.shields.io/badge/Release-v1.0.0-FF2A85?style=for-the-badge&logo=github)](https://github.com/promahbubul/rapid_download_manager/releases/tag/v1.0.0)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(x64)-1A0F24?style=for-the-badge&logo=windows)](https://github.com/promahbubul/rapid_download_manager/releases)
+[![Rust](https://img.shields.io/badge/Language-Rust%202021-DEA584?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/License-MIT-00E5FF?style=for-the-badge)](LICENSE)
 
----
-
-## ✨ Features
-
-- **🚀 Ultra-Fast Multi-Part Engine:** Splits downloads into up to 32 parallel HTTP connections with adaptive segment chunking, dynamic rebalancing, and resume support.
-- **🌐 Browser Download Interception (IDM Style):** Native WebExtension (Manifest V3) automatically captures browser downloads across **Google Chrome**, **Microsoft Edge**, and **Brave Browser** and routes them directly to the native engine via `127.0.0.1:9669`.
-- **🖱️ Right-Click Context Menu:** Download any file, image, audio, or video link with *"⚡ Download with Rapid Download Manager"*.
-- **🎨 Cyber-Obsidian Dark Theme:** Custom-tailored dark theme (`#0B0E14`, `#151922`, `#00D2FF`) engineered for low eye fatigue and sleek modern aesthetics.
-- **🌟 Animated Splash Screen:** Smooth 1.8-second startup animation with pulsating neon lightning and expanding radar glow.
-- **📊 Custom Cyber Status Bar:** 
-  - **Engine Beacon:** Live green beacon indicating listener status on `127.0.0.1:9669`.
-  - **Dynamic Speed Pill:** Real-time aggregate multi-stream download throughput badge.
-  - **Color-Coded Status Counters:** Active (`📥`), Paused (`⏸`), Finished (`✔`), and Total Transferred (`📊`).
-  - **One-Click Quick Action Chips:** Direct links to reveal Downloads folder and trigger Extension Hook.
-- **🛡️ Windows System Tray & Background Downloads:**
-  - Resides in Windows Notification Area (System Tray).
-  - Hover tooltip displays live transfer speeds and task progress.
-  - Right-click tray menu to open, pause all, resume all, or exit.
-  - Minimizing or clicking window close keeps downloads running uninterrupted in the background.
-- **🛠️ Interactive Table Actions:**
-  - Compact icon-only buttons with hover tooltips (`⏸ Pause`, `▶ Resume`, `🔄 Redownload`, `🗑 Delete`).
-  - Single-click to open completed files directly using default system viewer.
-  - `📁` button to open and highlight file in Windows File Explorer.
+> **Rapid Download Manager** is an ultra-fast, multi-stream desktop download accelerator engineered from the ground up in **Rust**. Featuring a bespoke **Neon Pink Velvet & Cyber Magenta** visual design system, native Chromium browser interception, background system tray persistence, and up to 32 parallel download streams.
 
 ---
 
-## 🏗️ Architecture & Project Structure
+## 📥 Download Production Software
+
+Choose your preferred format below to download the latest **v1.0.0 Production Release**:
+
+| Package Type | Description | Primary Download (GitHub Releases) | Direct Mirror (Repository) |
+| :--- | :--- | :--- | :--- |
+| 💿 **Windows Installer (Setup .exe)** | **Recommended:** Full guided Windows setup wizard, Start Menu shortcuts, Desktop icon, autostart toggle, and uninstaller. | [⬇️ **Download Setup v1.0.0 (.exe)**](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_Setup_v1.0.0.exe) | [⬇️ Mirror (.exe)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_Setup_v1.0.0.exe) |
+| 📦 **Portable Standalone (.zip)** | No installation required. Extract anywhere and run `rapid-gui.exe` immediately. | [⬇️ **Download Portable v1.0.0 (.zip)**](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_v1.0.0_Portable.zip) | [⬇️ Mirror (.zip)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_v1.0.0_Portable.zip) |
+
+🔗 **View all releases & changelogs:** [GitHub Releases Page](https://github.com/promahbubul/rapid_download_manager/releases)
+
+---
+
+## 🌟 Software Overview & Key Highlights
+
+Rapid Download Manager departs completely from outdated 90s-style download utilities (such as legacy IDM and FDM clones) by introducing a 100% proprietary, copyright-safe, modern **Neon Velvet** interface and a high-concurrency Rust engine.
 
 ```
-rapid_download_manager/
-├── Cargo.toml                # Cargo workspace configuration
-├── crates/
-│   ├── rapid-core/           # Multi-threaded download engine & segment coordinator
-│   │   ├── src/lib.rs
-│   │   ├── src/segment.rs
-│   │   └── src/task.rs
-│   ├── rapid-cli/            # Command-line interface
-│   │   └── src/main.rs
-│   └── rapid-gui/            # Desktop GUI application (eframe / egui)
-│       ├── src/main.rs       # UI, state management & Tokio HTTP bridge
-│       └── src/tray.rs       # Native Win32 System Tray implementation
-├── extension/                # Manifest V3 Browser Extension
-│   ├── manifest.json
-│   ├── background.js
-│   ├── popup.html
-│   └── icon128.png
-├── install_extension.bat     # One-click Windows Registry browser installer
-└── run_rapid_gui.bat         # Launcher script
+┌────────────────────────────────────────────────────────────────────────┐
+│  ⚡ RAPID DOWNLOAD MANAGER v1.0.0                    [─] [□] [✕]      │
+├────────────────────────────────────────────────────────────────────────┤
+│  [＋ New Download]  [▶ Resume All]  [⏸ Pause All]   [📂 Open Folder]   │
+├────────────────────────────────────────────────────────────────────────┤
+│  File Name         │ Progress │ Speed    │ Status    │ Actions        │
+│  ──────────────────┼──────────┼──────────┼───────────┼─────────────── │
+│  ubuntu-24.04.iso  │ ██████░░ │ 24.5 MB/s│ Active    │ [⏸] [🔄] [🗑] │
+│  rust-setup.exe    │ ████████ │ Completed│ Finished  │ [▶] [📁] [🗑] │
+├────────────────────────────────────────────────────────────────────────┤
+│  ● ENGINE ACTIVE   ⚡ 24.5 MB/s │ 📥 1 Active  ⏸ 0 Paused  ✔ 1 Done   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 In-Depth Features
+
+### 1. 🎨 Proprietary Neon Pink Velvet & Cyber Magenta UI
+- **Original Color Palette:** Built with a luxurious dark velvet foundation (`#0A060E`, `#1A0F24`, `#2D1236`) complemented by vibrant electric neon accents (`#FF2A85`, `#FF6BB5`, `#00E5FF`).
+- **Command Dock Architecture:** The legacy top menu and toolbar are replaced with a sleek horizontal Command Dock featuring glowing action pills and smooth hover animations.
+- **Custom Vector Icon Rendering Engine:** Instead of relying on external raster images or generic web icon fonts, all icons (Plus, Play, Pause, Folder, Refresh, Trash, Bolt, Eye, Checkmark) are computed directly on the GPU using anti-aliased mathematical Bézier geometry.
+- **Cyber Splash Screen:** A seamless 1.8-second startup sequence with pulsating neon lightning, radial gradient ripples, and live engine status updates.
+
+### 2. ⚡ High-Speed Multi-Part Concurrency Engine
+- **Parallel Segment Chunking:** Downloads are split into **4 to 32 concurrent HTTP/HTTPS worker threads** requesting specific byte ranges (`Range: bytes=start-end`).
+- **Adaptive Rebalancing:** High-latency threads automatically yield remaining chunks to faster connections, maximizing your available bandwidth.
+- **Segmented Resume Support:** Network dropouts or pauses do not corrupt files. Segment manifests record exact byte boundaries and dynamically resume from the last validated chunk.
+- **Asynchronous Tokio Core:** All network I/O is non-blocking and executes independently of the GUI thread, ensuring 60 FPS buttery-smooth desktop interactivity.
+
+### 3. 🌐 Browser Auto-Interception (IDM Style)
+- **Chromium Ecosystem Support:** Full compatibility with **Google Chrome**, **Microsoft Edge**, **Brave Browser**, **Opera**, and **Vivaldi**.
+- **Manifest V3 Extension:** Lightweight background script intercepts browser download events and hands them over to Rapid Download Manager automatically.
+- **Right-Click Context Menu:** Right-click on any image, video, audio link, or file download button and choose *"⚡ Download with Rapid Download Manager"*.
+- **Native Local RPC Daemon:** The desktop application runs a lightning-fast HTTP listener on `127.0.0.1:9669` to receive tasks with file metadata, user agent, and referrer headers.
+- **One-Click Extension Setup:** Includes `install_extension.bat` which configures Windows Registry extension policies in seconds.
+
+### 4. 📊 Custom Cyber Status Bar & System Tray
+- **Engine Beacon:** Live status indicator showing active local daemon health on `127.0.0.1:9669`.
+- **Dynamic Speed Pill:** Real-time aggregate bandwidth meter displaying combined throughput across all multi-part worker connections.
+- **Categorized Download Counters:** Instant counters for Active (`📥`), Paused (`⏸`), and Completed (`✔`) files.
+- **Background Persistence (System Tray):** Minimizing or closing the window minimizes to the Windows Notification Area, allowing uninterrupted long-running downloads. Hovering over the tray icon displays current speed and status.
+
+### 5. 🛠️ Rich Task Interaction & Direct File Access
+- **Single-Click File Launch:** Clicking any completed file automatically executes it using your operating system's default media player or document viewer.
+- **Folder Reveal Button (`📁`):** Instantly highlights and selects the downloaded file in Windows File Explorer.
+- **Full Control Actions:** Inline compact buttons to Pause (`⏸`), Resume (`▶`), Redownload (`🔄`), or Delete (`🗑`) tasks with custom confirmation safeguards.
+
+---
+
+## 💻 Installation & Setup Guide
+
+### Method 1: Windows Setup Wizard (Recommended)
+1. Download [`RapidDownloadManager_Setup_v1.0.0.exe`](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_Setup_v1.0.0.exe).
+2. Double-click the installer to launch the modern Inno Setup wizard.
+3. Choose installation path (defaults to `%LocalAppData%\Programs\Rapid Download Manager`).
+4. Optionally check *"Create a desktop icon"* and *"Start Rapid Download Manager when Windows starts"*.
+5. Click **Install** and then **Launch Rapid Download Manager**.
+
+### Method 2: Portable Standalone Package
+1. Download [`RapidDownloadManager_v1.0.0_Portable.zip`](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_v1.0.0_Portable.zip).
+2. Extract the archive into any folder on your PC.
+3. Double-click `rapid-gui.exe` (or `run_rapid_gui.bat`).
+
+---
+
+## 🔌 Installing the Browser Extension
+
+To enable automatic download interception from Chrome, Edge, or Brave:
+
+### Option A: Automatic One-Click Setup
+1. Inside the application folder, right-click `install_extension.bat` and select **Run as administrator** (or double-click to install for the current user).
+2. Restart your browser.
+
+### Option B: Manual Developer Mode
+1. Open your browser and navigate to:
+   - **Chrome / Brave:** `chrome://extensions`
+   - **Edge:** `edge://extensions`
+2. Turn on **Developer mode** (top right switch).
+3. Click **Load unpacked** (top left).
+4. Select the `extension/` directory inside your Rapid Download Manager installation folder.
+5. The **⚡ Rapid Download Manager Interceptor** icon will appear in your browser toolbar!
+
+---
+
+## 🛠️ Building from Source
+
+If you want to build the project from scratch or customize the Rust source code:
 
 ### Prerequisites
+- [Rust & Cargo](https://rustup.rs/) (Stable 1.75+ or newer)
+- Windows 10/11 x64
+- [Inno Setup 6](https://jrsoftware.org/isdl.php) (optional, for compiling the setup installer)
 
-- [Rust & Cargo](https://rustup.rs/) (edition 2021)
-- Windows 10/11 (for System Tray integration and desktop GUI)
+### 1. Clone the Repository
+```bash
+git clone https://github.com/promahbubul/rapid_download_manager.git
+cd rapid_download_manager
+```
 
-### 1. Build and Run GUI
-
+### 2. Run Desktop GUI in Debug Mode
 ```bash
 cargo run -p rapid-gui
 ```
 
-Or run via the provided batch script:
-```cmd
-run_rapid_gui.bat
+### 3. Build Optimized Production Binary
+```bash
+cargo build --release -p rapid-gui
 ```
 
-### 2. Install Browser Extension
+The optimized production executable will be created at:
+```
+target/release/rapid-gui.exe
+```
 
-#### Option A: One-Click Registry Installer
-Double-click `install_extension.bat` in the root folder.
+### 4. Compile Inno Setup Installer
+```powershell
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer/RapidDownloadManager.iss
+```
+The compiled installer will be generated in `dist/installer/RapidDownloadManager_Setup_v1.0.0.exe`.
 
-#### Option B: Developer Mode (Chrome / Edge / Brave)
-1. Open `chrome://extensions` or `edge://extensions`.
-2. Toggle **Developer mode** on (top right).
-3. Click **Load unpacked** and select the `extension/` directory.
+---
+
+## 🏗️ Repository Architecture
+
+```
+rapid_download_manager/
+├── .github/
+│   └── workflows/
+│       └── build-release.yml    # Automated CI/CD release workflow
+├── crates/
+│   ├── rapid-core/              # Multi-threaded download engine & segment coordinator
+│   │   ├── src/lib.rs
+│   │   ├── src/segment.rs       # Byte-range chunking & worker threads
+│   │   └── src/task.rs          # Task state machine & manifests
+│   ├── rapid-cli/               # Standalone command-line interface
+│   │   └── src/main.rs
+│   └── rapid-gui/               # Desktop GUI (eframe / egui)
+│       ├── src/main.rs          # Neon Pink velvet UI, vector icons, HTTP bridge
+│       └── src/tray.rs          # Win32 system tray & notification area
+├── dist/
+│   └── installer/               # Production executables & releases
+│       ├── RapidDownloadManager_Setup_v1.0.0.exe
+│       └── RapidDownloadManager_v1.0.0_Portable.zip
+├── extension/                   # Manifest V3 browser integration
+│   ├── manifest.json
+│   ├── background.js            # Interception & RPC dispatcher
+│   ├── popup.html
+│   └── icon128.png
+├── installer/
+│   └── RapidDownloadManager.iss # Inno Setup 6 compilation script
+├── install_extension.bat        # Windows Registry browser installer
+└── run_rapid_gui.bat            # Quick launcher script
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions, bug reports, and feature suggestions are always welcome! Feel free to open an issue or submit a pull request on GitHub.
+
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ---
 
 ## 📜 License
 
-MIT License. Developed with ❤️ in Rust.
+Distributed under the **MIT License**. See `LICENSE` for more information.
+
+Developed with ❤️ and Rust by [promahbubul](https://github.com/promahbubul).
