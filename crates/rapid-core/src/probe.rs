@@ -3,6 +3,7 @@ use crate::types::DownloadMetadata;
 use reqwest::header::{ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, RANGE, USER_AGENT};
 use reqwest::Client;
 use url::Url;
+use urlencoding::decode as url_decode;
 
 pub struct Probe;
 
@@ -21,7 +22,6 @@ impl Probe {
         // 1. Try HEAD request first
         let head_resp = client
             .head(url_str)
-            .header(USER_AGENT, "RapidDownloadManager/1.0")
             .send()
             .await;
 
@@ -76,7 +76,6 @@ impl Probe {
         // 2. Fallback: GET with Range: bytes=0-0 to inspect headers
         let get_resp = client
             .get(url_str)
-            .header(USER_AGENT, "RapidDownloadManager/1.0")
             .header(RANGE, "bytes=0-0")
             .send()
             .await?;
@@ -148,7 +147,7 @@ impl Probe {
         if let Some(segments) = url.path_segments() {
             let last = segments.filter(|s| !s.is_empty()).last();
             if let Some(name) = last {
-                if let Ok(decoded) = urlencoding_decode(name) {
+                if let Ok(decoded) = url_decode(name) {
                     let sanitized = Self::sanitize_filename(&decoded);
                     if !sanitized.is_empty() {
                         return sanitized;
@@ -168,8 +167,8 @@ impl Probe {
                 let value = &part[10..].trim();
                 let value = value.trim_matches('"');
                 if let Some(rest) = value.strip_prefix("UTF-8''").or_else(|| value.strip_prefix("utf-8''")) {
-                    if let Ok(decoded) = urlencoding_decode(rest) {
-                        return Some(decoded);
+                    if let Ok(decoded) = url_decode(rest) {
+                        return Some(decoded.into_owned());
                     }
                 }
             } else if part.to_lowercase().starts_with("filename=") {
@@ -193,24 +192,4 @@ impl Probe {
     }
 }
 
-fn urlencoding_decode(input: &str) -> std::result::Result<String, std::string::FromUtf8Error> {
-    let mut bytes = Vec::new();
-    let mut chars = input.bytes();
-    while let Some(b) = chars.next() {
-        if b == b'%' {
-            let h1 = chars.next();
-            let h2 = chars.next();
-            if let (Some(h1), Some(h2)) = (h1, h2) {
-                if let Ok(val) = u8::from_str_radix(std::str::from_utf8(&[h1, h2]).unwrap_or(""), 16) {
-                    bytes.push(val);
-                    continue;
-                }
-            }
-        } else if b == b'+' {
-            bytes.push(b' ');
-        } else {
-            bytes.push(b);
-        }
-    }
-    String::from_utf8(bytes)
-}
+// url_decode removed - now using the `urlencoding` crate (url_decode alias above).

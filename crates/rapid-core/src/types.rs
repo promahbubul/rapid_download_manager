@@ -125,6 +125,7 @@ pub struct DownloadConfig {
     pub num_segments: usize,
     pub user_agent: Option<String>,
     pub referrer: Option<String>,
+    pub cookies: Option<String>,
 }
 
 impl Default for DownloadConfig {
@@ -136,6 +137,7 @@ impl Default for DownloadConfig {
             num_segments: 8,
             user_agent: Some("RapidDownloadManager/1.0 (Windows NT 10.0; Win64; x64)".to_string()),
             referrer: None,
+            cookies: None,
         }
     }
 }

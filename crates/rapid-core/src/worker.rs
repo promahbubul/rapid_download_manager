@@ -71,7 +71,7 @@ impl DownloadWorker {
                 continue;
             }
 
-            let mut req = client.get(&url).header(USER_AGENT, "RapidDownloadManager/1.0");
+            let mut req = client.get(&url);
 
             if use_range && end_byte > 0 {
                 let range_val = format!("bytes={}-{}", current_offset, end_byte);

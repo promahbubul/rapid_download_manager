@@ -47,27 +47,27 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Probe { url } => {
-            println!("🔍 Probing URL: {}", url);
+            println!("[*] Probing URL: {}", url);
 
             match Probe::inspect_url(&url).await {
                 Ok(meta) => {
-                    println!("\n✅ Metadata retrieved:");
-                    println!("  • Filename:       {}", meta.filename);
+                    println!("\n[OK] Metadata retrieved:");
+                    println!("  Filename:       {}", meta.filename);
                     if let Some(len) = meta.content_length {
-                        println!("  • Size:           {} bytes ({:.2} MB)", len, len as f64 / (1024.0 * 1024.0));
+                        println!("  Size:           {} bytes ({:.2} MB)", len, len as f64 / (1024.0 * 1024.0));
                     } else {
-                        println!("  • Size:           Unknown (streaming)");
+                        println!("  Size:           Unknown (streaming)");
                     }
-                    println!("  • Resume/Ranges:  {}", if meta.accept_ranges { "Supported (Multi-part available)" } else { "Not supported (Single stream only)" });
+                    println!("  Resume/Ranges:  {}", if meta.accept_ranges { "Supported (Multi-part available)" } else { "Not supported (Single stream only)" });
                     if let Some(etag) = meta.etag {
-                        println!("  • ETag:           {}", etag);
+                        println!("  ETag:           {}", etag);
                     }
                     if let Some(lm) = meta.last_modified {
-                        println!("  • Last-Modified:  {}", lm);
+                        println!("  Last-Modified:  {}", lm);
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Probe failed: {}", e);
+                    eprintln!("[ERR] Probe failed: {}", e);
                 }
             }
         }
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
                 ..Default::default()
             };
 
-            println!("⚡ Rapid Download Manager");
+            println!("[RDM] Rapid Download Manager");
             println!("Target URL: {}", config.url);
             println!("Target Folder: {}", config.output_dir.display());
             println!("Connections: {}", config.num_segments);
@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
             // Handle Ctrl+C gracefully for Pause/Resume
             tokio::spawn(async move {
                 if signal::ctrl_c().await.is_ok() {
-                    println!("\n⏸ Pause signal received! Saving state...");
+                    println!("\n[!!] Pause signal received! Saving state...");
                     task_for_ctrlc.pause();
                 }
             });
@@ -155,10 +155,10 @@ async fn main() -> Result<()> {
                     }
 
                     if progress.status == DownloadStatus::Completed {
-                        main_bar.finish_with_message("✨ Complete!");
+                        main_bar.finish_with_message("[DONE] Complete!");
                         break;
                     } else if progress.status == DownloadStatus::Paused {
-                        main_bar.abandon_with_message("⏸ Paused (State saved)");
+                        main_bar.abandon_with_message("[PAUSED] Paused (State saved)");
                         break;
                     }
                 }
@@ -167,15 +167,15 @@ async fn main() -> Result<()> {
             match task.run().await {
                 Ok(_) => {
                     let _ = ui_handle.await;
-                    println!("\n🎉 Download successfully finished: {}", task.target_file.display());
+                    println!("\n[DONE] Download successfully finished: {}", task.target_file.display());
                 }
                 Err(rapid_core::RapidError::Cancelled) => {
                     let _ = ui_handle.await;
-                    println!("\n⏸ Download paused. Run the same command again to resume!");
+                    println!("\n[PAUSED] Download paused. Run the same command again to resume!");
                 }
                 Err(e) => {
                     let _ = ui_handle.await;
-                    eprintln!("\n❌ Download encountered error: {}", e);
+                    eprintln!("\n[ERR] Download encountered error: {}", e);
                 }
             }
         }

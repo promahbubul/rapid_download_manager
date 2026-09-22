@@ -163,10 +163,10 @@ unsafe extern "system" fn tray_window_proc(
                     let mut pt = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut pt);
                     let h_menu = CreatePopupMenu();
-                    let open_text: Vec<u16> = "⚡ Open Rapid Download Manager\0".encode_utf16().collect();
-                    let pause_text: Vec<u16> = "⏸ Pause All\0".encode_utf16().collect();
-                    let resume_text: Vec<u16> = "▶ Resume All\0".encode_utf16().collect();
-                    let exit_text: Vec<u16> = "❌ Exit Application\0".encode_utf16().collect();
+                    let open_text: Vec<u16> = "[RDM] Open Rapid Download Manager\0".encode_utf16().collect();
+                    let pause_text: Vec<u16> = "[||] Pause All\0".encode_utf16().collect();
+                    let resume_text: Vec<u16> = "[>] Resume All\0".encode_utf16().collect();
+                    let exit_text: Vec<u16> = "[X] Exit Application\0".encode_utf16().collect();
 
                     AppendMenuW(h_menu, MF_STRING, 1, open_text.as_ptr());
                     AppendMenuW(h_menu, MF_SEPARATOR, 0, std::ptr::null());
@@ -300,7 +300,7 @@ impl TrayHandle {
             nid.u_callback_message = WM_TRAYICON;
             nid.h_icon = icon;
 
-            let tip_utf16: Vec<u16> = "Rapid Download Manager\n⚡ Ready & Intercepting\0".encode_utf16().collect();
+            let tip_utf16: Vec<u16> = "Rapid Download Manager - Ready & Intercepting\0".encode_utf16().collect();
             for (idx, &c) in tip_utf16.iter().enumerate().take(127) {
                 nid.sz_tip[idx] = c;
             }

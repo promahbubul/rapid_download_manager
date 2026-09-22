@@ -4,6 +4,7 @@ use chrono::Utc;
 use eframe::egui::{self, Color32, Margin, RichText, Stroke, Vec2};
 use rapid_core::{DownloadConfig, DownloadStatus, DownloadTask};
 use std::path::PathBuf;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -13,24 +14,38 @@ use tokio::sync::Mutex;
 mod tray;
 
 // =========================================================================
-// PROPRIETARY NEON PINK VELVET MASTER PALETTE
+// GLASSMORPHISM MASTER PALETTE (Futuristic • Elegant • Premium)
 // =========================================================================
-const PINK_NEON: Color32 = Color32::from_rgb(255, 42, 133);        // Primary Hot Pink (#FF2A85)
-const PINK_ROSE: Color32 = Color32::from_rgb(255, 102, 178);       // Bright Rose Pink (#FF66B2)
-const PINK_PASTEL: Color32 = Color32::from_rgb(255, 179, 217);     // Soft Rose Pastel (#FFB3D9)
-const PINK_MUTED: Color32 = Color32::from_rgb(190, 140, 175);      // Muted Lavender Rose
-const PINK_ACCENT_BG: Color32 = Color32::from_rgb(45, 18, 38);     // Active / Pill Background
-const PINK_ACCENT_BORDER: Color32 = Color32::from_rgb(85, 32, 70);  // Dark Rose Border
+const GLASS_PRIMARY: Color32 = Color32::from_rgb(139, 92, 246);        // Electric Violet (#8B5CF6)
+const GLASS_PRIMARY_HOVER: Color32 = Color32::from_rgb(167, 139, 250);  // Light Violet Glow (#A78BFA)
+const GLASS_SECONDARY: Color32 = Color32::from_rgb(6, 182, 212);       // Neon Cyan / Electric Aqua (#06B6D4)
+const GLASS_SECONDARY_HOVER: Color32 = Color32::from_rgb(34, 211, 238); // Light Cyan Glow (#22D3EE)
+const GLASS_BG: Color32 = Color32::from_rgb(2, 6, 23);                 // Deep Midnight Slate-950 (#020617)
+const GLASS_SURFACE: Color32 = Color32::from_rgb(11, 18, 36);          // Translucent Dark Glass Surface
+const GLASS_CARD: Color32 = Color32::from_rgb(14, 23, 46);             // Frosted Glass Card Fill
+const GLASS_BORDER: Color32 = Color32::from_rgb(32, 45, 74);           // Glass Rim Border
+const GLASS_TEXT: Color32 = Color32::from_rgb(249, 250, 251);          // Crisp Bright White (#F9FAFB)
+const GLASS_MUTED: Color32 = Color32::from_rgb(156, 163, 175);         // Cool Slate Muted (#9CA3AF)
+const _GLASS_ACCENT_BG: Color32 = Color32::from_rgb(28, 20, 58);       // Violet Aura Pill Fill
+const _GLASS_ACCENT_BORDER: Color32 = Color32::from_rgb(124, 58, 237); // Glowing Violet Rim
 
-const VELVET_BLACK: Color32 = Color32::from_rgb(13, 10, 18);       // Void Background (#0D0A12)
-const VELVET_SURFACE: Color32 = Color32::from_rgb(22, 16, 29);     // Panel Fill (#16101D)
-const _VELVET_CARD: Color32 = Color32::from_rgb(28, 20, 38);       // Row / Card Fill (#1C1426)
-const VELVET_BORDER: Color32 = Color32::from_rgb(52, 34, 64);      // Default Border (#342240)
+// Backward-compatible aliases for seamless rendering
+const PINK_NEON: Color32 = GLASS_PRIMARY;                              // Electric Violet (#8B5CF6)
+const PINK_ROSE: Color32 = GLASS_SECONDARY;                            // Neon Cyan (#06B6D4)
+const PINK_PASTEL: Color32 = GLASS_TEXT;                               // Crisp White (#F9FAFB)
+const PINK_MUTED: Color32 = GLASS_MUTED;                               // Cool Slate Muted (#9CA3AF)
+const _PINK_ACCENT_BG: Color32 = _GLASS_ACCENT_BG;                     // Violet Aura Pill Fill
+const _PINK_ACCENT_BORDER: Color32 = _GLASS_ACCENT_BORDER;             // Glowing Violet Rim
 
-const STATUS_DOWNLOADING: Color32 = PINK_NEON;                          // Neon Pink (#FF2A85)
-const STATUS_COMPLETED: Color32 = Color32::from_rgb(60, 215, 145);      // Clean Mint Emerald (#3CD791)
-const STATUS_PAUSED: Color32 = Color32::from_rgb(255, 185, 90);         // Warm Amber (#FFB95A)
-const STATUS_FAILED: Color32 = Color32::from_rgb(255, 75, 105);         // Crimson Rose (#FF4B69)
+const VELVET_BLACK: Color32 = GLASS_BG;                                // Deep Midnight (#020617)
+const VELVET_SURFACE: Color32 = GLASS_SURFACE;                         // Glass Surface (#0B1224)
+const _VELVET_CARD: Color32 = GLASS_CARD;                              // Frosted Card (#0E172E)
+const VELVET_BORDER: Color32 = GLASS_BORDER;                           // Glass Rim Border (#202D4A)
+
+const STATUS_DOWNLOADING: Color32 = GLASS_SECONDARY;                   // Neon Cyan (#06B6D4)
+const STATUS_COMPLETED: Color32 = Color32::from_rgb(16, 185, 129);     // Emerald Mint (#10B981)
+const STATUS_PAUSED: Color32 = Color32::from_rgb(245, 158, 11);        // Warm Amber (#F59E0B)
+const STATUS_FAILED: Color32 = Color32::from_rgb(244, 63, 94);         // Crimson Rose (#F43F5E)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FilterCategory {
@@ -42,6 +57,7 @@ enum FilterCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModernIcon {
+    Close,
     Play,
     Pause,
     Refresh,
@@ -54,12 +70,26 @@ enum ModernIcon {
     Check,
     PulseBeacon,
     SpeedGauge,
+    WinMinimize,
+    WinMaximize,
+    WinRestore,
+    WinClose,
 }
 
 fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect, color: Color32) {
     let center = rect.center();
     let stroke = Stroke::new(1.5_f32, color);
     match icon {
+        ModernIcon::Close => {
+            painter.line_segment(
+                [egui::pos2(center.x - 5.0, center.y - 5.0), egui::pos2(center.x + 5.0, center.y + 5.0)],
+                Stroke::new(2.0_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x + 5.0, center.y - 5.0), egui::pos2(center.x - 5.0, center.y + 5.0)],
+                Stroke::new(2.0_f32, color),
+            );
+        }
         ModernIcon::Play => {
             let half_h = 5.0_f32;
             let p1 = egui::pos2(center.x - 3.5, center.y - half_h);
@@ -214,7 +244,67 @@ fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect,
                 Stroke::new(1.6_f32, color),
             );
         }
+        ModernIcon::WinMinimize => {
+            let len = 6.0_f32;
+            painter.line_segment(
+                [egui::pos2(center.x - len, center.y), egui::pos2(center.x + len, center.y)],
+                Stroke::new(1.8_f32, color),
+            );
+        }
+        ModernIcon::WinMaximize => {
+            let s = 5.5_f32;
+            let box_rect = egui::Rect::from_center_size(center, Vec2::new(s * 2.0, s * 2.0));
+            painter.rect_stroke(box_rect, 1.0, Stroke::new(1.8_f32, color));
+        }
+        ModernIcon::WinRestore => {
+            let s = 4.5_f32;
+            let b1 = egui::Rect::from_center_size(egui::pos2(center.x + 2.2, center.y - 2.2), Vec2::new(s * 2.0, s * 2.0));
+            painter.rect_stroke(b1, 1.0, Stroke::new(1.4_f32, color));
+            let b2 = egui::Rect::from_center_size(egui::pos2(center.x - 2.2, center.y + 2.2), Vec2::new(s * 2.0, s * 2.0));
+            painter.rect_stroke(b2, 1.0, Stroke::new(1.8_f32, color));
+        }
+        ModernIcon::WinClose => {
+            let d = 5.5_f32;
+            painter.line_segment(
+                [egui::pos2(center.x - d, center.y - d), egui::pos2(center.x + d, center.y + d)],
+                Stroke::new(1.8_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x + d, center.y - d), egui::pos2(center.x - d, center.y + d)],
+                Stroke::new(1.8_f32, color),
+            );
+        }
     }
+}
+
+fn window_caption_button(
+    ui: &mut egui::Ui,
+    icon: ModernIcon,
+    size: Vec2,
+    default_color: Color32,
+    hover_icon_color: Color32,
+    hover_bg_color: Color32,
+    tooltip: &str,
+) -> bool {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let is_hovered = response.hovered();
+
+    if is_hovered {
+        ui.painter().rect_filled(rect, 4.0, hover_bg_color);
+    }
+
+    let icon_color = if is_hovered {
+        hover_icon_color
+    } else {
+        default_color
+    };
+
+    draw_modern_icon(ui.painter(), icon, rect, icon_color);
+
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip)
+        .clicked()
 }
 
 fn modern_icon_button(
@@ -229,15 +319,15 @@ fn modern_icon_button(
     let is_hovered = response.hovered();
 
     let bg_color = if is_hovered {
-        Color32::from_rgb(48, 22, 44)
+        Color32::from_rgb(26, 36, 62)
     } else {
-        Color32::from_rgb(26, 18, 34)
+        GLASS_CARD
     };
 
     let border_stroke = if is_hovered {
-        Stroke::new(1.2_f32, PINK_NEON)
+        Stroke::new(1.2_f32, GLASS_SECONDARY)
     } else {
-        Stroke::new(1.0_f32, Color32::from_rgb(52, 34, 64))
+        Stroke::new(1.0_f32, GLASS_BORDER)
     };
 
     let icon_color = if is_hovered {
@@ -249,23 +339,26 @@ fn modern_icon_button(
     ui.painter().rect(rect, 5.0, bg_color, border_stroke);
     draw_modern_icon(ui.painter(), icon, rect, icon_color);
 
-    response.on_hover_text(tooltip).clicked()
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip)
+        .clicked()
 }
 
 fn render_file_type_badge(ui: &mut egui::Ui, ext: &str) {
     let (tag, color, bg) = match ext {
-        "pdf" | "doc" | "docx" | "txt" => ("DOC", PINK_ROSE, Color32::from_rgb(45, 18, 36)),
-        "mp4" | "mkv" | "avi" | "mov" | "webm" => ("VID", PINK_NEON, Color32::from_rgb(55, 16, 42)),
-        "zip" | "rar" | "7z" | "tar" | "gz" => ("ZIP", PINK_PASTEL, Color32::from_rgb(38, 22, 46)),
-        "mp3" | "wav" | "flac" | "aac" => ("AUD", Color32::from_rgb(255, 150, 200), Color32::from_rgb(40, 18, 40)),
-        "exe" | "msi" | "iso" => ("BIN", PINK_NEON, Color32::from_rgb(60, 20, 50)),
-        "jpg" | "png" | "gif" | "webp" | "svg" => ("IMG", Color32::from_rgb(255, 120, 170), Color32::from_rgb(45, 18, 38)),
-        _ => ("FILE", PINK_MUTED, Color32::from_rgb(30, 20, 36)),
+        "pdf" | "doc" | "docx" | "txt" => ("DOC", GLASS_PRIMARY, Color32::from_rgb(30, 22, 58)),
+        "mp4" | "mkv" | "avi" | "mov" | "webm" => ("VID", GLASS_SECONDARY, Color32::from_rgb(12, 36, 48)),
+        "zip" | "rar" | "7z" | "tar" | "gz" => ("ZIP", Color32::from_rgb(168, 85, 247), Color32::from_rgb(32, 20, 52)),
+        "mp3" | "wav" | "flac" | "aac" => ("AUD", Color32::from_rgb(56, 189, 248), Color32::from_rgb(14, 34, 52)),
+        "exe" | "msi" | "iso" => ("BIN", Color32::from_rgb(99, 102, 241), Color32::from_rgb(24, 26, 56)),
+        "jpg" | "png" | "gif" | "webp" | "svg" => ("IMG", Color32::from_rgb(236, 72, 153), Color32::from_rgb(46, 20, 38)),
+        _ => ("FILE", GLASS_MUTED, Color32::from_rgb(18, 26, 42)),
     };
 
     egui::Frame::none()
         .fill(bg)
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(70, 32, 60)))
+        .stroke(Stroke::new(1.0_f32, color))
         .rounding(egui::Rounding::same(3.5))
         .inner_margin(Margin::symmetric(4.5, 2.0))
         .show(ui, |ui| {
@@ -287,6 +380,7 @@ struct ActiveTaskUI {
     segments: Vec<rapid_core::Segment>,
     task_handle: Option<Arc<DownloadTask>>,
     num_segments: usize,
+    is_resuming: bool,
 }
 
 struct RapidApp {
@@ -307,6 +401,9 @@ struct RapidApp {
     input_segments: usize,
     add_error: Option<String>,
     is_probing: bool,
+    selected_tasks: HashSet<String>,
+    show_delete_modal: bool,
+    tasks_to_delete: HashSet<String>,
 
     #[cfg(windows)]
     tray_handle: Option<tray::TrayHandle>,
@@ -314,20 +411,60 @@ struct RapidApp {
 
 impl RapidApp {
     fn new(cc: &eframe::CreationContext<'_>, rt: Arc<Runtime>) -> Self {
-        // Master Color Palette: Neon Pink Velvet Dark Theme
+        // Master Color Palette: Glassmorphism Dark Theme (Futuristic • Elegant • Premium)
         let mut visuals = egui::Visuals::dark();
         visuals.window_rounding = egui::Rounding::same(8.0);
-        visuals.panel_fill = VELVET_SURFACE;
-        visuals.faint_bg_color = Color32::from_rgb(24, 18, 32);     // Subtle alternate striped row
-        visuals.extreme_bg_color = Color32::from_rgb(18, 12, 26);   // Deep recessed groove for progress bars
-        visuals.widgets.noninteractive.bg_fill = VELVET_SURFACE;
-        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, VELVET_BORDER);
-        visuals.selection.bg_fill = Color32::from_rgb(56, 24, 52);  // Rich Midnight Velvet Wine (NOT blinding solid pink)
-        visuals.selection.stroke = Stroke::new(1.5_f32, PINK_NEON); // 1.5px crisp glowing neon pink border
+        visuals.panel_fill = GLASS_SURFACE;                          // Translucent Glass Surface (#0B1224)
+        visuals.faint_bg_color = Color32::from_rgb(14, 22, 44);      // Subtle alternate glass row
+        visuals.extreme_bg_color = GLASS_BG;                         // Deep Midnight Groove (#020617)
+        visuals.widgets.noninteractive.bg_fill = GLASS_SURFACE;
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, GLASS_BORDER);
+        visuals.selection.bg_fill = Color32::from_rgb(30, 24, 64);   // Translucent Violet Aura
+        visuals.selection.stroke = Stroke::new(1.5_f32, GLASS_PRIMARY); // 1.5px glowing Electric Violet border
         cc.egui_ctx.set_visuals(visuals);
 
         let default_download_dir = dirs_or_fallback();
-        let tasks_arc = Arc::new(Mutex::new(Vec::new()));
+
+        let mut initial_tasks = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&default_download_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("rapid") {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(mut state) = serde_json::from_str::<rapid_core::DownloadTaskState>(&content) {
+                            let downloaded_bytes: u64 = state.segments.iter().map(|s| s.downloaded_bytes).sum();
+                            let total = state.total_bytes.unwrap_or(0);
+                            let progress_percent = if total > 0 { (downloaded_bytes as f32 / total as f32) * 100.0 } else { 0.0 };
+                            
+                            if state.status == rapid_core::DownloadStatus::Downloading {
+                                state.status = rapid_core::DownloadStatus::Paused;
+                            }
+                            
+                            let ui = ActiveTaskUI {
+                                id: state.id,
+                                filename: state.target_file.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                                url: state.url,
+                                target_file: state.target_file,
+                                total_bytes: state.total_bytes,
+                                downloaded_bytes,
+                                progress_percent,
+                                speed_bps: 0,
+                                eta_seconds: None,
+                                status: state.status,
+                                num_segments: state.segments.len(),
+                                segments: state.segments,
+                                task_handle: None,
+                                is_resuming: false,
+                            };
+                            initial_tasks.push(ui);
+                        }
+                    }
+                }
+            }
+        }
+        
+        let tasks_arc = Arc::new(tokio::sync::Mutex::new(initial_tasks));
+
 
         // Start local browser extension receiver on 127.0.0.1:9669
         let tasks_for_server = Arc::clone(&tasks_arc);
@@ -355,6 +492,9 @@ impl RapidApp {
             input_segments: 8,
             add_error: None,
             is_probing: false,
+            selected_tasks: HashSet::new(),
+            show_delete_modal: false,
+            tasks_to_delete: HashSet::new(),
             #[cfg(windows)]
             tray_handle,
         }
@@ -398,7 +538,7 @@ impl RapidApp {
         self.is_probing = true;
         self.add_error = None;
 
-        spawn_download_task(url, dest_dir, segments, None, rt, tasks_arc);
+        spawn_download_task(url, dest_dir, segments, None, None, None, rt, tasks_arc);
 
         self.is_probing = false;
         self.show_add_dialog = false;
@@ -451,6 +591,7 @@ impl RapidApp {
                         if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
                             item.task_handle = Some(Arc::clone(&task_arc));
                             item.status = DownloadStatus::Downloading;
+                            item.is_resuming = false;
                         }
                     }
 
@@ -670,26 +811,26 @@ impl RapidApp {
 
                     let painter = ui.painter();
 
-                    // Expanding outer glow ripple in Neon Pink
+                    // Expanding outer glow ripple in Neon Cyan (#06B6D4)
                     let ripple_phase = (time * 1.6) % 1.0;
                     let ripple_radius = 40.0 + ripple_phase * 35.0;
                     let ripple_alpha = ((1.0 - ripple_phase) * 140.0) as u8;
                     painter.circle_stroke(
                         center,
                         ripple_radius,
-                        Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(255, 42, 133, ripple_alpha)),
+                        Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(6, 182, 212, ripple_alpha)),
                     );
 
-                    // Inner pulsing halo
+                    // Inner pulsing halo in Electric Violet (#8B5CF6)
                     painter.circle_filled(
                         center,
                         38.0 * pulse_scale,
-                        Color32::from_rgba_unmultiplied(255, 42, 133, 30),
+                        Color32::from_rgba_unmultiplied(139, 92, 246, 35),
                     );
                     painter.circle_stroke(
                         center,
                         40.0 * pulse_scale,
-                        Stroke::new(2.5_f32, PINK_NEON),
+                        Stroke::new(2.5_f32, GLASS_PRIMARY),
                     );
 
                     // Centered Lightning Bolt icon
@@ -698,7 +839,7 @@ impl RapidApp {
                         egui::Align2::CENTER_CENTER,
                         "⚡",
                         egui::FontId::proportional(44.0 * pulse_scale),
-                        PINK_NEON,
+                        GLASS_PRIMARY,
                     );
 
                     ui.add_space(26.0);
@@ -706,20 +847,20 @@ impl RapidApp {
                         RichText::new("RAPID DOWNLOAD MANAGER")
                             .size(24.0)
                             .strong()
-                            .color(PINK_NEON),
+                            .color(GLASS_PRIMARY),
                     );
 
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new("Proprietary Multi-Stream Acceleration • Velvet Pink Edition")
+                        RichText::new("Futuristic • Elegant • Premium • Glassmorphism Edition")
                             .size(13.0)
-                            .color(PINK_PASTEL),
+                            .color(GLASS_SECONDARY),
                     );
 
                     ui.add_space(28.0);
                     let bar = egui::ProgressBar::new(progress)
                         .desired_width(320.0)
-                        .fill(PINK_NEON);
+                        .fill(GLASS_SECONDARY);
                     ui.add(bar);
 
                     ui.add_space(10.0);
@@ -738,10 +879,120 @@ impl RapidApp {
                 });
             });
     }
+
+    // Render Custom Frameless Window Title Bar
+    fn render_custom_title_bar(&self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("custom_window_title_bar")
+            .frame(
+                egui::Frame::none()
+                    .fill(GLASS_BG)
+                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                    .inner_margin(Margin::symmetric(14.0, 6.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
+
+                    // 1. App Icon & Brand Title (Left Side)
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), egui::Sense::hover());
+                    let center = icon_rect.center();
+                    ui.painter().circle(
+                        center,
+                        13.5,
+                        Color32::from_rgb(28, 20, 58),
+                        Stroke::new(1.2_f32, GLASS_PRIMARY),
+                    );
+                    ui.painter().text(
+                        center,
+                        egui::Align2::CENTER_CENTER,
+                        "⚡",
+                        egui::FontId::proportional(14.0),
+                        GLASS_PRIMARY_HOVER,
+                    );
+
+                    ui.add_space(3.0);
+                    ui.label(
+                        RichText::new("Rapid Download Manager")
+                            .size(13.5)
+                            .strong()
+                            .color(GLASS_TEXT),
+                    );
+
+                    // 2. Drag & Move Region (takes up flexible remaining width)
+                    let remaining_w = (ui.available_width() - 150.0).max(20.0);
+                    let (_drag_rect, drag_resp) = ui.allocate_exact_size(
+                        Vec2::new(remaining_w, 34.0),
+                        egui::Sense::click_and_drag(),
+                    );
+                    let drag_resp = drag_resp.on_hover_cursor(egui::CursorIcon::Grab);
+
+                    if drag_resp.drag_started_by(egui::PointerButton::Primary) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                    if drag_resp.double_clicked() {
+                        let is_max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
+                    }
+
+                    // 3. Window Caption Buttons (Right-to-Left: Close, Maximize/Restore, Minimize)
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+
+                        // Close Button (✕) -> Minimizes to System Tray (IDM style)
+                        if window_caption_button(
+                            ui,
+                            ModernIcon::WinClose,
+                            Vec2::new(46.0, 34.0),
+                            GLASS_MUTED,
+                            Color32::WHITE,
+                            Color32::from_rgb(239, 68, 68),
+                            "Close (Minimizes to System Tray)",
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        }
+
+                        // Maximize / Restore Button (▢ / ❐)
+                        let (max_icon, max_tip) = if is_maximized {
+                            (ModernIcon::WinRestore, "Restore Window")
+                        } else {
+                            (ModernIcon::WinMaximize, "Maximize Window")
+                        };
+
+                        if window_caption_button(
+                            ui,
+                            max_icon,
+                            Vec2::new(46.0, 34.0),
+                            GLASS_MUTED,
+                            GLASS_SECONDARY,
+                            Color32::from_rgb(26, 36, 62),
+                            max_tip,
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                        }
+
+                        // Minimize Button (—)
+                        if window_caption_button(
+                            ui,
+                            ModernIcon::WinMinimize,
+                            Vec2::new(46.0, 34.0),
+                            GLASS_MUTED,
+                            GLASS_SECONDARY,
+                            Color32::from_rgb(26, 36, 62),
+                            "Minimize to Taskbar",
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    });
+                });
+            });
+    }
 }
 
 impl eframe::App for RapidApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Render custom frameless title bar at the top of the window
+        self.render_custom_title_bar(ctx);
+
         // Handle animated splash screen on startup
         let elapsed = self.splash_start.elapsed();
         if elapsed < self.splash_duration {
@@ -835,108 +1086,111 @@ impl eframe::App for RapidApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    // 1. Brand Logo Badge
-                    ui.label(RichText::new("⚡ RAPID").size(19.0).strong().color(PINK_NEON));
-                    egui::Frame::none()
-                        .fill(PINK_ACCENT_BG)
-                        .stroke(Stroke::new(1.0_f32, PINK_ACCENT_BORDER))
-                        .rounding(egui::Rounding::same(4.0))
-                        .inner_margin(Margin::symmetric(6.0, 2.0))
-                        .show(ui, |ui| {
-                            ui.label(RichText::new("PRO 1.0").size(10.0).color(PINK_ROSE).strong());
-                        });
-
-                    ui.add_space(14.0);
-
-                    // 2. Proprietary Filter Dock (Tabs: All, Active, Paused, Completed)
+                    // 1. High-Precision Segmented Filter Control (All Downloads, Downloading, Paused, Completed)
                     let total_tasks_count = if let Ok(ref t) = self.tasks.try_lock() { t.len() } else { 0 };
                     let filter_tabs = [
-                        (FilterCategory::All, format!("All ({})", total_tasks_count), "Show all download transfers"),
-                        (FilterCategory::Active, format!("Active ({})", active_count), "Show active transfers"),
-                        (FilterCategory::Paused, format!("Paused ({})", paused_count), "Show paused & interrupted transfers"),
-                        (FilterCategory::Completed, format!("Completed ({})", finished_count), "Show completed downloads"),
+                        (FilterCategory::All, "All Downloads", total_tasks_count, "Show all downloads"),
+                        (FilterCategory::Active, "Downloading", active_count, "Show actively downloading files"),
+                        (FilterCategory::Paused, "Paused", paused_count, "Show paused and interrupted downloads"),
+                        (FilterCategory::Completed, "Completed", finished_count, "Show completed downloads"),
                     ];
 
-                    for (cat, label, tip) in filter_tabs {
-                        let is_active = self.selected_filter == cat;
-                        let (bg, border, text_col) = if is_active {
-                            (PINK_NEON, PINK_ROSE, Color32::WHITE)
-                        } else {
-                            (Color32::from_rgb(26, 18, 34), Color32::from_rgb(48, 32, 58), Color32::from_rgb(190, 170, 200))
-                        };
-
-                        let btn = egui::Button::new(RichText::new(label).size(11.5).color(text_col).strong())
-                            .fill(bg)
-                            .stroke(Stroke::new(1.0_f32, border))
-                            .rounding(egui::Rounding::same(6.0));
-
-                        if ui.add(btn).on_hover_text(tip).clicked() {
-                            self.selected_filter = cat;
-                        }
-                        ui.add_space(2.0);
-                    }
-
-                    // 3. Search Filter Box
-                    ui.add_space(10.0);
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(15, 11, 20))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(56, 36, 68)))
-                        .rounding(egui::Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(8.0, 4.0))
+                        .fill(GLASS_BG)
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                        .rounding(egui::Rounding::same(8.0))
+                        .inner_margin(Margin::symmetric(3.0, 3.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
-                                draw_modern_icon(ui.painter(), ModernIcon::Search, rect, PINK_ROSE);
+                                ui.spacing_mut().item_spacing = Vec2::new(2.0, 0.0);
+                                for (cat, label, count, tip) in filter_tabs {
+                                    let is_active = self.selected_filter == cat;
+                                    let tab_text = format!("{} ({})", label, count);
+                                    let text_widget = RichText::new(tab_text)
+                                        .size(11.5)
+                                        .color(if is_active { Color32::WHITE } else { GLASS_MUTED })
+                                        .strong();
+
+                                    let btn = if is_active {
+                                        egui::Button::new(text_widget)
+                                            .fill(GLASS_PRIMARY)
+                                            .rounding(egui::Rounding::same(6.0))
+                                    } else {
+                                        egui::Button::new(text_widget)
+                                            .fill(Color32::TRANSPARENT)
+                                            .rounding(egui::Rounding::same(6.0))
+                                    };
+
+                                    if ui.add(btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+                                        self.selected_filter = cat;
+                                    }
+                                }
+                            });
+                        });
+
+                    // 2. Search Filter Box
+                    ui.add_space(8.0);
+                    egui::Frame::none()
+                        .fill(GLASS_BG)
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                        .rounding(egui::Rounding::same(8.0))
+                        .inner_margin(Margin::symmetric(9.0, 5.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(13.0, 13.0), egui::Sense::hover());
+                                draw_modern_icon(ui.painter(), ModernIcon::Search, rect, GLASS_SECONDARY);
                                 ui.add_space(4.0);
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.search_query)
-                                        .hint_text("Search files...")
-                                        .desired_width(130.0)
+                                        .hint_text("Search downloads (name, URL)...")
+                                        .desired_width(170.0)
                                         .frame(false)
                                 );
-                                if !self.search_query.is_empty() && ui.small_button("✕").clicked() {
+                                if !self.search_query.is_empty() && ui.small_button("✕").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                     self.search_query.clear();
                                 }
                             });
                         });
 
-                    // 4. Right-side global controls
+                    // 3. Right-side action controls
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Minimize to System Tray
-                        if modern_icon_button(ui, ModernIcon::MinimizeTray, Vec2::new(28.0, 26.0), PINK_PASTEL, PINK_NEON, "Minimize to Windows System Tray") {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                        }
-
-                        // Resume All
-                        if modern_icon_button(ui, ModernIcon::Play, Vec2::new(28.0, 26.0), PINK_ROSE, PINK_NEON, "Resume all paused downloads") {
-                            do_resume_all = true;
-                        }
-
-                        // Pause All
-                        if modern_icon_button(ui, ModernIcon::Pause, Vec2::new(28.0, 26.0), STATUS_PAUSED, PINK_NEON, "Pause all active downloads") {
-                            do_pause_all = true;
-                        }
-
-                        // Primary Action Button: Glowing Neon Pink New Transfer Button
-                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(135.0, 28.0), egui::Sense::click());
+                        // Primary Action Button: "+ Add Download"
+                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(140.0, 32.0), egui::Sense::click());
                         let is_btn_h = btn_resp.hovered();
-                        let btn_bg = if is_btn_h { PINK_ROSE } else { PINK_NEON };
-                        ui.painter().rect_filled(btn_rect, 6.0, btn_bg);
+                        let btn_bg = if is_btn_h { GLASS_PRIMARY_HOVER } else { GLASS_PRIMARY };
+                        ui.painter().rect_filled(btn_rect, 7.0, btn_bg);
                         let plus_rect = egui::Rect::from_center_size(
                             egui::pos2(btn_rect.min.x + 18.0, btn_rect.center().y),
                             Vec2::new(12.0, 12.0),
                         );
                         draw_modern_icon(ui.painter(), ModernIcon::Plus, plus_rect, Color32::WHITE);
                         ui.painter().text(
-                            egui::pos2(btn_rect.min.x + 30.0, btn_rect.center().y),
+                            egui::pos2(btn_rect.min.x + 32.0, btn_rect.center().y),
                             egui::Align2::LEFT_CENTER,
-                            "New Transfer",
+                            "+ Add Download",
                             egui::FontId::proportional(12.5),
                             Color32::WHITE,
                         );
 
-                        if btn_resp.on_hover_text("Add a new accelerated download transfer").clicked() {
+                        if btn_resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Add a new accelerated download URL").clicked() {
                             self.show_add_dialog = true;
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Pause All
+                        if modern_icon_button(ui, ModernIcon::Pause, Vec2::new(32.0, 30.0), STATUS_PAUSED, GLASS_PRIMARY, "Pause all active downloads") {
+                            do_pause_all = true;
+                        }
+
+                        // Resume All
+                        if modern_icon_button(ui, ModernIcon::Play, Vec2::new(32.0, 30.0), GLASS_SECONDARY, GLASS_SECONDARY_HOVER, "Resume all paused downloads") {
+                            do_resume_all = true;
+                        }
+
+                        // Minimize to System Tray
+                        if modern_icon_button(ui, ModernIcon::MinimizeTray, Vec2::new(32.0, 30.0), GLASS_MUTED, GLASS_SECONDARY, "Minimize to Windows System Tray") {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                         }
                     });
                 });
@@ -977,12 +1231,12 @@ impl eframe::App for RapidApp {
                         }
 
                         ui.add_space(10.0);
-                        if is_resumable && modern_icon_button(ui, ModernIcon::Play, Vec2::new(26.0, 22.0), STATUS_COMPLETED, PINK_NEON, "Resume transfer") {
+                        if is_resumable && modern_icon_button(ui, ModernIcon::Play, Vec2::new(26.0, 22.0), STATUS_COMPLETED, PINK_NEON, "Resume download") {
                             if let Some(idx) = self.selected_task_index {
                                 action_resume = Some(idx);
                             }
                         }
-                        if is_downloading && modern_icon_button(ui, ModernIcon::Pause, Vec2::new(26.0, 22.0), STATUS_PAUSED, PINK_NEON, "Pause transfer") {
+                        if is_downloading && modern_icon_button(ui, ModernIcon::Pause, Vec2::new(26.0, 22.0), STATUS_PAUSED, PINK_NEON, "Pause download") {
                             if let Some(idx) = self.selected_task_index {
                                 action_pause = Some(idx);
                             }
@@ -997,7 +1251,7 @@ impl eframe::App for RapidApp {
                                 action_redownload = Some(idx);
                             }
                         }
-                        if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(26.0, 22.0), STATUS_FAILED, Color32::from_rgb(255, 40, 80), "Delete transfer") {
+                        if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(26.0, 22.0), STATUS_FAILED, Color32::from_rgb(255, 40, 80), "Delete download") {
                             if let Some(idx) = self.selected_task_index {
                                 action_remove = Some(idx);
                             }
@@ -1006,12 +1260,12 @@ impl eframe::App for RapidApp {
                 }
             });
 
-        // Custom Neon Pink Velvet Status Bar
+        // Custom Glassmorphism Status Bar
         egui::TopBottomPanel::bottom("custom_status_bar")
             .frame(
                 egui::Frame::none()
-                    .fill(VELVET_BLACK)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(44, 28, 54)))
+                    .fill(GLASS_BG)
+                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                     .inner_margin(Margin::symmetric(10.0, 5.0)),
             )
             .show(ctx, |ui| {
@@ -1024,9 +1278,9 @@ impl eframe::App for RapidApp {
                         ModernIcon::PulseBeacon,
                         "Engine:",
                         "127.0.0.1:9669",
-                        Color32::from_rgb(32, 12, 28),
-                        PINK_ROSE,
-                        PINK_NEON,
+                        Color32::from_rgb(22, 18, 48),
+                        GLASS_PRIMARY,
+                        GLASS_PRIMARY,
                         "Rapid Engine Background HTTP Listener is Active on 127.0.0.1:9669",
                     );
 
@@ -1037,9 +1291,9 @@ impl eframe::App for RapidApp {
                             ModernIcon::SpeedGauge,
                             "Speed:",
                             &format_speed(total_speed_bps),
-                            Color32::from_rgb(42, 14, 34),
-                            PINK_NEON,
-                            PINK_NEON,
+                            Color32::from_rgb(12, 34, 46),
+                            GLASS_SECONDARY,
+                            GLASS_SECONDARY,
                             "Live Aggregate Download Speed",
                         );
                     } else {
@@ -1048,9 +1302,9 @@ impl eframe::App for RapidApp {
                             ModernIcon::SpeedGauge,
                             "Speed:",
                             "0.0 KB/s",
-                            Color32::from_rgb(20, 15, 25),
-                            Color32::from_rgb(48, 32, 56),
-                            Color32::from_rgb(140, 120, 150),
+                            GLASS_CARD,
+                            GLASS_BORDER,
+                            GLASS_MUTED,
                             "Download Speed (Idle)",
                         );
                     }
@@ -1061,10 +1315,10 @@ impl eframe::App for RapidApp {
                         ModernIcon::Play,
                         "Active:",
                         &active_count.to_string(),
-                        if active_count > 0 { Color32::from_rgb(38, 16, 32) } else { Color32::from_rgb(20, 15, 25) },
-                        if active_count > 0 { PINK_ROSE } else { Color32::from_rgb(48, 32, 56) },
-                        if active_count > 0 { PINK_PASTEL } else { Color32::from_rgb(140, 120, 150) },
-                        "Number of downloads currently transferring",
+                        if active_count > 0 { Color32::from_rgb(12, 34, 46) } else { GLASS_CARD },
+                        if active_count > 0 { GLASS_SECONDARY } else { GLASS_BORDER },
+                        if active_count > 0 { GLASS_TEXT } else { GLASS_MUTED },
+                        "Number of active downloading files",
                     );
 
                     // 4. Paused Tasks Chip
@@ -1073,9 +1327,9 @@ impl eframe::App for RapidApp {
                         ModernIcon::Pause,
                         "Paused:",
                         &paused_count.to_string(),
-                        if paused_count > 0 { Color32::from_rgb(40, 24, 18) } else { Color32::from_rgb(20, 15, 25) },
-                        if paused_count > 0 { STATUS_PAUSED } else { Color32::from_rgb(48, 32, 56) },
-                        if paused_count > 0 { Color32::from_rgb(255, 195, 150) } else { Color32::from_rgb(140, 120, 150) },
+                        if paused_count > 0 { Color32::from_rgb(40, 26, 16) } else { GLASS_CARD },
+                        if paused_count > 0 { STATUS_PAUSED } else { GLASS_BORDER },
+                        if paused_count > 0 { STATUS_PAUSED } else { GLASS_MUTED },
                         "Number of paused downloads",
                     );
 
@@ -1085,9 +1339,9 @@ impl eframe::App for RapidApp {
                         ModernIcon::Check,
                         "Done:",
                         &finished_count.to_string(),
-                        if finished_count > 0 { Color32::from_rgb(35, 14, 30) } else { Color32::from_rgb(20, 15, 25) },
-                        if finished_count > 0 { PINK_ROSE } else { Color32::from_rgb(48, 32, 56) },
-                        if finished_count > 0 { PINK_ROSE } else { Color32::from_rgb(140, 120, 150) },
+                        if finished_count > 0 { Color32::from_rgb(14, 36, 26) } else { GLASS_CARD },
+                        if finished_count > 0 { STATUS_COMPLETED } else { GLASS_BORDER },
+                        if finished_count > 0 { STATUS_COMPLETED } else { GLASS_MUTED },
                         "Completed downloads in this session",
                     );
 
@@ -1096,9 +1350,9 @@ impl eframe::App for RapidApp {
                         ui,
                         "Total:",
                         &format_bytes(total_downloaded),
-                        Color32::from_rgb(24, 18, 30),
-                        Color32::from_rgb(52, 36, 62),
-                        Color32::from_rgb(220, 195, 225),
+                        GLASS_CARD,
+                        GLASS_BORDER,
+                        GLASS_TEXT,
                         "Total data downloaded across all tasks",
                     );
 
@@ -1108,9 +1362,9 @@ impl eframe::App for RapidApp {
                             ui,
                             "Tray:",
                             "Active",
-                            Color32::from_rgb(24, 18, 30),
-                            Color32::from_rgb(50, 34, 60),
-                            PINK_MUTED,
+                            GLASS_CARD,
+                            GLASS_BORDER,
+                            GLASS_MUTED,
                             "Rapid Download Manager is active in Windows Notification Area (System Tray)",
                         );
 
@@ -1175,7 +1429,7 @@ impl eframe::App for RapidApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new(format!("⚠ Error: {}", err)).color(STATUS_FAILED).strong());
-                                                if ui.button(RichText::new("🔄 Retry Now").strong()).clicked() {
+                                                if ui.button(RichText::new("🔄 Retry Now").strong()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                     action_resume = Some(idx);
                                                 }
                                             });
@@ -1190,7 +1444,7 @@ impl eframe::App for RapidApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("⏸ Download paused").color(STATUS_PAUSED).strong());
-                                                if ui.button(RichText::new("▶ Resume Download").strong()).clicked() {
+                                                if ui.button(RichText::new("▶ Resume Download").strong()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                     action_resume = Some(idx);
                                                 }
                                             });
@@ -1267,14 +1521,14 @@ impl eframe::App for RapidApp {
                             let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(48.0, 48.0), egui::Sense::hover());
                             draw_modern_icon(ui.painter(), ModernIcon::Plus, icon_rect, PINK_ROSE);
                             ui.add_space(12.0);
-                            ui.label(RichText::new("No transfers queued").size(18.0).color(PINK_PASTEL).strong());
+                            ui.label(RichText::new("No downloads in queue").size(18.0).color(PINK_PASTEL).strong());
                             ui.add_space(4.0);
                             ui.label(RichText::new("Add a URL or trigger from Chrome / Edge / Brave extension").size(12.0).color(PINK_MUTED));
                             ui.add_space(16.0);
-                            let add_btn = egui::Button::new(RichText::new("+ Add your first transfer").size(13.0).strong().color(Color32::WHITE))
+                            let add_btn = egui::Button::new(RichText::new("+ Add your first download").size(13.0).strong().color(Color32::WHITE))
                                 .fill(PINK_NEON)
                                 .rounding(egui::Rounding::same(6.0));
-                            if ui.add(add_btn).clicked() {
+                            if ui.add(add_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                 self.show_add_dialog = true;
                             }
                         });
@@ -1284,7 +1538,7 @@ impl eframe::App for RapidApp {
                             let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(36.0, 36.0), egui::Sense::hover());
                             draw_modern_icon(ui.painter(), ModernIcon::Search, icon_rect, PINK_ROSE);
                             ui.add_space(12.0);
-                            ui.label(RichText::new("No transfers match the current filter").size(16.0).color(PINK_PASTEL));
+                            ui.label(RichText::new("No downloads match the current filter").size(16.0).color(PINK_PASTEL));
                         });
                     } else {
                         egui::ScrollArea::vertical()
@@ -1294,6 +1548,7 @@ impl eframe::App for RapidApp {
                                     .striped(true)
                                     .resizable(true)
                                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                    .column(egui_extras::Column::exact(30.0)) // Checkbox
                                     .column(egui_extras::Column::remainder().at_least(220.0).resizable(true)) // Filename
                                     .column(egui_extras::Column::initial(80.0).at_least(65.0))                 // Size
                                     .column(egui_extras::Column::initial(95.0).at_least(80.0))                 // Status
@@ -1302,6 +1557,24 @@ impl eframe::App for RapidApp {
                                     .column(egui_extras::Column::initial(65.0).at_least(50.0))                 // ETA
                                     .column(egui_extras::Column::exact(140.0))                                 // Actions
                                     .header(26.0, |mut header| {
+                                        header.col(|ui| {
+                                            let all_selected = !filtered_indices.is_empty() && filtered_indices.iter().all(|&i| {
+                                                let id = &tasks[i].id;
+                                                self.selected_tasks.contains(id)
+                                            });
+                                            let mut check = all_selected;
+                                            if ui.checkbox(&mut check, "").clicked() {
+                                                if check {
+                                                    for &i in &filtered_indices {
+                                                        self.selected_tasks.insert(tasks[i].id.clone());
+                                                    }
+                                                } else {
+                                                    for &i in &filtered_indices {
+                                                        self.selected_tasks.remove(&tasks[i].id);
+                                                    }
+                                                }
+                                            }
+                                        });
                                         header.col(|ui| { ui.strong(RichText::new("Filename").color(PINK_PASTEL)); });
                                         header.col(|ui| { ui.strong(RichText::new("Size").color(PINK_PASTEL)); });
                                         header.col(|ui| { ui.strong(RichText::new("Status").color(PINK_PASTEL)); });
@@ -1321,6 +1594,17 @@ impl eframe::App for RapidApp {
                                             let is_complete = item.status == DownloadStatus::Completed;
 
                                             row.set_selected(is_sel);
+                                            
+                                            row.col(|ui| {
+                                                let mut check = self.selected_tasks.contains(&item.id);
+                                                if ui.checkbox(&mut check, "").clicked() {
+                                                    if check {
+                                                        self.selected_tasks.insert(item.id.clone());
+                                                    } else {
+                                                        self.selected_tasks.remove(&item.id);
+                                                    }
+                                                }
+                                            });
 
                                             // 1. Filename column with modern badge + click to open
                                             row.col(|ui| {
@@ -1334,29 +1618,30 @@ impl eframe::App for RapidApp {
                                                             .color(STATUS_COMPLETED)
                                                             .underline();
                                                         let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()))
+                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
                                                             .on_hover_text("✔ Download complete! Click to open file directly");
                                                         if resp.clicked() {
                                                             action_open_file = Some(i);
                                                         }
                                                         resp.context_menu(|ui| {
-                                                            if ui.button("▶ Open File").clicked() {
+                                                            if ui.button("▶ Open File").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_open_file = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            if ui.button("📁 Open Containing Folder").clicked() {
+                                                            if ui.button("📁 Open Containing Folder").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_open_folder = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            if ui.button("📋 Copy URL").clicked() {
+                                                            if ui.button("📋 Copy URL").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_copy_url = Some(item.url.clone());
                                                                 ui.close_menu();
                                                             }
                                                             ui.separator();
-                                                            if ui.button("🔄 Redownload").clicked() {
+                                                            if ui.button("🔄 Redownload").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_redownload = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).clicked() {
+                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_remove = Some(i);
                                                                 ui.close_menu();
                                                             }
@@ -1370,36 +1655,37 @@ impl eframe::App for RapidApp {
                                                         let label_text = RichText::new(&item.filename)
                                                             .color(name_col)
                                                             .strong();
-                                                        let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()));
+                                                        let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()))
+                                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
                                                         if resp.clicked() {
                                                             selected = Some(i);
                                                         }
                                                         resp.context_menu(|ui| {
                                                             if is_downloading {
-                                                                if ui.button("⏸ Pause").clicked() {
+                                                                if ui.button("⏸ Pause").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                     action_pause = Some(i);
                                                                     ui.close_menu();
                                                                 }
                                                             } else if is_resumable {
-                                                                if ui.button("▶ Resume").clicked() {
+                                                                if ui.button("▶ Resume").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                     action_resume = Some(i);
                                                                     ui.close_menu();
                                                                 }
                                                             }
-                                                            if ui.button("📁 Open Containing Folder").clicked() {
+                                                            if ui.button("📁 Open Containing Folder").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_open_folder = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            if ui.button("📋 Copy URL").clicked() {
+                                                            if ui.button("📋 Copy URL").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_copy_url = Some(item.url.clone());
                                                                 ui.close_menu();
                                                             }
                                                             ui.separator();
-                                                            if ui.button("🔄 Redownload").clicked() {
+                                                            if ui.button("🔄 Redownload").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_redownload = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).clicked() {
+                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_remove = Some(i);
                                                                 ui.close_menu();
                                                             }
@@ -1520,11 +1806,11 @@ impl eframe::App for RapidApp {
             // Backdrop dimming scrim
             let screen_rect = ctx.screen_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("modal_backdrop")));
-            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(13, 8, 16, 210));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 220));
 
             let modal_frame = egui::Frame::none()
-                .fill(VELVET_SURFACE)
-                .stroke(Stroke::new(1.8_f32, PINK_NEON))
+                .fill(GLASS_SURFACE)
+                .stroke(Stroke::new(1.8_f32, GLASS_PRIMARY))
                 .rounding(egui::Rounding::same(12.0))
                 .inner_margin(Margin::same(20.0))
                 .shadow(egui::epaint::Shadow {
@@ -1548,30 +1834,30 @@ impl eframe::App for RapidApp {
                     // Header Section
                     ui.horizontal(|ui| {
                         let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), egui::Sense::hover());
-                        draw_modern_icon(ui.painter(), ModernIcon::Plus, icon_rect, PINK_NEON);
+                        draw_modern_icon(ui.painter(), ModernIcon::Plus, icon_rect, GLASS_PRIMARY);
                         ui.add_space(4.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new("Add New Transfer")
+                                RichText::new("Add New Download")
                                     .size(17.0)
-                                    .color(Color32::WHITE)
+                                    .color(GLASS_TEXT)
                                     .strong(),
                             );
                             ui.label(
-                                RichText::new("High-Speed Multi-Stream Engine • Pink Velvet Edition")
+                                RichText::new("Accelerated Multi-Stream Engine • High Speed")
                                     .size(11.0)
-                                    .color(PINK_PASTEL),
+                                    .color(GLASS_SECONDARY),
                             );
                         });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let close_btn = ui.add(
-                                egui::Button::new(RichText::new("✕").size(14.0).color(PINK_PASTEL))
-                                    .fill(Color32::from_rgb(32, 22, 42))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 42, 72)))
+                                egui::Button::new(RichText::new("✕").size(14.0).color(GLASS_MUTED))
+                                    .fill(GLASS_CARD)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                                     .rounding(egui::Rounding::same(6.0)),
                             );
-                            if close_btn.on_hover_text("Close dialog").clicked() {
+                            if close_btn.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Close dialog").clicked() {
                                 close_modal = true;
                             }
                         });
@@ -1586,20 +1872,20 @@ impl eframe::App for RapidApp {
                         ui.label(
                             RichText::new("Download URL")
                                 .size(12.5)
-                                .color(PINK_PASTEL)
+                                .color(GLASS_TEXT)
                                 .strong(),
                         );
                         ui.label(
                             RichText::new("(HTTP / HTTPS direct link)")
                                 .size(11.0)
-                                .color(PINK_MUTED),
+                                .color(GLASS_MUTED),
                         );
                     });
 
                     ui.add_space(4.0);
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(15, 10, 20))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 36, 72)))
+                        .fill(GLASS_BG)
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                         .rounding(egui::Rounding::same(6.0))
                         .inner_margin(Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
@@ -1616,15 +1902,15 @@ impl eframe::App for RapidApp {
                     ui.label(
                         RichText::new("Save Destination")
                             .size(12.5)
-                            .color(PINK_PASTEL)
+                            .color(GLASS_TEXT)
                             .strong(),
                     );
 
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         egui::Frame::none()
-                            .fill(Color32::from_rgb(15, 10, 20))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 36, 72)))
+                            .fill(GLASS_BG)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                             .rounding(egui::Rounding::same(6.0))
                             .inner_margin(Margin::symmetric(10.0, 7.0))
                             .show(ui, |ui| {
@@ -1637,14 +1923,14 @@ impl eframe::App for RapidApp {
                         let browse_btn = egui::Button::new(
                             RichText::new("Browse")
                                 .size(12.0)
-                                .color(PINK_NEON)
+                                .color(GLASS_SECONDARY)
                                 .strong(),
                         )
-                        .fill(Color32::from_rgb(36, 20, 42))
-                        .stroke(Stroke::new(1.0_f32, PINK_ROSE))
+                        .fill(GLASS_CARD)
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                         .rounding(egui::Rounding::same(6.0));
 
-                        if ui.add(browse_btn).on_hover_text("Choose download destination folder").clicked() {
+                        if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Choose download destination folder").clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                                 self.input_dest = folder.to_string_lossy().to_string();
                             }
@@ -1658,13 +1944,13 @@ impl eframe::App for RapidApp {
                         ui.label(
                             RichText::new("Parallel Connections")
                                 .size(12.5)
-                                .color(PINK_PASTEL)
+                                .color(GLASS_TEXT)
                                 .strong(),
                         );
                         ui.label(
                             RichText::new("(Multi-stream segment threads)")
                                 .size(11.0)
-                                .color(PINK_MUTED),
+                                .color(GLASS_MUTED),
                         );
                     });
 
@@ -1682,19 +1968,19 @@ impl eframe::App for RapidApp {
                         for (val, title, sub) in options {
                             let is_selected = self.input_segments == val;
                             let bg = if is_selected {
-                                Color32::from_rgb(55, 18, 44)
+                                Color32::from_rgb(30, 22, 60)
                             } else {
-                                Color32::from_rgb(26, 18, 34)
+                                GLASS_BG
                             };
                             let border = if is_selected {
-                                PINK_NEON
+                                GLASS_PRIMARY
                             } else {
-                                Color32::from_rgb(52, 34, 64)
+                                GLASS_BORDER
                             };
                             let text_color = if is_selected {
-                                PINK_NEON
+                                GLASS_SECONDARY
                             } else {
-                                Color32::from_rgb(170, 150, 180)
+                                GLASS_MUTED
                             };
 
                             let frame = egui::Frame::none()
@@ -1706,11 +1992,11 @@ impl eframe::App for RapidApp {
                             let resp = frame.show(ui, |ui| {
                                 ui.vertical_centered(|ui| {
                                     ui.label(RichText::new(title).size(11.5).color(text_color).strong());
-                                    ui.label(RichText::new(sub).size(9.5).color(if is_selected { PINK_ROSE } else { Color32::GRAY }));
+                                    ui.label(RichText::new(sub).size(9.5).color(if is_selected { GLASS_PRIMARY } else { Color32::GRAY }));
                                 });
                             }).response;
 
-                            if resp.interact(egui::Sense::click()).clicked() {
+                            if resp.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                 self.input_segments = val;
                             }
                         }
@@ -1741,7 +2027,7 @@ impl eframe::App for RapidApp {
                         ui.label(
                             RichText::new("🔒 Dynamic Stream Planner")
                                 .size(11.0)
-                                .color(PINK_MUTED),
+                                .color(GLASS_MUTED),
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1751,23 +2037,23 @@ impl eframe::App for RapidApp {
                                     .color(Color32::WHITE)
                                     .strong(),
                             )
-                            .fill(PINK_NEON)
+                            .fill(GLASS_PRIMARY)
                             .rounding(egui::Rounding::same(7.0));
 
-                            if ui.add(start_btn).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                            if ui.add(start_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
                                 start_download_req = true;
                             }
 
                             let cancel_btn = egui::Button::new(
                                 RichText::new("Cancel")
                                     .size(13.0)
-                                    .color(Color32::from_rgb(200, 185, 210)),
+                                    .color(GLASS_MUTED),
                             )
-                            .fill(Color32::from_rgb(28, 20, 36))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(52, 36, 64)))
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                             .rounding(egui::Rounding::same(7.0));
 
-                            if ui.add(cancel_btn).clicked() {
+                            if ui.add(cancel_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                 close_modal = true;
                             }
                         });
@@ -1802,7 +2088,13 @@ impl eframe::App for RapidApp {
             self.redownload(idx);
         }
         if let Some(idx) = action_remove {
-            self.remove_download(idx);
+            if let Ok(list) = self.tasks.try_lock() {
+                if idx < list.len() {
+                    self.tasks_to_delete.clear();
+                    self.tasks_to_delete.insert(list[idx].id.clone());
+                    self.show_delete_modal = true;
+                }
+            }
         }
         if let Some(idx) = action_open_folder {
             self.open_download_folder(idx);
@@ -1820,6 +2112,122 @@ impl eframe::App for RapidApp {
         if do_resume_all {
             self.resume_all();
         }
+        if self.show_delete_modal {
+            let screen_rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("delete_modal_backdrop")));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 220));
+
+            let mut close_modal = false;
+            let mut do_history_delete = false;
+            let mut do_permanent_delete = false;
+            
+            let modal_frame = egui::Frame::none()
+                .fill(GLASS_SURFACE)
+                .stroke(Stroke::NONE)
+                .rounding(egui::Rounding::same(12.0))
+                .inner_margin(Margin::same(0.0)); // No inner margin so close btn can be at edge
+
+            egui::Window::new("Confirm Delete")
+                .frame(modal_frame)
+                .title_bar(false)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.allocate_ui(Vec2::new(400.0, 240.0), |ui| {
+                        // Absolute positioned Close button at top right
+                        let rect = ui.max_rect();
+                        let close_rect = egui::Rect::from_min_size(
+                            rect.right_top() + Vec2::new(-36.0, 12.0),
+                            Vec2::new(24.0, 24.0),
+                        );
+                        ui.allocate_ui_at_rect(close_rect, |ui| {
+                            if modern_icon_button(ui, ModernIcon::Close, Vec2::new(24.0, 24.0), GLASS_MUTED, PINK_NEON, "Close") {
+                                close_modal = true;
+                            }
+                        });
+
+                        // Main Content (Centered vertically & horizontally)
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(25.0);
+                            
+                            // Trash Icon inside a subtle circle
+                            let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(48.0, 48.0), egui::Sense::hover());
+                            ui.painter().circle_filled(icon_rect.center(), 24.0, Color32::from_rgba_unmultiplied(255, 60, 60, 20));
+                            let trash_rect = egui::Rect::from_center_size(icon_rect.center(), Vec2::new(24.0, 24.0));
+                            draw_modern_icon(ui.painter(), ModernIcon::Trash, trash_rect, Color32::from_rgb(255, 80, 80));
+                            
+                            ui.add_space(15.0);
+                            ui.label(RichText::new("Confirm Delete").size(20.0).strong().color(Color32::WHITE));
+                            ui.add_space(8.0);
+                            ui.label(RichText::new(format!("Are you sure you want to delete {} download(s)?", self.tasks_to_delete.len())).size(14.0).color(GLASS_MUTED));
+                            
+                            ui.add_space(35.0);
+                        });
+                        
+                        // Bottom Action Buttons aligned to Bottom Right
+                        ui.horizontal(|ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.add_space(24.0); // right padding
+                                
+                                // Permanent Delete Button
+                                let perm_btn = egui::Button::new(RichText::new("Permanent Delete").size(13.0).strong().color(Color32::WHITE))
+                                    .min_size(Vec2::new(140.0, 36.0))
+                                    .fill(Color32::from_rgb(220, 50, 70))
+                                    .rounding(egui::Rounding::same(6.0));
+                                if ui.add(perm_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Delete completely from disk").clicked() {
+                                    do_permanent_delete = true;
+                                    close_modal = true;
+                                }
+                                
+                                ui.add_space(12.0);
+                                
+                                // History Only Button
+                                let hist_btn = egui::Button::new(RichText::new("Remove from History").size(13.0).strong().color(Color32::WHITE))
+                                    .min_size(Vec2::new(140.0, 36.0))
+                                    .fill(GLASS_CARD)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(6.0));
+                                if ui.add(hist_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Keep files on disk").clicked() {
+                                    do_history_delete = true;
+                                    close_modal = true;
+                                }
+                            });
+                        });
+                        ui.add_space(20.0);
+                    });
+                });
+                
+            if do_history_delete || do_permanent_delete {
+                if let Ok(mut list) = self.tasks.try_lock() {
+                    for i in (0..list.len()).rev() {
+                        let task = &list[i];
+                        if self.tasks_to_delete.contains(&task.id) {
+                            if let Some(ref handle) = task.task_handle {
+                                handle.pause();
+                            }
+                            let rapid_file = rapid_core::DownloadTaskState::manifest_path(&task.target_file);
+                            let _ = std::fs::remove_file(&rapid_file);
+                            if do_permanent_delete {
+                                let _ = std::fs::remove_file(&task.target_file);
+                            }
+                            self.selected_tasks.remove(&task.id);
+                            list.remove(i);
+                        }
+                    }
+                    if let Some(sel) = self.selected_task_index {
+                        if sel >= list.len() {
+                            self.selected_task_index = if list.is_empty() { None } else { Some(list.len() - 1) };
+                        }
+                    }
+                }
+                self.tasks_to_delete.clear();
+            }
+            if close_modal {
+                self.show_delete_modal = false;
+            }
+        }
+
     }
 }
 
@@ -1828,6 +2236,8 @@ fn spawn_download_task(
     dest_dir: PathBuf,
     segments: usize,
     custom_filename: Option<String>,
+    cookies: Option<String>,
+    user_agent: Option<String>,
     rt: Arc<Runtime>,
     tasks_arc: Arc<Mutex<Vec<ActiveTaskUI>>>,
 ) {
@@ -1839,6 +2249,8 @@ fn spawn_download_task(
             output_dir: dest_dir,
             custom_filename,
             num_segments: segments,
+            cookies,
+            user_agent,
             ..Default::default()
         };
 
@@ -1869,6 +2281,7 @@ fn spawn_download_task(
                     segments: initial_segments,
                     task_handle: Some(Arc::clone(&task_arc)),
                     num_segments: segments,
+                    is_resuming: false,
                 };
 
                 {
@@ -2005,7 +2418,9 @@ async fn run_extension_server(
                 if let Ok(body_str) = std::str::from_utf8(body_slice) {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(body_str.trim()) {
                         if let Some(url) = val.get("url").and_then(|u| u.as_str()) {
-                            let custom_fn = val.get("filename").and_then(|f| f.as_str()).map(|s| s.to_string());
+                            let custom_fn = val.get("filename").and_then(|f| f.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                            let cookies_str = val.get("cookies").and_then(|c| c.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                            let user_agent_str = val.get("user_agent").and_then(|ua| ua.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                             let url_str = url.to_string();
 
                             spawn_download_task(
@@ -2013,6 +2428,8 @@ async fn run_extension_server(
                                 dest_clone,
                                 8,
                                 custom_fn,
+                                cookies_str,
+                                user_agent_str,
                                 rt_clone,
                                 tasks_clone,
                             );
@@ -2081,7 +2498,7 @@ fn render_custom_chip_plain(
     frame.show(ui, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
         if !label.is_empty() {
-            ui.label(RichText::new(label).size(10.5).color(Color32::from_rgb(160, 140, 170)));
+            ui.label(RichText::new(label).size(10.5).color(GLASS_MUTED));
         }
         ui.label(RichText::new(value).size(11.0).color(text_color).strong());
     }).response.on_hover_text(tooltip);
@@ -2096,9 +2513,9 @@ fn render_custom_btn_chip_modern(
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(98.0, 22.0), egui::Sense::click());
     let is_h = resp.hovered();
 
-    let bg = if is_h { Color32::from_rgb(45, 20, 40) } else { Color32::from_rgb(26, 18, 34) };
-    let border = if is_h { PINK_NEON } else { Color32::from_rgb(52, 36, 64) };
-    let text_col = if is_h { PINK_NEON } else { Color32::from_rgb(220, 200, 225) };
+    let bg = if is_h { Color32::from_rgb(28, 20, 58) } else { GLASS_CARD };
+    let border = if is_h { GLASS_PRIMARY } else { GLASS_BORDER };
+    let text_col = if is_h { GLASS_PRIMARY_HOVER } else { GLASS_TEXT };
 
     ui.painter().rect(rect, 5.0, bg, Stroke::new(1.0_f32, border));
     let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.min.x + 12.0, rect.center().y), Vec2::new(10.0, 10.0));
@@ -2111,7 +2528,10 @@ fn render_custom_btn_chip_modern(
         text_col,
     );
 
-    resp.on_hover_text(tooltip).clicked()
+    resp
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tooltip)
+        .clicked()
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -2167,17 +2587,47 @@ fn dirs_or_fallback() -> PathBuf {
     PathBuf::from("./downloads")
 }
 
+#[cfg(windows)]
+fn get_primary_screen_size() -> Option<(f32, f32)> {
+    extern "system" {
+        fn GetSystemMetrics(nIndex: i32) -> i32;
+    }
+    unsafe {
+        let w = GetSystemMetrics(0); // SM_CXSCREEN
+        let h = GetSystemMetrics(1); // SM_CYSCREEN
+        if w > 0 && h > 0 {
+            Some((w as f32, h as f32))
+        } else {
+            None
+        }
+    }
+}
+
 fn main() -> Result<(), eframe::Error> {
     let rt = Arc::new(Runtime::new().expect("Failed to initialize Tokio runtime"));
 
+    let win_w = 1240.0_f32;
+    let win_h = 740.0_f32;
+
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([win_w, win_h])
+        .with_min_inner_size([650.0, 380.0])
+        .with_decorations(false)
+        .with_resizable(true)
+        .with_title("Rapid Download Manager")
+        .with_visible(true)
+        .with_active(true);
+
+    #[cfg(windows)]
+    if let Some((screen_w, screen_h)) = get_primary_screen_size() {
+        let pos_x = ((screen_w - win_w) / 2.0).max(0.0);
+        let pos_y = ((screen_h - win_h) / 2.0).max(0.0);
+        viewport = viewport.with_position([pos_x, pos_y]);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 750.0])
-            .with_min_inner_size([650.0, 380.0])
-            .with_maximized(true)
-            .with_title("Rapid Download Manager")
-            .with_visible(true)
-            .with_active(true),
+        viewport,
+        centered: true,
         ..Default::default()
     };
 

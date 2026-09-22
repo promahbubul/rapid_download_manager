@@ -5,8 +5,9 @@ use crate::types::{
     DownloadConfig, DownloadProgress, DownloadStatus, DownloadTaskState, Segment,
 };
 use crate::worker::DownloadWorker;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderValue, COOKIE, USER_AGENT, REFERER};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,21 +25,17 @@ pub struct DownloadTask {
     pub status: Arc<Mutex<DownloadStatus>>,
     cancel_token: CancellationToken,
     progress_tx: broadcast::Sender<DownloadProgress>,
+    created_at: DateTime<Utc>,
 }
 
 impl DownloadTask {
     pub async fn create(id: String, config: DownloadConfig) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let client = build_client_with_config(&config, 30)?;
 
         // 1. Probe the URL for metadata
         let metadata = Probe::inspect(&client, &config.url).await?;
 
-        let filename = config
-            .custom_filename
-            .clone()
-            .unwrap_or_else(|| {
+        let filename = config.custom_filename.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| {
                 Self::resolve_unique_filename(&config.output_dir, &metadata.filename)
             });
 
@@ -94,6 +91,7 @@ impl DownloadTask {
             status: Arc::new(Mutex::new(DownloadStatus::Queued)),
             cancel_token: CancellationToken::new(),
             progress_tx,
+            created_at: Utc::now(),
         })
     }
 
@@ -119,9 +117,7 @@ impl DownloadTask {
             *s = DownloadStatus::Downloading;
         }
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()?;
+        let client = build_client_with_config(&self.config, 60)?;
 
         let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel::<(usize, u64)>();
 
@@ -318,7 +314,7 @@ impl DownloadTask {
             accept_ranges: self.accept_ranges,
             segments,
             status: current_status,
-            created_at: Utc::now(),
+            created_at: self.created_at,
             updated_at: Utc::now(),
         };
 
@@ -350,4 +346,35 @@ impl DownloadTask {
         }
         base_name.to_string()
     }
+}
+
+
+fn build_client_with_config(config: &DownloadConfig, timeout_secs: u64) -> Result<Client> {
+    let mut headers = HeaderMap::new();
+    
+    if let Some(ua) = &config.user_agent {
+        if let Ok(val) = HeaderValue::from_str(ua) {
+            headers.insert(USER_AGENT, val);
+        }
+    } else {
+        headers.insert(USER_AGENT, HeaderValue::from_static("RapidDownloadManager/1.0"));
+    }
+    
+    if let Some(cookie) = &config.cookies {
+        if let Ok(val) = HeaderValue::from_str(cookie) {
+            headers.insert(COOKIE, val);
+        }
+    }
+    
+    if let Some(referrer) = &config.referrer {
+        if let Ok(val) = HeaderValue::from_str(referrer) {
+            headers.insert(REFERER, val);
+        }
+    }
+    
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .default_headers(headers)
+        .build()
+        .map_err(|e| crate::error::RapidError::Network(e))
 }
