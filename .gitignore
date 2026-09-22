@@ -1,4 +1,4 @@
-# Rust build output
+﻿# Rust build output
 /target/
 **/*.rs.bk
 *.pdb
@@ -22,3 +22,11 @@ Desktop.ini
 
 # Staged build artifacts (keep installer packages)
 /dist/RapidDownloadManager/
+
+# Temporary scripts and installers
+/rustup-init.exe
+patch*.py
+test*.py
+test*.html
+dev_watch.*
+*.zip

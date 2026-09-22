@@ -1,4 +1,4 @@
-use crate::error::{RapidError, Result};
+﻿use crate::error::{RapidError, Result};
 use crate::probe::Probe;
 use crate::segment::SegmentPlanner;
 use crate::types::{
@@ -29,15 +29,44 @@ pub struct DownloadTask {
 }
 
 impl DownloadTask {
-    pub async fn create(id: String, config: DownloadConfig) -> Result<Self> {
+    pub async fn create(id: String, mut config: DownloadConfig) -> Result<Self> {
+        let is_gdrive = config.is_gdrive
+            || config.url.contains("drive.google.com")
+            || config.url.contains("googleusercontent.com");
+        config.is_gdrive = is_gdrive;
+        if is_gdrive {
+            config.num_segments = 1;
+        }
+
         let client = build_client_with_config(&config, 30)?;
 
-        // 1. Probe the URL for metadata
-        let metadata = Probe::inspect(&client, &config.url).await?;
+        let (final_url, filename, total_bytes_probe, accept_ranges_probe) = if is_gdrive {
+            let resolved_filename = config
+                .custom_filename
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    Self::resolve_unique_filename(&config.output_dir, "Google_Drive_Download.zip")
+                });
+            (config.url.clone(), resolved_filename, None, false)
+        } else {
+            let metadata = Probe::inspect(&client, &config.url).await?;
+            let resolved_filename = config
+                .custom_filename
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    Self::resolve_unique_filename(&config.output_dir, &metadata.filename)
+                });
+            (
+                metadata.url,
+                resolved_filename,
+                metadata.content_length,
+                metadata.accept_ranges,
+            )
+        };
 
-        let filename = config.custom_filename.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| {
-                Self::resolve_unique_filename(&config.output_dir, &metadata.filename)
-            });
+        config.url = final_url;
 
         fs::create_dir_all(&config.output_dir).await?;
         let target_file = config.output_dir.join(&filename);
@@ -55,13 +84,13 @@ impl DownloadTask {
         } else {
             // Plan fresh segments
             let seg_list = SegmentPlanner::plan(
-                metadata.content_length,
+                total_bytes_probe,
                 config.num_segments,
-                metadata.accept_ranges,
+                accept_ranges_probe,
             );
 
             // Pre-allocate destination file if size is known
-            if let Some(size) = metadata.content_length {
+            if let Some(size) = total_bytes_probe {
                 if size > 0 {
                     let file = OpenOptions::new()
                         .write(true)
@@ -76,7 +105,7 @@ impl DownloadTask {
                 .into_iter()
                 .map(|s| Arc::new(Mutex::new(s)))
                 .collect();
-            (segs, metadata.content_length, metadata.accept_ranges)
+            (segs, total_bytes_probe, accept_ranges_probe)
         };
 
         let (progress_tx, _) = broadcast::channel(100);
@@ -357,24 +386,71 @@ fn build_client_with_config(config: &DownloadConfig, timeout_secs: u64) -> Resul
             headers.insert(USER_AGENT, val);
         }
     } else {
-        headers.insert(USER_AGENT, HeaderValue::from_static("RapidDownloadManager/1.0"));
+        headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"));
     }
     
-    if let Some(cookie) = &config.cookies {
-        if let Ok(val) = HeaderValue::from_str(cookie) {
-            headers.insert(COOKIE, val);
+    // Additional browser-like headers to bypass BotGuard / 403 Forbidden
+    headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"));
+    headers.insert(reqwest::header::ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
+    headers.insert("Sec-Ch-Ua", HeaderValue::from_static("\"Chromium\";v=\"128\", \"Not;A=Brand\";v=\"24\", \"Google Chrome\";v=\"128\""));
+    headers.insert("Sec-Ch-Ua-Mobile", HeaderValue::from_static("?0"));
+    headers.insert("Sec-Ch-Ua-Platform", HeaderValue::from_static("\"Windows\""));
+    headers.insert("Sec-Fetch-Dest", HeaderValue::from_static("document"));
+    headers.insert("Sec-Fetch-Mode", HeaderValue::from_static("navigate"));
+    headers.insert("Sec-Fetch-Site", HeaderValue::from_static("none"));
+    headers.insert("Sec-Fetch-User", HeaderValue::from_static("?1"));
+    headers.insert("Upgrade-Insecure-Requests", HeaderValue::from_static("1"));
+    
+    // We intentionally DO NOT add the COOKIE header to default_headers here.
+    // reqwest strips sensitive headers (like Cookie) on cross-domain redirects.
+    // Instead, we will use a reqwest::cookie::Jar to handle them natively below.
+    
+    if let Some(cookie_str) = &config.cookies {
+        if let Ok(c_val) = HeaderValue::from_str(cookie_str) {
+            headers.insert(COOKIE, c_val);
         }
     }
-    
+
     if let Some(referrer) = &config.referrer {
         if let Ok(val) = HeaderValue::from_str(referrer) {
             headers.insert(REFERER, val);
+            headers.insert("Sec-Fetch-Site", HeaderValue::from_static("same-site"));
         }
+    } else if config.is_gdrive {
+        headers.insert(REFERER, HeaderValue::from_static("https://drive.google.com/"));
+        headers.insert("Sec-Fetch-Site", HeaderValue::from_static("same-site"));
     }
     
-    Client::builder()
+    let mut client_builder = Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
-        .default_headers(headers)
+        .default_headers(headers);
+
+    // Setup Cookie Jar for redirects
+    if let Some(cookie_str) = &config.cookies {
+        let jar = reqwest::cookie::Jar::default();
+        if let Ok(url) = reqwest::Url::parse(&config.url) {
+            for c in cookie_str.split(';') {
+                let trimmed = c.trim();
+                if !trimmed.is_empty() {
+                    jar.add_cookie_str(trimmed, &url);
+                    if config.is_gdrive || config.url.contains("google") {
+                        if let Ok(g_url) = reqwest::Url::parse("https://drive.google.com") {
+                            jar.add_cookie_str(trimmed, &g_url);
+                        }
+                        if let Ok(c_url) = reqwest::Url::parse("https://googleusercontent.com") {
+                            jar.add_cookie_str(trimmed, &c_url);
+                        }
+                        if let Ok(root_g) = reqwest::Url::parse("https://google.com") {
+                            jar.add_cookie_str(trimmed, &root_g);
+                        }
+                    }
+                }
+            }
+        }
+        client_builder = client_builder.cookie_provider(Arc::new(jar));
+    }
+    
+    client_builder
         .build()
         .map_err(|e| crate::error::RapidError::Network(e))
 }

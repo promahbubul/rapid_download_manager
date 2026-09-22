@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+﻿use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -126,6 +126,7 @@ pub struct DownloadConfig {
     pub user_agent: Option<String>,
     pub referrer: Option<String>,
     pub cookies: Option<String>,
+    pub is_gdrive: bool,
 }
 
 impl Default for DownloadConfig {
@@ -138,6 +139,7 @@ impl Default for DownloadConfig {
             user_agent: Some("RapidDownloadManager/1.0 (Windows NT 10.0; Win64; x64)".to_string()),
             referrer: None,
             cookies: None,
+            is_gdrive: false,
         }
     }
 }

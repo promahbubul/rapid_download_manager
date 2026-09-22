@@ -1,6 +1,6 @@
-use crate::error::{RapidError, Result};
+﻿use crate::error::{RapidError, Result};
 use crate::types::DownloadMetadata;
-use reqwest::header::{ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, RANGE, USER_AGENT};
+use reqwest::header::{ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use reqwest::Client;
 use url::Url;
 use urlencoding::decode as url_decode;
@@ -27,6 +27,7 @@ impl Probe {
 
         if let Ok(resp) = head_resp {
             if resp.status().is_success() {
+                let final_url = resp.url().to_string();
                 let content_length = resp
                     .headers()
                     .get(CONTENT_LENGTH)
@@ -62,7 +63,7 @@ impl Probe {
                 // If we got content_length, we are good!
                 if content_length.is_some() {
                     return Ok(DownloadMetadata {
-                        url: url_str.to_string(),
+                        url: final_url,
                         filename,
                         content_length,
                         accept_ranges,
@@ -80,6 +81,7 @@ impl Probe {
             .send()
             .await?;
 
+        let final_url = get_resp.url().to_string();
         let status = get_resp.status();
         let headers = get_resp.headers();
 
@@ -123,7 +125,7 @@ impl Probe {
             .map(|s| s.to_string());
 
         Ok(DownloadMetadata {
-            url: url_str.to_string(),
+            url: final_url,
             filename,
             content_length,
             accept_ranges,

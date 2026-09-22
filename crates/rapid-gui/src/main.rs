@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Hide console in release mode on Windows
+﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Hide console in release mode on Windows
 
 use chrono::Utc;
 use eframe::egui::{self, Color32, Margin, RichText, Stroke, Vec2};
@@ -538,7 +538,7 @@ impl RapidApp {
         self.is_probing = true;
         self.add_error = None;
 
-        spawn_download_task(url, dest_dir, segments, None, None, None, rt, tasks_arc);
+        spawn_download_task(url, dest_dir, segments, None, None, None, None, false, rt, tasks_arc);
 
         self.is_probing = false;
         self.show_add_dialog = false;
@@ -2238,20 +2238,24 @@ fn spawn_download_task(
     custom_filename: Option<String>,
     cookies: Option<String>,
     user_agent: Option<String>,
+    referrer: Option<String>,
+    is_gdrive: bool,
     rt: Arc<Runtime>,
     tasks_arc: Arc<Mutex<Vec<ActiveTaskUI>>>,
 ) {
     let task_id = format!("task-{}", Utc::now().timestamp_millis());
 
     rt.spawn(async move {
+        let gdrive = is_gdrive || url.contains("drive.google.com") || url.contains("googleusercontent.com");
         let config = DownloadConfig {
             url: url.clone(),
             output_dir: dest_dir,
             custom_filename,
-            num_segments: segments,
+            num_segments: if gdrive { 1 } else { segments },
             cookies,
             user_agent,
-            ..Default::default()
+            referrer,
+            is_gdrive: gdrive,
         };
 
         match DownloadTask::create(task_id.clone(), config).await {
@@ -2421,15 +2425,25 @@ async fn run_extension_server(
                             let custom_fn = val.get("filename").and_then(|f| f.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                             let cookies_str = val.get("cookies").and_then(|c| c.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                             let user_agent_str = val.get("user_agent").and_then(|ua| ua.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                            let referrer_str = val.get("referrer").and_then(|r| r.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                            let is_gdrive = val.get("is_gdrive").and_then(|g| g.as_bool()).unwrap_or(false);
                             let url_str = url.to_string();
+
+                            let segments_count = if is_gdrive || url_str.contains("drive.google.com") || url_str.contains("googleusercontent.com") {
+                                1
+                            } else {
+                                8
+                            };
 
                             spawn_download_task(
                                 url_str,
                                 dest_clone,
-                                8,
+                                segments_count,
                                 custom_fn,
                                 cookies_str,
                                 user_agent_str,
+                                referrer_str,
+                                is_gdrive,
                                 rt_clone,
                                 tasks_clone,
                             );
