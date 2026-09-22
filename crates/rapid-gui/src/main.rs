@@ -12,6 +12,267 @@ use tokio::sync::Mutex;
 #[cfg(windows)]
 mod tray;
 
+// =========================================================================
+// PROPRIETARY NEON PINK VELVET MASTER PALETTE
+// =========================================================================
+const PINK_NEON: Color32 = Color32::from_rgb(255, 42, 133);        // Primary Hot Pink (#FF2A85)
+const PINK_ROSE: Color32 = Color32::from_rgb(255, 102, 178);       // Bright Rose Pink (#FF66B2)
+const PINK_PASTEL: Color32 = Color32::from_rgb(255, 179, 217);     // Soft Rose Pastel (#FFB3D9)
+const PINK_MUTED: Color32 = Color32::from_rgb(190, 140, 175);      // Muted Lavender Rose
+const PINK_ACCENT_BG: Color32 = Color32::from_rgb(45, 18, 38);     // Active / Pill Background
+const PINK_ACCENT_BORDER: Color32 = Color32::from_rgb(85, 32, 70);  // Dark Rose Border
+
+const VELVET_BLACK: Color32 = Color32::from_rgb(13, 10, 18);       // Void Background (#0D0A12)
+const VELVET_SURFACE: Color32 = Color32::from_rgb(22, 16, 29);     // Panel Fill (#16101D)
+const VELVET_CARD: Color32 = Color32::from_rgb(28, 20, 38);        // Row / Card Fill (#1C1426)
+const VELVET_BORDER: Color32 = Color32::from_rgb(52, 34, 64);      // Default Border (#342240)
+
+const STATUS_DOWNLOADING: Color32 = PINK_NEON;
+const STATUS_COMPLETED: Color32 = PINK_ROSE;
+const STATUS_PAUSED: Color32 = Color32::from_rgb(255, 180, 120);    // Warm Amber Rose
+const STATUS_FAILED: Color32 = Color32::from_rgb(255, 75, 105);     // Crimson Rose
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilterCategory {
+    All,
+    Active,
+    Paused,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModernIcon {
+    Play,
+    Pause,
+    Refresh,
+    Trash,
+    Folder,
+    ExternalFile,
+    Plus,
+    Search,
+    MinimizeTray,
+    Check,
+    PulseBeacon,
+    SpeedGauge,
+}
+
+fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect, color: Color32) {
+    let center = rect.center();
+    let stroke = Stroke::new(1.5_f32, color);
+    match icon {
+        ModernIcon::Play => {
+            let half_h = 5.0_f32;
+            let p1 = egui::pos2(center.x - 3.5, center.y - half_h);
+            let p2 = egui::pos2(center.x - 3.5, center.y + half_h);
+            let p3 = egui::pos2(center.x + 4.5, center.y);
+            painter.add(egui::Shape::convex_polygon(
+                vec![p1, p2, p3],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        ModernIcon::Pause => {
+            let bar_w = 2.5_f32;
+            let bar_h = 10.0_f32;
+            let gap = 2.5_f32;
+            let b1 = egui::Rect::from_center_size(egui::pos2(center.x - gap, center.y), egui::vec2(bar_w, bar_h));
+            let b2 = egui::Rect::from_center_size(egui::pos2(center.x + gap, center.y), egui::vec2(bar_w, bar_h));
+            painter.rect_filled(b1, 1.0, color);
+            painter.rect_filled(b2, 1.0, color);
+        }
+        ModernIcon::Refresh => {
+            let radius = 5.0_f32;
+            let angles = [0.0_f32, 1.57_f32, 3.14_f32, 4.71_f32];
+            for i in 0..3 {
+                let a1 = angles[i];
+                let a2 = angles[i + 1];
+                let pt1 = egui::pos2(center.x + radius * a1.cos(), center.y + radius * a1.sin());
+                let pt2 = egui::pos2(center.x + radius * a2.cos(), center.y + radius * a2.sin());
+                painter.line_segment([pt1, pt2], stroke);
+            }
+            let tip = egui::pos2(center.x + radius, center.y);
+            painter.line_segment([tip, egui::pos2(tip.x + 2.5, tip.y - 3.0)], stroke);
+            painter.line_segment([tip, egui::pos2(tip.x - 2.5, tip.y - 3.0)], stroke);
+        }
+        ModernIcon::Trash => {
+            let w = 9.0_f32;
+            let h = 10.0_f32;
+            painter.line_segment(
+                [egui::pos2(center.x - w * 0.6, center.y - h * 0.4), egui::pos2(center.x + w * 0.6, center.y - h * 0.4)],
+                Stroke::new(1.4_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x - 2.0, center.y - h * 0.4), egui::pos2(center.x - 2.0, center.y - h * 0.6)],
+                Stroke::new(1.2_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x - 2.0, center.y - h * 0.6), egui::pos2(center.x + 2.0, center.y - h * 0.6)],
+                Stroke::new(1.2_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x + 2.0, center.y - h * 0.6), egui::pos2(center.x + 2.0, center.y - h * 0.4)],
+                Stroke::new(1.2_f32, color),
+            );
+            let body_rect = egui::Rect::from_min_max(
+                egui::pos2(center.x - w * 0.45, center.y - h * 0.25),
+                egui::pos2(center.x + w * 0.45, center.y + h * 0.55),
+            );
+            painter.rect_stroke(body_rect, 1.5, Stroke::new(1.2_f32, color));
+            painter.line_segment(
+                [egui::pos2(center.x - 1.5, center.y - h * 0.1), egui::pos2(center.x - 1.5, center.y + h * 0.4)],
+                Stroke::new(1.0_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x + 1.5, center.y - h * 0.1), egui::pos2(center.x + 1.5, center.y + h * 0.4)],
+                Stroke::new(1.0_f32, color),
+            );
+        }
+        ModernIcon::Folder => {
+            let w = 11.0_f32;
+            let h = 8.5_f32;
+            let top_left = egui::pos2(center.x - w * 0.5, center.y - h * 0.5);
+            let tab_right = egui::pos2(center.x - w * 0.1, center.y - h * 0.5);
+            let tab_down = egui::pos2(center.x + w * 0.05, center.y - h * 0.2);
+            let top_right = egui::pos2(center.x + w * 0.5, center.y - h * 0.2);
+            let bot_right = egui::pos2(center.x + w * 0.5, center.y + h * 0.5);
+            let bot_left = egui::pos2(center.x - w * 0.5, center.y + h * 0.5);
+
+            painter.line_segment([top_left, tab_right], stroke);
+            painter.line_segment([tab_right, tab_down], stroke);
+            painter.line_segment([tab_down, top_right], stroke);
+            painter.line_segment([top_right, bot_right], stroke);
+            painter.line_segment([bot_right, bot_left], stroke);
+            painter.line_segment([bot_left, top_left], stroke);
+        }
+        ModernIcon::ExternalFile => {
+            let w = 8.0_f32;
+            let h = 10.0_f32;
+            let doc_rect = egui::Rect::from_min_max(
+                egui::pos2(center.x - w * 0.5, center.y - h * 0.5),
+                egui::pos2(center.x + w * 0.5, center.y + h * 0.5),
+            );
+            painter.rect_stroke(doc_rect, 1.0, stroke);
+            painter.line_segment(
+                [egui::pos2(center.x + w * 0.1, center.y - h * 0.5), egui::pos2(center.x + w * 0.5, center.y - h * 0.1)],
+                stroke,
+            );
+        }
+        ModernIcon::Plus => {
+            let len = 4.5_f32;
+            painter.line_segment(
+                [egui::pos2(center.x - len, center.y), egui::pos2(center.x + len, center.y)],
+                Stroke::new(1.8_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x, center.y - len), egui::pos2(center.x, center.y + len)],
+                Stroke::new(1.8_f32, color),
+            );
+        }
+        ModernIcon::Search => {
+            let r = 3.5_f32;
+            let c = egui::pos2(center.x - 1.5, center.y - 1.5);
+            painter.circle_stroke(c, r, Stroke::new(1.4_f32, color));
+            painter.line_segment(
+                [egui::pos2(c.x + 2.5, c.y + 2.5), egui::pos2(c.x + 6.0, c.y + 6.0)],
+                Stroke::new(1.6_f32, color),
+            );
+        }
+        ModernIcon::MinimizeTray => {
+            painter.line_segment(
+                [egui::pos2(center.x - 4.5, center.y - 1.0), egui::pos2(center.x, center.y + 3.0)],
+                Stroke::new(1.6_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x, center.y + 3.0), egui::pos2(center.x + 4.5, center.y - 1.0)],
+                Stroke::new(1.6_f32, color),
+            );
+        }
+        ModernIcon::Check => {
+            painter.line_segment(
+                [egui::pos2(center.x - 4.0, center.y), egui::pos2(center.x - 1.0, center.y + 3.5)],
+                Stroke::new(1.8_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x - 1.0, center.y + 3.5), egui::pos2(center.x + 4.5, center.y - 3.5)],
+                Stroke::new(1.8_f32, color),
+            );
+        }
+        ModernIcon::PulseBeacon => {
+            painter.circle_filled(center, 3.5, color);
+        }
+        ModernIcon::SpeedGauge => {
+            painter.line_segment(
+                [egui::pos2(center.x + 1.0, center.y - 5.0), egui::pos2(center.x - 3.0, center.y)],
+                Stroke::new(1.6_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x - 3.0, center.y), egui::pos2(center.x + 1.0, center.y)],
+                Stroke::new(1.6_f32, color),
+            );
+            painter.line_segment(
+                [egui::pos2(center.x + 1.0, center.y), egui::pos2(center.x - 1.0, center.y + 5.0)],
+                Stroke::new(1.6_f32, color),
+            );
+        }
+    }
+}
+
+fn modern_icon_button(
+    ui: &mut egui::Ui,
+    icon: ModernIcon,
+    size: Vec2,
+    default_color: Color32,
+    hover_color: Color32,
+    tooltip: &str,
+) -> bool {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let is_hovered = response.hovered();
+
+    let bg_color = if is_hovered {
+        Color32::from_rgb(48, 22, 44)
+    } else {
+        Color32::from_rgb(26, 18, 34)
+    };
+
+    let border_stroke = if is_hovered {
+        Stroke::new(1.2_f32, PINK_NEON)
+    } else {
+        Stroke::new(1.0_f32, Color32::from_rgb(52, 34, 64))
+    };
+
+    let icon_color = if is_hovered {
+        hover_color
+    } else {
+        default_color
+    };
+
+    ui.painter().rect(rect, 5.0, bg_color, border_stroke);
+    draw_modern_icon(ui.painter(), icon, rect, icon_color);
+
+    response.on_hover_text(tooltip).clicked()
+}
+
+fn render_file_type_badge(ui: &mut egui::Ui, ext: &str) {
+    let (tag, color, bg) = match ext {
+        "pdf" | "doc" | "docx" | "txt" => ("DOC", PINK_ROSE, Color32::from_rgb(45, 18, 36)),
+        "mp4" | "mkv" | "avi" | "mov" | "webm" => ("VID", PINK_NEON, Color32::from_rgb(55, 16, 42)),
+        "zip" | "rar" | "7z" | "tar" | "gz" => ("ZIP", PINK_PASTEL, Color32::from_rgb(38, 22, 46)),
+        "mp3" | "wav" | "flac" | "aac" => ("AUD", Color32::from_rgb(255, 150, 200), Color32::from_rgb(40, 18, 40)),
+        "exe" | "msi" | "iso" => ("BIN", PINK_NEON, Color32::from_rgb(60, 20, 50)),
+        "jpg" | "png" | "gif" | "webp" | "svg" => ("IMG", Color32::from_rgb(255, 120, 170), Color32::from_rgb(45, 18, 38)),
+        _ => ("FILE", PINK_MUTED, Color32::from_rgb(30, 20, 36)),
+    };
+
+    egui::Frame::none()
+        .fill(bg)
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(70, 32, 60)))
+        .rounding(egui::Rounding::same(3.5))
+        .inner_margin(Margin::symmetric(4.5, 2.0))
+        .show(ui, |ui| {
+            ui.label(RichText::new(tag).size(9.5).color(color).strong());
+        });
+}
+
 struct ActiveTaskUI {
     id: String,
     filename: String,
@@ -32,6 +293,8 @@ struct RapidApp {
     tokio_rt: Arc<Runtime>,
     tasks: Arc<Mutex<Vec<ActiveTaskUI>>>,
     selected_task_index: Option<usize>,
+    selected_filter: FilterCategory,
+    search_query: String,
 
     // Splash Screen State
     splash_start: Instant,
@@ -51,14 +314,16 @@ struct RapidApp {
 
 impl RapidApp {
     fn new(cc: &eframe::CreationContext<'_>, rt: Arc<Runtime>) -> Self {
-        // Master Color Palette: Cyber-Obsidian Dark Theme
+        // Master Color Palette: Neon Pink Velvet Dark Theme
         let mut visuals = egui::Visuals::dark();
         visuals.window_rounding = egui::Rounding::same(8.0);
-        visuals.panel_fill = Color32::from_rgb(11, 14, 20);      // Deep Obsidian
-        visuals.faint_bg_color = Color32::from_rgb(21, 25, 34);  // Midnight Slate
-        visuals.extreme_bg_color = Color32::from_rgb(7, 9, 13);  // Pure Obsidian
-        visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(16, 20, 28);
-        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(32, 38, 52));
+        visuals.panel_fill = VELVET_SURFACE;
+        visuals.faint_bg_color = VELVET_CARD;
+        visuals.extreme_bg_color = VELVET_BLACK;
+        visuals.widgets.noninteractive.bg_fill = VELVET_SURFACE;
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, VELVET_BORDER);
+        visuals.selection.bg_fill = PINK_NEON;
+        visuals.selection.stroke = Stroke::new(1.0_f32, PINK_ROSE);
         cc.egui_ctx.set_visuals(visuals);
 
         let default_download_dir = dirs_or_fallback();
@@ -80,6 +345,8 @@ impl RapidApp {
             tokio_rt: rt,
             tasks: tasks_arc,
             selected_task_index: None,
+            selected_filter: FilterCategory::All,
+            search_query: String::new(),
             splash_start: Instant::now(),
             splash_duration: Duration::from_millis(1800),
             show_add_dialog: false,
@@ -390,7 +657,7 @@ impl RapidApp {
         let time = elapsed.as_secs_f32();
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(Color32::from_rgb(11, 14, 20)))
+            .frame(egui::Frame::none().fill(VELVET_BLACK))
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     let avail_h = ui.available_height();
@@ -403,26 +670,26 @@ impl RapidApp {
 
                     let painter = ui.painter();
 
-                    // Expanding outer glow ripple
+                    // Expanding outer glow ripple in Neon Pink
                     let ripple_phase = (time * 1.6) % 1.0;
                     let ripple_radius = 40.0 + ripple_phase * 35.0;
                     let ripple_alpha = ((1.0 - ripple_phase) * 140.0) as u8;
                     painter.circle_stroke(
                         center,
                         ripple_radius,
-                        Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(0, 210, 255, ripple_alpha)),
+                        Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(255, 42, 133, ripple_alpha)),
                     );
 
                     // Inner pulsing halo
                     painter.circle_filled(
                         center,
                         38.0 * pulse_scale,
-                        Color32::from_rgba_unmultiplied(0, 210, 255, 30),
+                        Color32::from_rgba_unmultiplied(255, 42, 133, 30),
                     );
                     painter.circle_stroke(
                         center,
                         40.0 * pulse_scale,
-                        Stroke::new(2.5_f32, Color32::from_rgb(0, 210, 255)),
+                        Stroke::new(2.5_f32, PINK_NEON),
                     );
 
                     // Centered Lightning Bolt icon
@@ -431,7 +698,7 @@ impl RapidApp {
                         egui::Align2::CENTER_CENTER,
                         "⚡",
                         egui::FontId::proportional(44.0 * pulse_scale),
-                        Color32::from_rgb(0, 220, 255),
+                        PINK_NEON,
                     );
 
                     ui.add_space(26.0);
@@ -439,34 +706,34 @@ impl RapidApp {
                         RichText::new("RAPID DOWNLOAD MANAGER")
                             .size(24.0)
                             .strong()
-                            .color(Color32::from_rgb(0, 215, 255)),
+                            .color(PINK_NEON),
                     );
 
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new("High-Speed Multi-Thread Engine • IDM Grade Architecture")
+                        RichText::new("Proprietary Multi-Stream Acceleration • Velvet Pink Edition")
                             .size(13.0)
-                            .color(Color32::from_rgb(138, 153, 173)),
+                            .color(PINK_PASTEL),
                     );
 
                     ui.add_space(28.0);
                     let bar = egui::ProgressBar::new(progress)
                         .desired_width(320.0)
-                        .fill(Color32::from_rgb(0, 210, 255));
+                        .fill(PINK_NEON);
                     ui.add(bar);
 
                     ui.add_space(10.0);
                     let status_text = if progress < 0.35 {
-                        "Initializing multi-segment planner..."
+                        "Initializing multi-stream segment matrix..."
                     } else if progress < 0.75 {
-                        "Starting browser extension bridge on port 9669..."
+                        "Connecting browser extension bridge on port 9669..."
                     } else {
-                        "Engine ready. Launching dashboard..."
+                        "Engine ready. Launching Command Dock..."
                     };
                     ui.label(
                         RichText::new(status_text)
                             .size(12.0)
-                            .color(Color32::from_rgb(110, 125, 145)),
+                            .color(PINK_MUTED),
                     );
                 });
             });
@@ -556,218 +823,309 @@ impl eframe::App for RapidApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
-        // Top Toolbar Panel
-        egui::TopBottomPanel::top("top_panel")
+        // =========================================================================
+        // PROPRIETARY COMMAND DOCK (TOP BAR)
+        // =========================================================================
+        egui::TopBottomPanel::top("command_dock")
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(18, 22, 30))
+                    .fill(VELVET_SURFACE)
+                    .stroke(Stroke::new(1.0_f32, VELVET_BORDER))
                     .inner_margin(Margin::symmetric(14.0, 10.0)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(RichText::new("⚡ Rapid Download Manager").strong().color(Color32::from_rgb(0, 210, 255)));
-                    ui.add_space(20.0);
+                    // 1. Brand Logo Badge
+                    ui.label(RichText::new("⚡ RAPID").size(19.0).strong().color(PINK_NEON));
+                    egui::Frame::none()
+                        .fill(PINK_ACCENT_BG)
+                        .stroke(Stroke::new(1.0_f32, PINK_ACCENT_BORDER))
+                        .rounding(egui::Rounding::same(4.0))
+                        .inner_margin(Margin::symmetric(6.0, 2.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("PRO 1.0").size(10.0).color(PINK_ROSE).strong());
+                        });
 
-                    if ui.button(RichText::new("➕ Add URL").strong()).clicked() {
-                        self.show_add_dialog = true;
+                    ui.add_space(14.0);
+
+                    // 2. Proprietary Filter Dock (Tabs: All, Active, Paused, Completed)
+                    let total_tasks_count = if let Ok(ref t) = self.tasks.try_lock() { t.len() } else { 0 };
+                    let filter_tabs = [
+                        (FilterCategory::All, format!("All ({})", total_tasks_count), "Show all download transfers"),
+                        (FilterCategory::Active, format!("Active ({})", active_count), "Show active transfers"),
+                        (FilterCategory::Paused, format!("Paused ({})", paused_count), "Show paused & interrupted transfers"),
+                        (FilterCategory::Completed, format!("Completed ({})", finished_count), "Show completed downloads"),
+                    ];
+
+                    for (cat, label, tip) in filter_tabs {
+                        let is_active = self.selected_filter == cat;
+                        let (bg, border, text_col) = if is_active {
+                            (PINK_NEON, PINK_ROSE, Color32::WHITE)
+                        } else {
+                            (Color32::from_rgb(26, 18, 34), Color32::from_rgb(48, 32, 58), Color32::from_rgb(190, 170, 200))
+                        };
+
+                        let btn = egui::Button::new(RichText::new(label).size(11.5).color(text_col).strong())
+                            .fill(bg)
+                            .stroke(Stroke::new(1.0_f32, border))
+                            .rounding(egui::Rounding::same(6.0));
+
+                        if ui.add(btn).on_hover_text(tip).clicked() {
+                            self.selected_filter = cat;
+                        }
+                        ui.add_space(2.0);
                     }
 
-                    let (has_selection, is_downloading, is_resumable) = {
-                        if let Ok(ref tasks) = self.tasks.try_lock() {
-                            if let Some(idx) = self.selected_task_index {
-                                if idx < tasks.len() {
-                                    let task = &tasks[idx];
-                                    let downloading = task.status == DownloadStatus::Downloading;
-                                    let resumable = matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
-                                    (true, downloading, resumable)
-                                } else {
-                                    (false, false, false)
+                    // 3. Search Filter Box
+                    ui.add_space(10.0);
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(15, 11, 20))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(56, 36, 68)))
+                        .rounding(egui::Rounding::same(6.0))
+                        .inner_margin(Margin::symmetric(8.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
+                                draw_modern_icon(ui.painter(), ModernIcon::Search, rect, PINK_ROSE);
+                                ui.add_space(4.0);
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.search_query)
+                                        .hint_text("Search files...")
+                                        .desired_width(130.0)
+                                        .frame(false)
+                                );
+                                if !self.search_query.is_empty() && ui.small_button("✕").clicked() {
+                                    self.search_query.clear();
                                 }
+                            });
+                        });
+
+                    // 4. Right-side global controls
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Minimize to System Tray
+                        if modern_icon_button(ui, ModernIcon::MinimizeTray, Vec2::new(28.0, 26.0), PINK_PASTEL, PINK_NEON, "Minimize to Windows System Tray") {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        }
+
+                        // Resume All
+                        if modern_icon_button(ui, ModernIcon::Play, Vec2::new(28.0, 26.0), PINK_ROSE, PINK_NEON, "Resume all paused downloads") {
+                            do_resume_all = true;
+                        }
+
+                        // Pause All
+                        if modern_icon_button(ui, ModernIcon::Pause, Vec2::new(28.0, 26.0), STATUS_PAUSED, PINK_NEON, "Pause all active downloads") {
+                            do_pause_all = true;
+                        }
+
+                        // Primary Action Button: Glowing Neon Pink New Transfer Button
+                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(135.0, 28.0), egui::Sense::click());
+                        let is_btn_h = btn_resp.hovered();
+                        let btn_bg = if is_btn_h { PINK_ROSE } else { PINK_NEON };
+                        ui.painter().rect_filled(btn_rect, 6.0, btn_bg);
+                        let plus_rect = egui::Rect::from_center_size(
+                            egui::pos2(btn_rect.min.x + 18.0, btn_rect.center().y),
+                            Vec2::new(12.0, 12.0),
+                        );
+                        draw_modern_icon(ui.painter(), ModernIcon::Plus, plus_rect, Color32::WHITE);
+                        ui.painter().text(
+                            egui::pos2(btn_rect.min.x + 30.0, btn_rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            "New Transfer",
+                            egui::FontId::proportional(12.5),
+                            Color32::WHITE,
+                        );
+
+                        if btn_resp.on_hover_text("Add a new accelerated download transfer").clicked() {
+                            self.show_add_dialog = true;
+                        }
+                    });
+                });
+
+                // Contextual Toolbar (Modern Dynamic Sub-Bar for selected download)
+                let (has_selection, is_downloading, is_resumable) = {
+                    if let Ok(ref tasks) = self.tasks.try_lock() {
+                        if let Some(idx) = self.selected_task_index {
+                            if idx < tasks.len() {
+                                let task = &tasks[idx];
+                                let downloading = task.status == DownloadStatus::Downloading;
+                                let resumable = matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
+                                (true, downloading, resumable)
                             } else {
                                 (false, false, false)
                             }
                         } else {
                             (false, false, false)
                         }
-                    };
+                    } else {
+                        (false, false, false)
+                    }
+                };
 
+                if has_selection {
                     ui.add_space(6.0);
-
-                    // Resume / Retry button
-                    if ui.add_enabled(is_resumable, egui::Button::new("▶ Resume")).on_hover_text("Resume or retry selected download").clicked() {
-                        if let Some(idx) = self.selected_task_index {
-                            action_resume = Some(idx);
-                        }
-                    }
-
-                    // Pause button
-                    if ui.add_enabled(is_downloading, egui::Button::new("⏸ Pause")).on_hover_text("Pause active download").clicked() {
-                        if let Some(idx) = self.selected_task_index {
-                            action_pause = Some(idx);
-                        }
-                    }
-
-                    // Open Folder button
-                    if ui.add_enabled(has_selection, egui::Button::new("📁 Open Folder")).on_hover_text("Open containing folder").clicked() {
-                        if let Some(idx) = self.selected_task_index {
-                            action_open_folder = Some(idx);
-                        }
-                    }
-
-                    // Delete button
-                    if ui.add_enabled(has_selection, egui::Button::new("🗑 Delete")).on_hover_text("Remove download from list").clicked() {
-                        if let Some(idx) = self.selected_task_index {
-                            action_remove = Some(idx);
-                        }
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("🗕 Tray").size(12.0))
-                            .on_hover_text("Minimize to Windows System Tray (continues in background)")
-                            .clicked()
-                        {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Selected:").size(11.0).color(Color32::from_rgb(160, 140, 170)));
+                        if let Ok(ref tasks) = self.tasks.try_lock() {
+                            if let Some(idx) = self.selected_task_index {
+                                if idx < tasks.len() {
+                                    let task = &tasks[idx];
+                                    ui.label(RichText::new(&task.filename).size(11.5).strong().color(PINK_PASTEL));
+                                }
+                            }
                         }
 
-                        if ui.button(RichText::new("▶ All").size(12.0))
-                            .on_hover_text("Resume all paused downloads")
-                            .clicked()
-                        {
-                            do_resume_all = true;
+                        ui.add_space(10.0);
+                        if is_resumable && modern_icon_button(ui, ModernIcon::Play, Vec2::new(26.0, 22.0), STATUS_COMPLETED, PINK_NEON, "Resume transfer") {
+                            if let Some(idx) = self.selected_task_index {
+                                action_resume = Some(idx);
+                            }
                         }
-
-                        if ui.button(RichText::new("⏸ All").size(12.0))
-                            .on_hover_text("Pause all active downloads")
-                            .clicked()
-                        {
-                            do_pause_all = true;
+                        if is_downloading && modern_icon_button(ui, ModernIcon::Pause, Vec2::new(26.0, 22.0), STATUS_PAUSED, PINK_NEON, "Pause transfer") {
+                            if let Some(idx) = self.selected_task_index {
+                                action_pause = Some(idx);
+                            }
+                        }
+                        if modern_icon_button(ui, ModernIcon::Folder, Vec2::new(26.0, 22.0), PINK_PASTEL, PINK_NEON, "Open containing folder") {
+                            if let Some(idx) = self.selected_task_index {
+                                action_open_folder = Some(idx);
+                            }
+                        }
+                        if modern_icon_button(ui, ModernIcon::Refresh, Vec2::new(26.0, 22.0), PINK_PASTEL, PINK_NEON, "Redownload from start") {
+                            if let Some(idx) = self.selected_task_index {
+                                action_redownload = Some(idx);
+                            }
+                        }
+                        if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(26.0, 22.0), STATUS_FAILED, Color32::from_rgb(255, 40, 80), "Delete transfer") {
+                            if let Some(idx) = self.selected_task_index {
+                                action_remove = Some(idx);
+                            }
                         }
                     });
-                });
+                }
             });
 
-        // Custom Cyber-Obsidian Status Bar (Replacing default status bar)
+        // Custom Neon Pink Velvet Status Bar
         egui::TopBottomPanel::bottom("custom_status_bar")
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(8, 10, 15))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 33, 46)))
+                    .fill(VELVET_BLACK)
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(44, 28, 54)))
                     .inner_margin(Margin::symmetric(10.0, 5.0)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
 
-                    // 1. Live Engine Beacon Chip
-                    render_custom_chip(
+                    // 1. Live Engine Beacon Chip (Vector pulse beacon)
+                    render_custom_chip_with_icon(
                         ui,
-                        "●",
+                        ModernIcon::PulseBeacon,
                         "Engine:",
                         "127.0.0.1:9669",
-                        Color32::from_rgb(9, 26, 18),
-                        Color32::from_rgb(0, 230, 118),
-                        Color32::from_rgb(0, 230, 118),
+                        Color32::from_rgb(32, 12, 28),
+                        PINK_ROSE,
+                        PINK_NEON,
                         "Rapid Engine Background HTTP Listener is Active on 127.0.0.1:9669",
                     );
 
                     // 2. Aggregate Live Speed Chip
                     if total_speed_bps > 0 {
-                        render_custom_chip(
+                        render_custom_chip_with_icon(
                             ui,
-                            "⚡",
+                            ModernIcon::SpeedGauge,
                             "Speed:",
                             &format_speed(total_speed_bps),
-                            Color32::from_rgb(10, 34, 48),
-                            Color32::from_rgb(0, 210, 255),
-                            Color32::from_rgb(0, 210, 255),
+                            Color32::from_rgb(42, 14, 34),
+                            PINK_NEON,
+                            PINK_NEON,
                             "Live Aggregate Download Speed",
                         );
                     } else {
-                        render_custom_chip(
+                        render_custom_chip_with_icon(
                             ui,
-                            "⚡",
+                            ModernIcon::SpeedGauge,
                             "Speed:",
                             "0.0 KB/s",
-                            Color32::from_rgb(14, 18, 25),
-                            Color32::from_rgb(30, 38, 52),
-                            Color32::from_rgb(100, 115, 135),
+                            Color32::from_rgb(20, 15, 25),
+                            Color32::from_rgb(48, 32, 56),
+                            Color32::from_rgb(140, 120, 150),
                             "Download Speed (Idle)",
                         );
                     }
 
                     // 3. Active Tasks Chip
-                    render_custom_chip(
+                    render_custom_chip_with_icon(
                         ui,
-                        "📥",
+                        ModernIcon::Play,
                         "Active:",
                         &active_count.to_string(),
-                        if active_count > 0 { Color32::from_rgb(14, 35, 56) } else { Color32::from_rgb(14, 18, 25) },
-                        if active_count > 0 { Color32::from_rgb(33, 150, 243) } else { Color32::from_rgb(30, 38, 52) },
-                        if active_count > 0 { Color32::from_rgb(66, 165, 245) } else { Color32::from_rgb(100, 115, 135) },
+                        if active_count > 0 { Color32::from_rgb(38, 16, 32) } else { Color32::from_rgb(20, 15, 25) },
+                        if active_count > 0 { PINK_ROSE } else { Color32::from_rgb(48, 32, 56) },
+                        if active_count > 0 { PINK_PASTEL } else { Color32::from_rgb(140, 120, 150) },
                         "Number of downloads currently transferring",
                     );
 
                     // 4. Paused Tasks Chip
-                    render_custom_chip(
+                    render_custom_chip_with_icon(
                         ui,
-                        "⏸",
+                        ModernIcon::Pause,
                         "Paused:",
                         &paused_count.to_string(),
-                        if paused_count > 0 { Color32::from_rgb(38, 30, 10) } else { Color32::from_rgb(14, 18, 25) },
-                        if paused_count > 0 { Color32::from_rgb(255, 179, 0) } else { Color32::from_rgb(30, 38, 52) },
-                        if paused_count > 0 { Color32::from_rgb(255, 193, 7) } else { Color32::from_rgb(100, 115, 135) },
+                        if paused_count > 0 { Color32::from_rgb(40, 24, 18) } else { Color32::from_rgb(20, 15, 25) },
+                        if paused_count > 0 { STATUS_PAUSED } else { Color32::from_rgb(48, 32, 56) },
+                        if paused_count > 0 { Color32::from_rgb(255, 195, 150) } else { Color32::from_rgb(140, 120, 150) },
                         "Number of paused downloads",
                     );
 
                     // 5. Finished Tasks Chip
-                    render_custom_chip(
+                    render_custom_chip_with_icon(
                         ui,
-                        "✔",
+                        ModernIcon::Check,
                         "Done:",
                         &finished_count.to_string(),
-                        if finished_count > 0 { Color32::from_rgb(13, 34, 22) } else { Color32::from_rgb(14, 18, 25) },
-                        if finished_count > 0 { Color32::from_rgb(0, 200, 83) } else { Color32::from_rgb(30, 38, 52) },
-                        if finished_count > 0 { Color32::from_rgb(76, 175, 80) } else { Color32::from_rgb(100, 115, 135) },
+                        if finished_count > 0 { Color32::from_rgb(35, 14, 30) } else { Color32::from_rgb(20, 15, 25) },
+                        if finished_count > 0 { PINK_ROSE } else { Color32::from_rgb(48, 32, 56) },
+                        if finished_count > 0 { PINK_ROSE } else { Color32::from_rgb(140, 120, 150) },
                         "Completed downloads in this session",
                     );
 
                     // 6. Total Downloaded Chip
-                    render_custom_chip(
+                    render_custom_chip_plain(
                         ui,
-                        "📊",
                         "Total:",
                         &format_bytes(total_downloaded),
-                        Color32::from_rgb(16, 20, 28),
-                        Color32::from_rgb(38, 46, 62),
-                        Color32::from_rgb(180, 195, 215),
+                        Color32::from_rgb(24, 18, 30),
+                        Color32::from_rgb(52, 36, 62),
+                        Color32::from_rgb(220, 195, 225),
                         "Total data downloaded across all tasks",
                     );
 
                     // Right-aligned actions
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        render_custom_chip(
+                        render_custom_chip_plain(
                             ui,
-                            "🛡",
-                            "",
-                            "Tray Active",
-                            Color32::from_rgb(14, 18, 26),
-                            Color32::from_rgb(34, 42, 58),
-                            Color32::from_rgb(140, 155, 180),
+                            "Tray:",
+                            "Active",
+                            Color32::from_rgb(24, 18, 30),
+                            Color32::from_rgb(50, 34, 60),
+                            PINK_MUTED,
                             "Rapid Download Manager is active in Windows Notification Area (System Tray)",
                         );
 
-                        if render_custom_btn_chip(
+                        if render_custom_btn_chip_modern(
                             ui,
-                            "📁",
+                            ModernIcon::Folder,
                             "Downloads",
                             "Open Downloads directory in Windows File Explorer",
                         ) {
                             let _ = open::that(dirs_or_fallback());
                         }
 
-                        if render_custom_btn_chip(
+                        if render_custom_btn_chip_modern(
                             ui,
-                            "🧩",
+                            ModernIcon::Plus,
                             "Extension Hook",
                             "Install & integrate Chrome, Edge & Brave Extension",
                         ) {
@@ -794,12 +1152,12 @@ impl eframe::App for RapidApp {
             egui::TopBottomPanel::bottom("bottom_panel")
                 .frame(
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(12, 16, 24))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 36, 50)))
+                        .fill(VELVET_BLACK)
+                        .stroke(Stroke::new(1.0_f32, VELVET_BORDER))
                         .inner_margin(Margin::same(10.0)),
                 )
                 .show(ctx, |ui| {
-                    ui.label(RichText::new("🧵 Multi-Part Connection Segments").strong().color(Color32::from_rgb(0, 210, 255)).size(11.5));
+                    ui.label(RichText::new("🧵 Multi-Part Stream Connections").strong().color(PINK_ROSE).size(11.5));
                     ui.add_space(4.0);
 
                     if let Ok(tasks) = self.tasks.try_lock() {
@@ -810,13 +1168,13 @@ impl eframe::App for RapidApp {
                                 // Show error notification banner if failed
                                 if let DownloadStatus::Failed(ref err) = task.status {
                                     egui::Frame::none()
-                                        .fill(Color32::from_rgb(45, 20, 24))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(231, 76, 60)))
+                                        .fill(Color32::from_rgb(45, 18, 24))
+                                        .stroke(Stroke::new(1.0_f32, STATUS_FAILED))
                                         .inner_margin(Margin::symmetric(8.0, 6.0))
                                         .rounding(egui::Rounding::same(4.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new(format!("⚠ Error: {}", err)).color(Color32::from_rgb(231, 76, 60)).strong());
+                                                ui.label(RichText::new(format!("⚠ Error: {}", err)).color(STATUS_FAILED).strong());
                                                 if ui.button(RichText::new("🔄 Retry Now").strong()).clicked() {
                                                     action_resume = Some(idx);
                                                 }
@@ -825,13 +1183,13 @@ impl eframe::App for RapidApp {
                                     ui.add_space(6.0);
                                 } else if task.status == DownloadStatus::Paused {
                                     egui::Frame::none()
-                                        .fill(Color32::from_rgb(40, 35, 18))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(241, 196, 15)))
+                                        .fill(Color32::from_rgb(40, 24, 18))
+                                        .stroke(Stroke::new(1.0_f32, STATUS_PAUSED))
                                         .inner_margin(Margin::symmetric(8.0, 6.0))
                                         .rounding(egui::Rounding::same(4.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new("⏸ Download paused").color(Color32::from_rgb(241, 196, 15)).strong());
+                                                ui.label(RichText::new("⏸ Download paused").color(STATUS_PAUSED).strong());
                                                 if ui.button(RichText::new("▶ Resume Download").strong()).clicked() {
                                                     action_resume = Some(idx);
                                                 }
@@ -848,14 +1206,14 @@ impl eframe::App for RapidApp {
                                     .spacing(Vec2::new(12.0, 6.0))
                                     .show(ui, |ui| {
                                         for (i, seg) in task.segments.iter().enumerate() {
-                                            ui.label(RichText::new(format!("Part {}:", i + 1)).size(11.0));
+                                            ui.label(RichText::new(format!("Part {}:", i + 1)).size(11.0).color(PINK_PASTEL));
                                             let ratio = seg.progress_ratio();
                                             let bar = egui::ProgressBar::new(ratio)
                                                 .show_percentage()
                                                 .desired_width(seg_bar_width)
-                                                .fill(if seg.is_complete { Color32::from_rgb(46, 204, 113) } else { Color32::from_rgb(52, 152, 219) });
+                                                .fill(if seg.is_complete { STATUS_COMPLETED } else { STATUS_DOWNLOADING });
                                             ui.add(bar);
-                                            ui.label(RichText::new(format!("{:.1} / {:.1} MB", seg.downloaded_bytes as f64 / 1_048_576.0, seg.total_bytes() as f64 / 1_048_576.0)).size(11.0));
+                                            ui.label(RichText::new(format!("{:.1} / {:.1} MB", seg.downloaded_bytes as f64 / 1_048_576.0, seg.total_bytes() as f64 / 1_048_576.0)).size(11.0).color(Color32::from_rgb(220, 200, 225)));
                                             if (i + 1) % cols == 0 {
                                                 ui.end_row();
                                             }
@@ -868,268 +1226,292 @@ impl eframe::App for RapidApp {
         }
 
         // Central Table Panel
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let mut selected = self.selected_task_index;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(VELVET_SURFACE))
+            .show(ctx, |ui| {
+                let mut selected = self.selected_task_index;
 
-            if let Ok(tasks) = self.tasks.try_lock() {
-                if tasks.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(60.0);
-                        ui.label(RichText::new("No active downloads").size(18.0).color(Color32::GRAY));
-                        ui.add_space(10.0);
-                        if ui.button(RichText::new("➕ Add your first download").size(14.0)).clicked() {
-                            self.show_add_dialog = true;
+                if let Ok(tasks) = self.tasks.try_lock() {
+                    let filtered_indices: Vec<usize> = tasks.iter().enumerate().filter(|(_, task)| {
+                        // Category filter
+                        let cat_ok = match self.selected_filter {
+                            FilterCategory::All => true,
+                            FilterCategory::Active => task.status == DownloadStatus::Downloading,
+                            FilterCategory::Paused => matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_)),
+                            FilterCategory::Completed => task.status == DownloadStatus::Completed,
+                        };
+                        if !cat_ok { return false; }
+                        // Search query filter
+                        if !self.search_query.trim().is_empty() {
+                            let q = self.search_query.trim().to_lowercase();
+                            return task.filename.to_lowercase().contains(&q) || task.url.to_lowercase().contains(&q);
                         }
-                    });
-                } else {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            egui_extras::TableBuilder::new(ui)
-                                .striped(true)
-                                .resizable(true)
-                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                .column(egui_extras::Column::remainder().at_least(180.0).resizable(true)) // Filename (expands dynamically)
-                                .column(egui_extras::Column::initial(80.0).at_least(60.0))                 // Size
-                                .column(egui_extras::Column::initial(95.0).at_least(75.0))                 // Status
-                                .column(egui_extras::Column::remainder().at_least(140.0))                  // Progress (expands dynamically)
-                                .column(egui_extras::Column::initial(85.0).at_least(65.0))                 // Speed
-                                .column(egui_extras::Column::initial(65.0).at_least(45.0))                 // ETA
-                                .column(egui_extras::Column::exact(135.0))                                 // Compact Icon Actions
-                                .header(24.0, |mut header| {
-                                    header.col(|ui| { ui.strong("Filename"); });
-                                    header.col(|ui| { ui.strong("Size"); });
-                                    header.col(|ui| { ui.strong("Status"); });
-                                    header.col(|ui| { ui.strong("Progress"); });
-                                header.col(|ui| { ui.strong("Speed"); });
-                                header.col(|ui| { ui.strong("ETA"); });
-                                header.col(|ui| { ui.strong("Actions"); });
-                            })
-                            .body(|body| {
-                                body.rows(30.0, tasks.len(), |mut row| {
-                                    let i = row.index();
-                                    let item = &tasks[i];
-                                    let is_sel = selected == Some(i);
-                                    let is_downloading = item.status == DownloadStatus::Downloading;
-                                    let is_resumable = matches!(item.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
-                                    let is_complete = item.status == DownloadStatus::Completed;
+                        true
+                    }).map(|(i, _)| i).collect();
 
-                                    row.set_selected(is_sel);
+                    if tasks.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(80.0);
+                            let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(48.0, 48.0), egui::Sense::hover());
+                            draw_modern_icon(ui.painter(), ModernIcon::Plus, icon_rect, PINK_ROSE);
+                            ui.add_space(12.0);
+                            ui.label(RichText::new("No transfers queued").size(18.0).color(PINK_PASTEL).strong());
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Add a URL or trigger from Chrome / Edge / Brave extension").size(12.0).color(PINK_MUTED));
+                            ui.add_space(16.0);
+                            let add_btn = egui::Button::new(RichText::new("+ Add your first transfer").size(13.0).strong().color(Color32::WHITE))
+                                .fill(PINK_NEON)
+                                .rounding(egui::Rounding::same(6.0));
+                            if ui.add(add_btn).clicked() {
+                                self.show_add_dialog = true;
+                            }
+                        });
+                    } else if filtered_indices.is_empty() {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(80.0);
+                            let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(36.0, 36.0), egui::Sense::hover());
+                            draw_modern_icon(ui.painter(), ModernIcon::Search, icon_rect, PINK_ROSE);
+                            ui.add_space(12.0);
+                            ui.label(RichText::new("No transfers match the current filter").size(16.0).color(PINK_PASTEL));
+                        });
+                    } else {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                egui_extras::TableBuilder::new(ui)
+                                    .striped(true)
+                                    .resizable(true)
+                                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                    .column(egui_extras::Column::remainder().at_least(200.0).resizable(true)) // Filename
+                                    .column(egui_extras::Column::initial(80.0).at_least(60.0))                 // Size
+                                    .column(egui_extras::Column::initial(95.0).at_least(75.0))                 // Status
+                                    .column(egui_extras::Column::remainder().at_least(140.0))                  // Progress
+                                    .column(egui_extras::Column::initial(85.0).at_least(65.0))                 // Speed
+                                    .column(egui_extras::Column::initial(65.0).at_least(45.0))                 // ETA
+                                    .column(egui_extras::Column::exact(140.0))                                 // Actions
+                                    .header(26.0, |mut header| {
+                                        header.col(|ui| { ui.strong(RichText::new("Filename").color(PINK_PASTEL)); });
+                                        header.col(|ui| { ui.strong(RichText::new("Size").color(PINK_PASTEL)); });
+                                        header.col(|ui| { ui.strong(RichText::new("Status").color(PINK_PASTEL)); });
+                                        header.col(|ui| { ui.strong(RichText::new("Progress").color(PINK_PASTEL)); });
+                                        header.col(|ui| { ui.strong(RichText::new("Speed").color(PINK_PASTEL)); });
+                                        header.col(|ui| { ui.strong(RichText::new("ETA").color(PINK_PASTEL)); });
+                                        header.col(|ui| { ui.strong(RichText::new("Actions").color(PINK_PASTEL)); });
+                                    })
+                                    .body(|body| {
+                                        body.rows(32.0, filtered_indices.len(), |mut row| {
+                                            let filter_idx = row.index();
+                                            let i = filtered_indices[filter_idx];
+                                            let item = &tasks[i];
+                                            let is_sel = selected == Some(i);
+                                            let is_downloading = item.status == DownloadStatus::Downloading;
+                                            let is_resumable = matches!(item.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
+                                            let is_complete = item.status == DownloadStatus::Completed;
 
-                                    // 1. Filename column (Click to open file after download, folder icon to open in folder)
-                                    row.col(|ui| {
-                                        ui.horizontal(|ui| {
-                                            let icon = match item.filename.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
-                                                "pdf" | "doc" | "docx" | "txt" => "📄",
-                                                "mp4" | "mkv" | "avi" | "mov" => "🎬",
-                                                "zip" | "rar" | "7z" | "tar" | "gz" => "📦",
-                                                "mp3" | "wav" | "flac" => "🎵",
-                                                "exe" | "msi" => "⚙",
-                                                "jpg" | "png" | "gif" | "webp" => "🖼",
-                                                _ => "💾",
-                                            };
+                                            row.set_selected(is_sel);
 
-                                            if is_complete {
-                                                let label_text = RichText::new(format!("{} {}", icon, &item.filename))
-                                                    .color(Color32::from_rgb(0, 210, 255))
-                                                    .underline();
-                                                let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()))
-                                                    .on_hover_text("✔ Download complete! Click to open file directly");
-                                                if resp.clicked() {
-                                                    action_open_file = Some(i);
-                                                }
-                                                resp.context_menu(|ui| {
-                                                    if ui.button("▶ Open File").clicked() {
-                                                        action_open_file = Some(i);
-                                                        ui.close_menu();
+                                            // 1. Filename column with modern badge + click to open
+                                            row.col(|ui| {
+                                                ui.horizontal(|ui| {
+                                                    let ext = item.filename.rsplit('.').next().unwrap_or("").to_lowercase();
+                                                    render_file_type_badge(ui, &ext);
+                                                    ui.add_space(4.0);
+
+                                                    if is_complete {
+                                                        let label_text = RichText::new(&item.filename)
+                                                            .color(PINK_ROSE)
+                                                            .underline();
+                                                        let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()))
+                                                            .on_hover_text("✔ Download complete! Click to open file directly");
+                                                        if resp.clicked() {
+                                                            action_open_file = Some(i);
+                                                        }
+                                                        resp.context_menu(|ui| {
+                                                            if ui.button("▶ Open File").clicked() {
+                                                                action_open_file = Some(i);
+                                                                ui.close_menu();
+                                                            }
+                                                            if ui.button("📁 Open Containing Folder").clicked() {
+                                                                action_open_folder = Some(i);
+                                                                ui.close_menu();
+                                                            }
+                                                            if ui.button("📋 Copy URL").clicked() {
+                                                                action_copy_url = Some(item.url.clone());
+                                                                ui.close_menu();
+                                                            }
+                                                            ui.separator();
+                                                            if ui.button("🔄 Redownload").clicked() {
+                                                                action_redownload = Some(i);
+                                                                ui.close_menu();
+                                                            }
+                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).clicked() {
+                                                                action_remove = Some(i);
+                                                                ui.close_menu();
+                                                            }
+                                                        });
+                                                    } else {
+                                                        let resp = ui.selectable_label(is_sel, &item.filename);
+                                                        if resp.clicked() {
+                                                            selected = Some(i);
+                                                        }
+                                                        resp.context_menu(|ui| {
+                                                            if is_downloading {
+                                                                if ui.button("⏸ Pause").clicked() {
+                                                                    action_pause = Some(i);
+                                                                    ui.close_menu();
+                                                                }
+                                                            } else if is_resumable {
+                                                                if ui.button("▶ Resume").clicked() {
+                                                                    action_resume = Some(i);
+                                                                    ui.close_menu();
+                                                                }
+                                                            }
+                                                            if ui.button("📁 Open Containing Folder").clicked() {
+                                                                action_open_folder = Some(i);
+                                                                ui.close_menu();
+                                                            }
+                                                            if ui.button("📋 Copy URL").clicked() {
+                                                                action_copy_url = Some(item.url.clone());
+                                                                ui.close_menu();
+                                                            }
+                                                            ui.separator();
+                                                            if ui.button("🔄 Redownload").clicked() {
+                                                                action_redownload = Some(i);
+                                                                ui.close_menu();
+                                                            }
+                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).clicked() {
+                                                                action_remove = Some(i);
+                                                                ui.close_menu();
+                                                            }
+                                                        });
                                                     }
-                                                    if ui.button("📁 Open Containing Folder").clicked() {
+
+                                                    if is_complete {
+                                                        if modern_icon_button(ui, ModernIcon::ExternalFile, Vec2::new(20.0, 18.0), PINK_ROSE, PINK_NEON, "Open / Launch file") {
+                                                            action_open_file = Some(i);
+                                                        }
+                                                    }
+
+                                                    if modern_icon_button(ui, ModernIcon::Folder, Vec2::new(20.0, 18.0), PINK_MUTED, PINK_ROSE, "Open containing folder") {
                                                         action_open_folder = Some(i);
-                                                        ui.close_menu();
-                                                    }
-                                                    if ui.button("📋 Copy URL").clicked() {
-                                                        action_copy_url = Some(item.url.clone());
-                                                        ui.close_menu();
-                                                    }
-                                                    ui.separator();
-                                                    if ui.button("🔄 Redownload").clicked() {
-                                                        action_redownload = Some(i);
-                                                        ui.close_menu();
-                                                    }
-                                                    if ui.button(RichText::new("🗑 Delete").color(Color32::from_rgb(231, 76, 60))).clicked() {
-                                                        action_remove = Some(i);
-                                                        ui.close_menu();
                                                     }
                                                 });
-                                            } else {
-                                                let resp = ui.selectable_label(is_sel, format!("{} {}", icon, &item.filename));
-                                                if resp.clicked() {
-                                                    selected = Some(i);
+                                            });
+
+                                            // 2. Size column
+                                            row.col(|ui| {
+                                                let sz_text = if let Some(total) = item.total_bytes {
+                                                    format_bytes(total)
+                                                } else if item.downloaded_bytes > 0 {
+                                                    format_bytes(item.downloaded_bytes)
+                                                } else {
+                                                    "--".to_string()
+                                                };
+                                                ui.label(RichText::new(sz_text).color(Color32::from_rgb(220, 200, 225)));
+                                            });
+
+                                            // 3. Status column
+                                            row.col(|ui| {
+                                                let (color, text, tooltip) = match &item.status {
+                                                    DownloadStatus::Downloading => (STATUS_DOWNLOADING, "Downloading".to_string(), None),
+                                                    DownloadStatus::Completed => (STATUS_COMPLETED, "Completed".to_string(), None),
+                                                    DownloadStatus::Paused => (STATUS_PAUSED, "Paused".to_string(), Some("Download is paused. Click Resume to continue.".to_string())),
+                                                    DownloadStatus::Failed(err) => (STATUS_FAILED, "Failed".to_string(), Some(format!("Failure reason: {}\nClick Resume/Retry to retry.", err))),
+                                                    _ => (PINK_MUTED, "Queued".to_string(), None),
+                                                };
+                                                let label = ui.label(RichText::new(text).color(color).strong());
+                                                if let Some(tip) = tooltip {
+                                                    label.on_hover_text(tip);
                                                 }
-                                                resp.context_menu(|ui| {
+                                            });
+
+                                            // 4. Progress bar with Pink styling
+                                            row.col(|ui| {
+                                                let ratio = (item.progress_percent / 100.0).clamp(0.0, 1.0);
+                                                let bar_color = match item.status {
+                                                    DownloadStatus::Completed => STATUS_COMPLETED,
+                                                    DownloadStatus::Downloading => STATUS_DOWNLOADING,
+                                                    DownloadStatus::Paused => STATUS_PAUSED,
+                                                    DownloadStatus::Failed(_) => STATUS_FAILED,
+                                                    _ => Color32::from_rgb(80, 50, 80),
+                                                };
+                                                let bar = egui::ProgressBar::new(ratio)
+                                                    .show_percentage()
+                                                    .fill(bar_color);
+                                                ui.add(bar);
+                                            });
+
+                                            // 5. Speed column
+                                            row.col(|ui| {
+                                                if item.status == DownloadStatus::Downloading {
+                                                    ui.label(RichText::new(format_speed(item.speed_bps)).color(PINK_NEON).strong());
+                                                } else {
+                                                    ui.label(RichText::new("--").color(PINK_MUTED));
+                                                }
+                                            });
+
+                                            // 6. ETA column
+                                            row.col(|ui| {
+                                                if item.status == DownloadStatus::Downloading {
+                                                    if let Some(eta) = item.eta_seconds {
+                                                        ui.label(RichText::new(format_eta(eta)).color(PINK_PASTEL));
+                                                    } else {
+                                                        ui.label(RichText::new("--").color(PINK_MUTED));
+                                                    }
+                                                } else {
+                                                    ui.label(RichText::new("--").color(PINK_MUTED));
+                                                }
+                                            });
+
+                                            // 7. Modern Vector Action Buttons
+                                            row.col(|ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
                                                     if is_downloading {
-                                                        if ui.button("⏸ Pause").clicked() {
+                                                        if modern_icon_button(ui, ModernIcon::Pause, Vec2::new(24.0, 22.0), STATUS_PAUSED, PINK_NEON, "Pause") {
                                                             action_pause = Some(i);
-                                                            ui.close_menu();
                                                         }
                                                     } else if is_resumable {
-                                                        if ui.button("▶ Resume").clicked() {
+                                                        if modern_icon_button(ui, ModernIcon::Play, Vec2::new(24.0, 22.0), STATUS_COMPLETED, PINK_NEON, "Resume") {
                                                             action_resume = Some(i);
-                                                            ui.close_menu();
                                                         }
                                                     }
-                                                    if ui.button("📁 Open Containing Folder").clicked() {
-                                                        action_open_folder = Some(i);
-                                                        ui.close_menu();
-                                                    }
-                                                    if ui.button("📋 Copy URL").clicked() {
-                                                        action_copy_url = Some(item.url.clone());
-                                                        ui.close_menu();
-                                                    }
-                                                    ui.separator();
-                                                    if ui.button("🔄 Redownload").clicked() {
+
+                                                    if modern_icon_button(ui, ModernIcon::Refresh, Vec2::new(24.0, 22.0), PINK_PASTEL, PINK_NEON, "Redownload") {
                                                         action_redownload = Some(i);
-                                                        ui.close_menu();
                                                     }
-                                                    if ui.button(RichText::new("🗑 Delete").color(Color32::from_rgb(231, 76, 60))).clicked() {
+
+                                                    if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(24.0, 22.0), STATUS_FAILED, Color32::from_rgb(255, 40, 80), "Delete") {
                                                         action_remove = Some(i);
-                                                        ui.close_menu();
                                                     }
                                                 });
-                                            }
-
-                                            let folder_btn = ui.small_button("📁").on_hover_text("Open containing folder in Explorer");
-                                            if folder_btn.clicked() {
-                                                action_open_folder = Some(i);
-                                            }
+                                            });
                                         });
                                     });
-
-                                    // 2. Size column
-                                    row.col(|ui| {
-                                        if let Some(total) = item.total_bytes {
-                                            ui.label(format_bytes(total));
-                                        } else if item.downloaded_bytes > 0 {
-                                            ui.label(format_bytes(item.downloaded_bytes));
-                                        } else {
-                                            ui.label("--");
-                                        }
-                                    });
-
-                                    // 3. Status column with hover details
-                                    row.col(|ui| {
-                                        let (color, text, tooltip) = match &item.status {
-                                            DownloadStatus::Downloading => (Color32::from_rgb(52, 152, 219), "Downloading".to_string(), None),
-                                            DownloadStatus::Completed => (Color32::from_rgb(46, 204, 113), "Completed".to_string(), None),
-                                            DownloadStatus::Paused => (Color32::from_rgb(241, 196, 15), "Paused".to_string(), Some("Download is paused. Click Resume to continue.".to_string())),
-                                            DownloadStatus::Failed(err) => (Color32::from_rgb(231, 76, 60), "Failed ⚠".to_string(), Some(format!("Failure reason: {}\nClick Resume/Retry to retry.", err))),
-                                            _ => (Color32::GRAY, "Queued".to_string(), None),
-                                        };
-                                        let label = ui.label(RichText::new(text).color(color).strong());
-                                        if let Some(tip) = tooltip {
-                                            label.on_hover_text(tip);
-                                        }
-                                    });
-
-                                    // 4. Progress bar with status color
-                                    row.col(|ui| {
-                                        let ratio = (item.progress_percent / 100.0).clamp(0.0, 1.0);
-                                        let bar_color = match item.status {
-                                            DownloadStatus::Completed => Color32::from_rgb(46, 204, 113),
-                                            DownloadStatus::Downloading => Color32::from_rgb(0, 210, 255),
-                                            DownloadStatus::Paused => Color32::from_rgb(241, 196, 15),
-                                            DownloadStatus::Failed(_) => Color32::from_rgb(231, 76, 60),
-                                            _ => Color32::from_rgb(100, 110, 130),
-                                        };
-                                        let bar = egui::ProgressBar::new(ratio)
-                                            .show_percentage()
-                                            .fill(bar_color);
-                                        ui.add(bar);
-                                    });
-
-                                    // 5. Speed column
-                                    row.col(|ui| {
-                                        if item.status == DownloadStatus::Downloading {
-                                            ui.label(format_speed(item.speed_bps));
-                                        } else {
-                                            ui.label("--");
-                                        }
-                                    });
-
-                                    // 6. ETA column
-                                    row.col(|ui| {
-                                        if item.status == DownloadStatus::Downloading {
-                                            if let Some(eta) = item.eta_seconds {
-                                                ui.label(format_eta(eta));
-                                            } else {
-                                                ui.label("--");
-                                            }
-                                        } else {
-                                            ui.label("--");
-                                        }
-                                    });
-
-                                    // 7. Compact Icon Actions column (only icons, hover shows name)
-                                    row.col(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing = Vec2::new(5.0, 0.0);
-                                            if is_downloading {
-                                                if ui.button(RichText::new("⏸").size(13.0).color(Color32::from_rgb(241, 196, 15)))
-                                                    .on_hover_text("Pause")
-                                                    .clicked()
-                                                {
-                                                    action_pause = Some(i);
-                                                }
-                                            } else if is_resumable {
-                                                if ui.button(RichText::new("▶").size(13.0).color(Color32::from_rgb(46, 204, 113)))
-                                                    .on_hover_text("Resume")
-                                                    .clicked()
-                                                {
-                                                    action_resume = Some(i);
-                                                }
-                                            }
-
-                                            if ui.button(RichText::new("🔄").size(13.0).color(Color32::from_rgb(0, 210, 255)))
-                                                .on_hover_text("Redownload")
-                                                .clicked()
-                                            {
-                                                action_redownload = Some(i);
-                                            }
-
-                                            if ui.button(RichText::new("🗑").size(13.0).color(Color32::from_rgb(231, 76, 60)))
-                                                .on_hover_text("Delete")
-                                                .clicked()
-                                            {
-                                                action_remove = Some(i);
-                                            }
-                                        });
-                                    });
-                                });
                             });
-                    });
+                    }
                 }
-            }
 
-            self.selected_task_index = selected;
-        });
+                self.selected_task_index = selected;
+            });
 
         // Modern Cyber-Obsidian Add Download Modal Dialog
         if self.show_add_dialog {
             // Backdrop dimming scrim
             let screen_rect = ctx.screen_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("modal_backdrop")));
-            painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(175));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(13, 8, 16, 210));
 
             let modal_frame = egui::Frame::none()
-                .fill(Color32::from_rgb(13, 17, 24))
-                .stroke(Stroke::new(1.5_f32, Color32::from_rgb(0, 210, 255)))
+                .fill(VELVET_SURFACE)
+                .stroke(Stroke::new(1.8_f32, PINK_NEON))
                 .rounding(egui::Rounding::same(12.0))
                 .inner_margin(Margin::same(20.0))
                 .shadow(egui::epaint::Shadow {
                     offset: [0.0, 8.0].into(),
                     blur: 24.0,
                     spread: 2.0,
-                    color: Color32::from_black_alpha(200),
+                    color: Color32::from_black_alpha(220),
                 });
 
             let mut close_modal = false;
@@ -1145,31 +1527,28 @@ impl eframe::App for RapidApp {
                 .show(ctx, |ui| {
                     // Header Section
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("⚡")
-                                .size(22.0)
-                                .color(Color32::from_rgb(0, 210, 255))
-                                .strong(),
-                        );
+                        let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), egui::Sense::hover());
+                        draw_modern_icon(ui.painter(), ModernIcon::Plus, icon_rect, PINK_NEON);
+                        ui.add_space(4.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new("Add New Download")
+                                RichText::new("Add New Transfer")
                                     .size(17.0)
-                                    .color(Color32::from_rgb(240, 245, 255))
+                                    .color(Color32::WHITE)
                                     .strong(),
                             );
                             ui.label(
-                                RichText::new("High-Speed Multi-Thread Engine • Instant Allocation")
+                                RichText::new("High-Speed Multi-Stream Engine • Pink Velvet Edition")
                                     .size(11.0)
-                                    .color(Color32::from_rgb(110, 125, 145)),
+                                    .color(PINK_PASTEL),
                             );
                         });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let close_btn = ui.add(
-                                egui::Button::new(RichText::new("✕").size(14.0).color(Color32::from_rgb(150, 165, 185)))
-                                    .fill(Color32::from_rgb(20, 26, 36))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 66)))
+                                egui::Button::new(RichText::new("✕").size(14.0).color(PINK_PASTEL))
+                                    .fill(Color32::from_rgb(32, 22, 42))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 42, 72)))
                                     .rounding(egui::Rounding::same(6.0)),
                             );
                             if close_btn.on_hover_text("Close dialog").clicked() {
@@ -1185,22 +1564,22 @@ impl eframe::App for RapidApp {
                     // Field 1: Download URL
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("🔗 Download URL")
+                            RichText::new("Download URL")
                                 .size(12.5)
-                                .color(Color32::from_rgb(200, 215, 235))
+                                .color(PINK_PASTEL)
                                 .strong(),
                         );
                         ui.label(
                             RichText::new("(HTTP / HTTPS direct link)")
                                 .size(11.0)
-                                .color(Color32::from_rgb(100, 115, 135)),
+                                .color(PINK_MUTED),
                         );
                     });
 
                     ui.add_space(4.0);
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(8, 10, 15))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(36, 46, 64)))
+                        .fill(Color32::from_rgb(15, 10, 20))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 36, 72)))
                         .rounding(egui::Rounding::same(6.0))
                         .inner_margin(Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
@@ -1215,17 +1594,17 @@ impl eframe::App for RapidApp {
 
                     // Field 2: Save Destination Directory
                     ui.label(
-                        RichText::new("📁 Save Destination")
+                        RichText::new("Save Destination")
                             .size(12.5)
-                            .color(Color32::from_rgb(200, 215, 235))
+                            .color(PINK_PASTEL)
                             .strong(),
                     );
 
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         egui::Frame::none()
-                            .fill(Color32::from_rgb(8, 10, 15))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(36, 46, 64)))
+                            .fill(Color32::from_rgb(15, 10, 20))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 36, 72)))
                             .rounding(egui::Rounding::same(6.0))
                             .inner_margin(Margin::symmetric(10.0, 7.0))
                             .show(ui, |ui| {
@@ -1236,13 +1615,13 @@ impl eframe::App for RapidApp {
                             });
 
                         let browse_btn = egui::Button::new(
-                            RichText::new("📂 Browse")
+                            RichText::new("Browse")
                                 .size(12.0)
-                                .color(Color32::from_rgb(0, 210, 255))
+                                .color(PINK_NEON)
                                 .strong(),
                         )
-                        .fill(Color32::from_rgb(18, 24, 34))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0, 210, 255)))
+                        .fill(Color32::from_rgb(36, 20, 42))
+                        .stroke(Stroke::new(1.0_f32, PINK_ROSE))
                         .rounding(egui::Rounding::same(6.0));
 
                         if ui.add(browse_btn).on_hover_text("Choose download destination folder").clicked() {
@@ -1257,15 +1636,15 @@ impl eframe::App for RapidApp {
                     // Field 3: Parallel Connections (Modern Segmented Chips)
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("⚡ Parallel Connections")
+                            RichText::new("Parallel Connections")
                                 .size(12.5)
-                                .color(Color32::from_rgb(200, 215, 235))
+                                .color(PINK_PASTEL)
                                 .strong(),
                         );
                         ui.label(
                             RichText::new("(Multi-stream segment threads)")
                                 .size(11.0)
-                                .color(Color32::from_rgb(100, 115, 135)),
+                                .color(PINK_MUTED),
                         );
                     });
 
@@ -1283,19 +1662,19 @@ impl eframe::App for RapidApp {
                         for (val, title, sub) in options {
                             let is_selected = self.input_segments == val;
                             let bg = if is_selected {
-                                Color32::from_rgb(11, 38, 54)
+                                Color32::from_rgb(55, 18, 44)
                             } else {
-                                Color32::from_rgb(16, 21, 30)
+                                Color32::from_rgb(26, 18, 34)
                             };
                             let border = if is_selected {
-                                Color32::from_rgb(0, 210, 255)
+                                PINK_NEON
                             } else {
-                                Color32::from_rgb(32, 40, 56)
+                                Color32::from_rgb(52, 34, 64)
                             };
                             let text_color = if is_selected {
-                                Color32::from_rgb(0, 230, 255)
+                                PINK_NEON
                             } else {
-                                Color32::from_rgb(160, 175, 195)
+                                Color32::from_rgb(170, 150, 180)
                             };
 
                             let frame = egui::Frame::none()
@@ -1307,7 +1686,7 @@ impl eframe::App for RapidApp {
                             let resp = frame.show(ui, |ui| {
                                 ui.vertical_centered(|ui| {
                                     ui.label(RichText::new(title).size(11.5).color(text_color).strong());
-                                    ui.label(RichText::new(sub).size(9.5).color(if is_selected { Color32::from_rgb(0, 210, 255) } else { Color32::GRAY }));
+                                    ui.label(RichText::new(sub).size(9.5).color(if is_selected { PINK_ROSE } else { Color32::GRAY }));
                                 });
                             }).response;
 
@@ -1321,14 +1700,14 @@ impl eframe::App for RapidApp {
                     if let Some(ref err) = self.add_error {
                         ui.add_space(8.0);
                         egui::Frame::none()
-                            .fill(Color32::from_rgb(45, 18, 22))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(231, 76, 60)))
+                            .fill(Color32::from_rgb(45, 18, 24))
+                            .stroke(Stroke::new(1.0_f32, STATUS_FAILED))
                             .rounding(egui::Rounding::same(6.0))
                             .inner_margin(Margin::symmetric(10.0, 6.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("⚠").color(Color32::from_rgb(231, 76, 60)).strong());
-                                    ui.label(RichText::new(err).color(Color32::from_rgb(255, 180, 185)).size(12.0));
+                                    ui.label(RichText::new("⚠").color(STATUS_FAILED).strong());
+                                    ui.label(RichText::new(err).color(Color32::from_rgb(255, 180, 190)).size(12.0));
                                 });
                             });
                     }
@@ -1340,19 +1719,19 @@ impl eframe::App for RapidApp {
                     // Modal Footer Buttons
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("🔒 Dynamic Segment Planner")
+                            RichText::new("🔒 Dynamic Stream Planner")
                                 .size(11.0)
-                                .color(Color32::from_rgb(90, 105, 125)),
+                                .color(PINK_MUTED),
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let start_btn = egui::Button::new(
-                                RichText::new("🚀 Start Download")
+                                RichText::new("Start Download")
                                     .size(13.0)
-                                    .color(Color32::from_rgb(8, 12, 18))
+                                    .color(Color32::WHITE)
                                     .strong(),
                             )
-                            .fill(Color32::from_rgb(0, 210, 255))
+                            .fill(PINK_NEON)
                             .rounding(egui::Rounding::same(7.0));
 
                             if ui.add(start_btn).on_hover_text("Start multi-threaded accelerated download").clicked() {
@@ -1362,10 +1741,10 @@ impl eframe::App for RapidApp {
                             let cancel_btn = egui::Button::new(
                                 RichText::new("Cancel")
                                     .size(13.0)
-                                    .color(Color32::from_rgb(180, 195, 215)),
+                                    .color(Color32::from_rgb(200, 185, 210)),
                             )
-                            .fill(Color32::from_rgb(22, 28, 38))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(42, 52, 70)))
+                            .fill(Color32::from_rgb(28, 20, 36))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(52, 36, 64)))
                             .rounding(egui::Rounding::same(7.0));
 
                             if ui.add(cancel_btn).clicked() {
@@ -1637,9 +2016,9 @@ async fn run_extension_server(
     }
 }
 
-fn render_custom_chip(
+fn render_custom_chip_with_icon(
     ui: &mut egui::Ui,
-    icon: &str,
+    icon: ModernIcon,
     label: &str,
     value: &str,
     bg: Color32,
@@ -1655,33 +2034,64 @@ fn render_custom_chip(
 
     frame.show(ui, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
-        if !icon.is_empty() {
-            ui.label(RichText::new(icon).size(11.0).color(text_color).strong());
-        }
+        let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 10.0), egui::Sense::hover());
+        draw_modern_icon(ui.painter(), icon, icon_rect, text_color);
         if !label.is_empty() {
-            ui.label(RichText::new(label).size(10.5).color(Color32::from_rgb(140, 152, 172)));
+            ui.label(RichText::new(label).size(10.5).color(Color32::from_rgb(160, 140, 170)));
         }
         ui.label(RichText::new(value).size(11.0).color(text_color).strong());
     }).response.on_hover_text(tooltip);
 }
 
-fn render_custom_btn_chip(
+fn render_custom_chip_plain(
     ui: &mut egui::Ui,
-    icon: &str,
+    label: &str,
+    value: &str,
+    bg: Color32,
+    border: Color32,
+    text_color: Color32,
+    tooltip: &str,
+) {
+    let frame = egui::Frame::none()
+        .fill(bg)
+        .stroke(Stroke::new(1.0_f32, border))
+        .rounding(egui::Rounding::same(5.0))
+        .inner_margin(Margin::symmetric(7.0, 3.5));
+
+    frame.show(ui, |ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+        if !label.is_empty() {
+            ui.label(RichText::new(label).size(10.5).color(Color32::from_rgb(160, 140, 170)));
+        }
+        ui.label(RichText::new(value).size(11.0).color(text_color).strong());
+    }).response.on_hover_text(tooltip);
+}
+
+fn render_custom_btn_chip_modern(
+    ui: &mut egui::Ui,
+    icon: ModernIcon,
     text: &str,
     tooltip: &str,
 ) -> bool {
-    let btn = egui::Button::new(
-        RichText::new(format!("{} {}", icon, text))
-            .size(11.0)
-            .color(Color32::from_rgb(220, 235, 255))
-            .strong(),
-    )
-    .fill(Color32::from_rgb(18, 24, 34))
-    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 48, 66)))
-    .rounding(egui::Rounding::same(5.0));
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(98.0, 22.0), egui::Sense::click());
+    let is_h = resp.hovered();
 
-    ui.add(btn).on_hover_text(tooltip).clicked()
+    let bg = if is_h { Color32::from_rgb(45, 20, 40) } else { Color32::from_rgb(26, 18, 34) };
+    let border = if is_h { PINK_NEON } else { Color32::from_rgb(52, 36, 64) };
+    let text_col = if is_h { PINK_NEON } else { Color32::from_rgb(220, 200, 225) };
+
+    ui.painter().rect(rect, 5.0, bg, Stroke::new(1.0_f32, border));
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.min.x + 12.0, rect.center().y), Vec2::new(10.0, 10.0));
+    draw_modern_icon(ui.painter(), icon, icon_rect, text_col);
+    ui.painter().text(
+        egui::pos2(rect.min.x + 22.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::proportional(10.5),
+        text_col,
+    );
+
+    resp.on_hover_text(tooltip).clicked()
 }
 
 fn format_bytes(bytes: u64) -> String {
