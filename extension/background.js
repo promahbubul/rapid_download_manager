@@ -18,15 +18,18 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 // Intercept browser native downloads automatically (IDM style)
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
+// We use onDeterminingFilename to ensure Content-Disposition and real ZIP archive names are known
+const handledDownloads = new Set();
+
+chrome.downloads.onDeterminingFilename.addListener(async (downloadItem, suggest) => {
   if (!downloadItem.url || downloadItem.url.startsWith("blob:") || downloadItem.url.startsWith("data:")) {
     return;
   }
 
-  // Cancel native single-threaded browser download
-  chrome.downloads.cancel(downloadItem.id, () => {
-    chrome.downloads.erase({ id: downloadItem.id });
-  });
+  if (handledDownloads.has(downloadItem.id)) {
+    return;
+  }
+  handledDownloads.add(downloadItem.id);
 
   let isGoogle = false;
   try {
@@ -38,7 +41,6 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   let cookieString = "";
   try {
     if (isGoogle) {
-      // Get all cookies across Google domains (.google.com, drive.google.com, googleusercontent.com, and download url)
       const [driveCookies, googleCookies, contentCookies, urlCookies] = await Promise.all([
         chrome.cookies.getAll({ domain: "drive.google.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: ".google.com" }).catch(() => []),
@@ -61,13 +63,12 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     console.warn("Failed to get cookies:", e);
   }
 
-  // Determine referrer
   let ref = downloadItem.referrer || "";
   if (!ref && isGoogle) {
     ref = "https://drive.google.com/";
   }
 
-  // Forward to Rapid Download Manager native engine
+  // Forward to Rapid Download Manager native engine with determined real filename
   sendToRapidApp(
     downloadItem.url,
     ref,
@@ -76,6 +77,11 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     navigator.userAgent,
     isGoogle
   );
+
+  // Cancel native browser single-threaded download cleanly
+  chrome.downloads.cancel(downloadItem.id, () => {
+    chrome.downloads.erase({ id: downloadItem.id });
+  });
 });
 
 function sendToRapidApp(url, referrer, filename = "", cookies = "", user_agent = "", is_gdrive = false) {

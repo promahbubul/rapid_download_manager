@@ -533,6 +533,36 @@ impl RapidApp {
     }
 
     fn start_new_download(&mut self, url: String, dest_dir: PathBuf, segments: usize) {
+        let res_type = rapid_core::GDriveResolver::parse_resource_type(&url);
+        if let rapid_core::GDriveResourceType::Folder(folder_id) = res_type {
+            let rt_crawl = Arc::clone(&self.tokio_rt);
+            let tasks_crawl = Arc::clone(&self.tasks);
+            let dest_crawl = dest_dir.clone();
+            let rt_inner = Arc::clone(&rt_crawl);
+            rt_crawl.spawn(async move {
+                if let Ok(files) = rapid_core::GDriveResolver::crawl_folder_default(&folder_id, 2).await {
+                    for file in files {
+                        let file_url = format!("https://drive.google.com/file/d/{}/view", file.id);
+                        spawn_download_task(
+                            file_url,
+                            dest_crawl.clone(),
+                            1,
+                            Some(file.name),
+                            None,
+                            None,
+                            None,
+                            true,
+                            Arc::clone(&rt_inner),
+                            Arc::clone(&tasks_crawl),
+                        );
+                    }
+                }
+            });
+            self.show_add_dialog = false;
+            self.input_url.clear();
+            return;
+        }
+
         let rt = Arc::clone(&self.tokio_rt);
         let tasks_arc = Arc::clone(&self.tasks);
         self.is_probing = true;

@@ -1,3 +1,4 @@
+﻿pub mod gdrive;
 pub mod engine;
 pub mod error;
 pub mod probe;
@@ -10,3 +11,4 @@ pub use error::{RapidError, Result};
 pub use probe::Probe;
 pub use segment::SegmentPlanner;
 pub use types::*;
+pub use gdrive::*;

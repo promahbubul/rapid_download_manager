@@ -41,14 +41,41 @@ impl DownloadTask {
         let client = build_client_with_config(&config, 30)?;
 
         let (final_url, filename, total_bytes_probe, accept_ranges_probe) = if is_gdrive {
-            let resolved_filename = config
-                .custom_filename
-                .clone()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    Self::resolve_unique_filename(&config.output_dir, "Google_Drive_Download.zip")
-                });
-            (config.url.clone(), resolved_filename, None, false)
+            let res_type = crate::gdrive::GDriveResolver::parse_resource_type(&config.url);
+            match res_type {
+                crate::gdrive::GDriveResourceType::File(file_id) => {
+                    match crate::gdrive::GDriveResolver::resolve_file_download_url(&client, &file_id).await {
+                        Ok(resolved) => {
+                            let fname = config
+                                .custom_filename
+                                .clone()
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or(resolved.name);
+                            (resolved.download_url, fname, resolved.size_bytes, false)
+                        }
+                        Err(_) => {
+                            let resolved_filename = config
+                                .custom_filename
+                                .clone()
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| {
+                                    Self::resolve_unique_filename(&config.output_dir, "Google_Drive_Download.zip")
+                                });
+                            (config.url.clone(), resolved_filename, None, false)
+                        }
+                    }
+                }
+                _ => {
+                    let resolved_filename = config
+                        .custom_filename
+                        .clone()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| {
+                            Self::resolve_unique_filename(&config.output_dir, "Google_Drive_Download.zip")
+                        });
+                    (config.url.clone(), resolved_filename, None, false)
+                }
+            }
         } else {
             let metadata = Probe::inspect(&client, &config.url).await?;
             let resolved_filename = config
