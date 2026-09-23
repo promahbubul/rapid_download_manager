@@ -201,7 +201,15 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       let isGoogle = isGoogleDriveUrl(targetUrl);
       let cookies = await extractCookiesForUrl(targetUrl, isGoogle);
       let ref = downloadItem.referrer || (isGoogle ? "https://drive.google.com/" : "");
-      let resolvedFilename = downloadItem.filename || "";
+      let rawFilename = (downloadItem.filename || "").trim();
+      let resolvedFilename = "";
+      let lowerFn = rawFilename.toLowerCase();
+      if (rawFilename && 
+          !["download", "download.bin", "download.crdownload", "uc", "file", "document"].includes(lowerFn) &&
+          !lowerFn.startsWith("download.") &&
+          !lowerFn.startsWith("uc.")) {
+        resolvedFilename = rawFilename;
+      }
 
       let success = await sendToRapidApp({
         url: targetUrl,

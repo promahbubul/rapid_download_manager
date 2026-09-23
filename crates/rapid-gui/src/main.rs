@@ -189,14 +189,15 @@ fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect,
             );
         }
         ModernIcon::Plus => {
-            let len = 4.5_f32;
+            let len = (rect.width().min(rect.height()) * 0.22).max(4.5);
+            let stroke_w = (rect.width().min(rect.height()) * 0.045).max(1.8);
             painter.line_segment(
                 [egui::pos2(center.x - len, center.y), egui::pos2(center.x + len, center.y)],
-                Stroke::new(1.8_f32, color),
+                Stroke::new(stroke_w, color),
             );
             painter.line_segment(
                 [egui::pos2(center.x, center.y - len), egui::pos2(center.x, center.y + len)],
-                Stroke::new(1.8_f32, color),
+                Stroke::new(stroke_w, color),
             );
         }
         ModernIcon::Search => {
@@ -403,6 +404,29 @@ struct PendingBrowserDownload {
     is_gdrive: bool,
 }
 
+fn extract_filename_from_url(url_str: &str) -> String {
+    let trimmed = url_str.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let base = trimmed.split('?').next().unwrap_or(trimmed);
+    let base = base.split('#').next().unwrap_or(base);
+    let trimmed_base = base.trim_end_matches('/');
+    if let Some(pos) = trimmed_base.rfind('/') {
+        let segment = &trimmed_base[pos + 1..];
+        if !segment.is_empty() {
+            if let Ok(decoded) = urlencoding::decode(segment) {
+                let clean = decoded.trim();
+                if !clean.is_empty() && clean != "/" {
+                    return clean.to_string();
+                }
+            }
+            return segment.to_string();
+        }
+    }
+    String::new()
+}
+
 struct RapidApp {
     tokio_rt: Arc<Runtime>,
     tasks: Arc<Mutex<Vec<ActiveTaskUI>>>,
@@ -417,6 +441,7 @@ struct RapidApp {
     // Add Download Dialog State
     show_add_dialog: bool,
     input_url: String,
+    input_filename: String,
     input_dest: String,
     input_segments: usize,
     add_error: Option<String>,
@@ -429,12 +454,95 @@ struct RapidApp {
     // Browser Extension Incoming Downloads
     pending_browser_queue: Arc<std::sync::Mutex<VecDeque<PendingBrowserDownload>>>,
     current_browser_prompt: Option<PendingBrowserDownload>,
+    filename_resolver_rx: std::sync::mpsc::Receiver<(String, String)>,
+    filename_resolver_tx: std::sync::mpsc::Sender<(String, String)>,
 
     #[cfg(windows)]
     tray_handle: Option<tray::TrayHandle>,
 }
 
 impl RapidApp {
+    fn open_add_download_dialog(&mut self, ctx: &egui::Context) {
+        self.show_add_dialog = true;
+        self.add_error = None;
+        self.input_url.clear();
+        self.input_filename.clear();
+
+        // Auto-check system clipboard for URL
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(text) = clipboard.get_text() {
+                let trimmed = text.trim();
+                if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                    self.input_url = trimmed.to_string();
+                    let candidate = extract_filename_from_url(&self.input_url);
+                    if !candidate.is_empty() && !rapid_core::engine::is_generic_placeholder(&candidate) {
+                        self.input_filename = candidate;
+                    }
+                    self.probe_url_filename(trimmed, ctx);
+                }
+            }
+        }
+    }
+
+    fn probe_url_filename(&self, url: &str, ctx: &egui::Context) {
+        let tx = self.filename_resolver_tx.clone();
+        let url_clone = url.to_string();
+        let ctx_clone = ctx.clone();
+        let is_gd = url.contains("drive.google.com")
+            || url.contains("googleusercontent.com")
+            || url.contains("docs.google.com");
+
+        self.tokio_rt.spawn(async move {
+            let cb = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(12))
+                .redirect(reqwest::redirect::Policy::limited(10));
+
+            if let Ok(client) = cb.build() {
+                let detected_name = if is_gd {
+                    let res_type = rapid_core::gdrive::GDriveResolver::parse_resource_type(&url_clone);
+                    if let rapid_core::gdrive::GDriveResourceType::File(file_id) = res_type {
+                        rapid_core::gdrive::GDriveResolver::resolve_file_download_url(&client, &file_id)
+                            .await
+                            .ok()
+                            .map(|r| r.name)
+                    } else {
+                        None
+                    }
+                } else {
+                    rapid_core::Probe::inspect(&client, &url_clone)
+                        .await
+                        .ok()
+                        .map(|m| m.filename)
+                };
+
+                if let Some(fname) = detected_name {
+                    let clean = fname.trim();
+                    if !clean.is_empty() && !rapid_core::engine::is_generic_placeholder(clean) {
+                        let _ = tx.send((url_clone, clean.to_string()));
+                        ctx_clone.request_repaint();
+                    }
+                }
+            }
+        });
+    }
+
+    fn is_task_visible(&self, task: &ActiveTaskUI) -> bool {
+        let cat_ok = match self.selected_filter {
+            FilterCategory::All => true,
+            FilterCategory::Active => task.status == DownloadStatus::Downloading,
+            FilterCategory::Paused => matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_)),
+            FilterCategory::Completed => task.status == DownloadStatus::Completed,
+        };
+        if !cat_ok {
+            return false;
+        }
+        if !self.search_query.trim().is_empty() {
+            let q = self.search_query.trim().to_lowercase();
+            return task.filename.to_lowercase().contains(&q) || task.url.to_lowercase().contains(&q);
+        }
+        true
+    }
+
     fn new(cc: &eframe::CreationContext<'_>, rt: Arc<Runtime>) -> Self {
         // Master Color Palette: Glassmorphism Dark Theme (Futuristic • Elegant • Premium)
         let mut visuals = egui::Visuals::dark();
@@ -494,14 +602,16 @@ impl RapidApp {
         let tasks_arc = Arc::new(tokio::sync::Mutex::new(initial_tasks));
 
         let pending_browser_queue = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+        let (filename_resolver_tx, filename_resolver_rx) = std::sync::mpsc::channel();
 
         // Start local browser extension receiver on 127.0.0.1:9669
         let pending_for_server = Arc::clone(&pending_browser_queue);
         let dest_for_server = default_download_dir.clone();
         let ctx_for_server = cc.egui_ctx.clone();
+        let tx_for_server = filename_resolver_tx.clone();
 
         rt.spawn(async move {
-            run_extension_server(pending_for_server, dest_for_server, ctx_for_server).await;
+            run_extension_server(pending_for_server, dest_for_server, ctx_for_server, tx_for_server).await;
         });
 
         #[cfg(windows)]
@@ -517,6 +627,7 @@ impl RapidApp {
             splash_duration: Duration::from_millis(1800),
             show_add_dialog: false,
             input_url: String::new(),
+            input_filename: String::new(),
             input_dest: default_download_dir.to_string_lossy().to_string(),
             input_segments: 8,
             add_error: None,
@@ -527,6 +638,8 @@ impl RapidApp {
             has_requested_initial_focus: false,
             pending_browser_queue,
             current_browser_prompt: None,
+            filename_resolver_rx,
+            filename_resolver_tx,
             #[cfg(windows)]
             tray_handle,
         }
@@ -564,7 +677,7 @@ impl RapidApp {
         }
     }
 
-    fn start_new_download(&mut self, url: String, dest_dir: PathBuf, segments: usize) {
+    fn start_new_download(&mut self, url: String, dest_dir: PathBuf, segments: usize, custom_filename: Option<String>) {
         let res_type = rapid_core::GDriveResolver::parse_resource_type(&url);
         if let rapid_core::GDriveResourceType::Folder(folder_id) = res_type {
             let rt_crawl = Arc::clone(&self.tokio_rt);
@@ -592,6 +705,7 @@ impl RapidApp {
             });
             self.show_add_dialog = false;
             self.input_url.clear();
+            self.input_filename.clear();
             return;
         }
 
@@ -600,11 +714,12 @@ impl RapidApp {
         self.is_probing = true;
         self.add_error = None;
 
-        spawn_download_task(url, dest_dir, segments, None, None, None, None, false, rt, tasks_arc);
+        spawn_download_task(url, dest_dir, segments, custom_filename, None, None, None, false, rt, tasks_arc);
 
         self.is_probing = false;
         self.show_add_dialog = false;
         self.input_url.clear();
+        self.input_filename.clear();
     }
 
     fn resume_download(&mut self, task_index: usize) {
@@ -1080,10 +1195,113 @@ impl eframe::App for RapidApp {
         // Request repaint continuously if any download is active for smooth progress bars
         ctx.request_repaint_after(Duration::from_millis(100));
 
+        // Receive any asynchronously resolved filenames from background probe
+        while let Ok((p_url, p_name)) = self.filename_resolver_rx.try_recv() {
+            if let Some(ref mut prompt) = self.current_browser_prompt {
+                if prompt.url == p_url {
+                    if prompt.filename.is_empty()
+                        || prompt.filename == "Downloading..."
+                        || prompt.filename == "Resolving filename..."
+                        || prompt.filename == "Resolving original filename..."
+                        || prompt.filename == "Detecting filename..."
+                        || rapid_core::engine::is_generic_placeholder(&prompt.filename) {
+                        prompt.filename = p_name.clone();
+                    }
+                }
+            }
+            if let Ok(mut q) = self.pending_browser_queue.lock() {
+                for item in q.iter_mut() {
+                    if item.url == p_url {
+                        if item.filename.is_empty()
+                            || item.filename == "Downloading..."
+                            || item.filename == "Resolving filename..."
+                            || item.filename == "Resolving original filename..."
+                            || item.filename == "Detecting filename..."
+                            || rapid_core::engine::is_generic_placeholder(&item.filename) {
+                            item.filename = p_name.clone();
+                        }
+                    }
+                }
+            }
+
+            if self.show_add_dialog && self.input_url == p_url {
+                if self.input_filename.is_empty()
+                    || rapid_core::engine::is_generic_placeholder(&self.input_filename)
+                    || !self.input_filename.contains('.')
+                {
+                    self.input_filename = p_name.clone();
+                }
+            }
+        }
+
         // Pop next pending browser download if not currently prompting
         if self.current_browser_prompt.is_none() {
             if let Ok(mut q) = self.pending_browser_queue.lock() {
                 if let Some(item) = q.pop_front() {
+                    if item.filename.is_empty()
+                        || item.filename == "Downloading..."
+                        || item.filename == "Resolving filename..."
+                        || item.filename == "Resolving original filename..."
+                        || item.filename == "Detecting filename..."
+                        || rapid_core::engine::is_generic_placeholder(&item.filename) {
+                        let tx = self.filename_resolver_tx.clone();
+                        let url_clone = item.url.clone();
+                        let cookies_clone = item.cookies.clone();
+                        let ua_clone = item.user_agent.clone();
+                        let ref_clone = item.referrer.clone();
+                        let is_gd = item.is_gdrive;
+                        let ctx_clone = ctx.clone();
+
+                        self.tokio_rt.spawn(async move {
+                            let mut cb = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(12))
+                                .redirect(reqwest::redirect::Policy::limited(10));
+
+                            let mut headers = reqwest::header::HeaderMap::new();
+                            if let Some(ref ua) = ua_clone {
+                                if let Ok(v) = reqwest::header::HeaderValue::from_str(ua) {
+                                    headers.insert(reqwest::header::USER_AGENT, v);
+                                }
+                            }
+                            if let Some(ref r) = ref_clone {
+                                if let Ok(v) = reqwest::header::HeaderValue::from_str(r) {
+                                    headers.insert(reqwest::header::REFERER, v);
+                                }
+                            }
+                            if let Some(ref c) = cookies_clone {
+                                if let Ok(v) = reqwest::header::HeaderValue::from_str(c) {
+                                    headers.insert(reqwest::header::COOKIE, v);
+                                }
+                            }
+                            cb = cb.default_headers(headers);
+
+                            if let Ok(client) = cb.build() {
+                                let detected_name = if is_gd {
+                                    let res_type = rapid_core::gdrive::GDriveResolver::parse_resource_type(&url_clone);
+                                    if let rapid_core::gdrive::GDriveResourceType::File(file_id) = res_type {
+                                        rapid_core::gdrive::GDriveResolver::resolve_file_download_url(&client, &file_id)
+                                            .await
+                                            .ok()
+                                            .map(|r| r.name)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    rapid_core::Probe::inspect(&client, &url_clone)
+                                        .await
+                                        .ok()
+                                        .map(|m| m.filename)
+                                };
+
+                                if let Some(fname) = detected_name {
+                                    if !rapid_core::engine::is_generic_placeholder(&fname) {
+                                        let _ = tx.send((url_clone, fname));
+                                        ctx_clone.request_repaint();
+                                    }
+                                }
+                            }
+                        });
+                    }
                     self.current_browser_prompt = Some(item);
                 }
             }
@@ -1092,19 +1310,12 @@ impl eframe::App for RapidApp {
         let mut action_resume: Option<usize> = None;
         let mut action_pause: Option<usize> = None;
         let mut action_redownload: Option<usize> = None;
-        let mut action_remove: Option<usize> = None;
+        let mut action_remove_ids: Vec<String> = Vec::new();
         let mut action_open_folder: Option<usize> = None;
         let mut action_open_file: Option<usize> = None;
         let mut action_copy_url: Option<String> = None;
 
-        // Auto-select first item if none selected and downloads exist
-        if self.selected_task_index.is_none() {
-            if let Ok(tasks) = self.tasks.try_lock() {
-                if !tasks.is_empty() {
-                    self.selected_task_index = Some(0);
-                }
-            }
-        }
+// Auto-selection removed: only user selection is valid
 
         // Metrics calculations for bottom shortcut dock
         let mut total_speed_bps: u64 = 0;
@@ -1130,6 +1341,7 @@ impl eframe::App for RapidApp {
 
         let mut do_pause_all = false;
         let mut do_resume_all = false;
+        let mut do_open_add_dialog = false;
 
         // System Tray synchronization
         #[cfg(windows)]
@@ -1208,6 +1420,8 @@ impl eframe::App for RapidApp {
 
                                     if ui.add(btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
                                         self.selected_filter = cat;
+                                        self.selected_task_index = None;
+                                        self.selected_tasks.clear();
                                     }
                                 }
                             });
@@ -1258,7 +1472,7 @@ impl eframe::App for RapidApp {
                         );
 
                         if btn_resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Add a new accelerated download URL").clicked() {
-                            self.show_add_dialog = true;
+                            do_open_add_dialog = true;
                         }
 
                         ui.add_space(4.0);
@@ -1280,23 +1494,44 @@ impl eframe::App for RapidApp {
                     });
                 });
 
-                // Contextual Toolbar (Modern Dynamic Sub-Bar for selected download)
-                let (has_selection, is_downloading, is_resumable) = {
+                // Contextual Toolbar (Modern Dynamic Sub-Bar for selected download - visible tasks only)
+                let (has_selection, display_name, effective_selected_idx, is_multi, is_downloading, is_resumable) = {
                     if let Ok(ref tasks) = self.tasks.try_lock() {
-                        if let Some(idx) = self.selected_task_index {
-                            if idx < tasks.len() {
+                        let visible_selected_ids: Vec<&String> = self.selected_tasks
+                            .iter()
+                            .filter(|id| tasks.iter().any(|t| &t.id == *id && self.is_task_visible(t)))
+                            .collect();
+
+                        let visible_count = visible_selected_ids.len();
+
+                        if visible_count > 1 {
+                            let any_downloading = tasks.iter().any(|t| self.selected_tasks.contains(&t.id) && self.is_task_visible(t) && t.status == DownloadStatus::Downloading);
+                            let any_resumable = tasks.iter().any(|t| self.selected_tasks.contains(&t.id) && self.is_task_visible(t) && matches!(t.status, DownloadStatus::Paused | DownloadStatus::Failed(_)));
+                            (true, format!("{} items", visible_count), None, true, any_downloading, any_resumable)
+                        } else if visible_count == 1 {
+                            let id = visible_selected_ids[0];
+                            if let Some(pos) = tasks.iter().position(|t| &t.id == id && self.is_task_visible(t)) {
+                                let task = &tasks[pos];
+                                let downloading = task.status == DownloadStatus::Downloading;
+                                let resumable = matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
+                                (true, task.filename.clone(), Some(pos), false, downloading, resumable)
+                            } else {
+                                (false, String::new(), None, false, false, false)
+                            }
+                        } else if let Some(idx) = self.selected_task_index {
+                            if idx < tasks.len() && self.is_task_visible(&tasks[idx]) {
                                 let task = &tasks[idx];
                                 let downloading = task.status == DownloadStatus::Downloading;
                                 let resumable = matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
-                                (true, downloading, resumable)
+                                (true, task.filename.clone(), Some(idx), false, downloading, resumable)
                             } else {
-                                (false, false, false)
+                                (false, String::new(), None, false, false, false)
                             }
                         } else {
-                            (false, false, false)
+                            (false, String::new(), None, false, false, false)
                         }
                     } else {
-                        (false, false, false)
+                        (false, String::new(), None, false, false, false)
                     }
                 };
 
@@ -1306,39 +1541,40 @@ impl eframe::App for RapidApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Selected:").size(11.0).color(Color32::from_rgb(160, 140, 170)));
-                        if let Ok(ref tasks) = self.tasks.try_lock() {
-                            if let Some(idx) = self.selected_task_index {
-                                if idx < tasks.len() {
-                                    let task = &tasks[idx];
-                                    ui.label(RichText::new(&task.filename).size(11.5).strong().color(PINK_PASTEL));
-                                }
-                            }
-                        }
+                        ui.label(RichText::new(&display_name).size(11.5).strong().color(PINK_PASTEL));
 
                         ui.add_space(10.0);
-                        if is_resumable && modern_icon_button(ui, ModernIcon::Play, Vec2::new(26.0, 22.0), STATUS_COMPLETED, PINK_NEON, "Resume download") {
-                            if let Some(idx) = self.selected_task_index {
+                        if is_resumable && modern_icon_button(ui, ModernIcon::Play, Vec2::new(26.0, 22.0), STATUS_COMPLETED, PINK_NEON, if is_multi { "Resume selected" } else { "Resume download" }) {
+                            if let Some(idx) = effective_selected_idx {
                                 action_resume = Some(idx);
                             }
                         }
-                        if is_downloading && modern_icon_button(ui, ModernIcon::Pause, Vec2::new(26.0, 22.0), STATUS_PAUSED, PINK_NEON, "Pause download") {
-                            if let Some(idx) = self.selected_task_index {
+                        if is_downloading && modern_icon_button(ui, ModernIcon::Pause, Vec2::new(26.0, 22.0), STATUS_PAUSED, PINK_NEON, if is_multi { "Pause selected" } else { "Pause download" }) {
+                            if let Some(idx) = effective_selected_idx {
                                 action_pause = Some(idx);
                             }
                         }
-                        if modern_icon_button(ui, ModernIcon::Folder, Vec2::new(26.0, 22.0), PINK_PASTEL, PINK_NEON, "Open containing folder") {
-                            if let Some(idx) = self.selected_task_index {
-                                action_open_folder = Some(idx);
+                        if !is_multi {
+                            if modern_icon_button(ui, ModernIcon::Folder, Vec2::new(26.0, 22.0), PINK_PASTEL, PINK_NEON, "Open containing folder") {
+                                if let Some(idx) = effective_selected_idx {
+                                    action_open_folder = Some(idx);
+                                }
+                            }
+                            if modern_icon_button(ui, ModernIcon::Refresh, Vec2::new(26.0, 22.0), PINK_PASTEL, PINK_NEON, "Redownload from start") {
+                                if let Some(idx) = effective_selected_idx {
+                                    action_redownload = Some(idx);
+                                }
                             }
                         }
-                        if modern_icon_button(ui, ModernIcon::Refresh, Vec2::new(26.0, 22.0), PINK_PASTEL, PINK_NEON, "Redownload from start") {
-                            if let Some(idx) = self.selected_task_index {
-                                action_redownload = Some(idx);
-                            }
-                        }
-                        if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(26.0, 22.0), STATUS_FAILED, Color32::from_rgb(255, 40, 80), "Delete download") {
-                            if let Some(idx) = self.selected_task_index {
-                                action_remove = Some(idx);
+                        if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(26.0, 22.0), STATUS_FAILED, Color32::from_rgb(255, 40, 80), if is_multi { "Delete selected" } else { "Delete download" }) {
+                            if !self.selected_tasks.is_empty() {
+                                action_remove_ids = self.selected_tasks.iter().cloned().collect();
+                            } else if let Some(idx) = effective_selected_idx {
+                                if let Ok(ref tasks) = self.tasks.try_lock() {
+                                    if idx < tasks.len() {
+                                        action_remove_ids.push(tasks[idx].id.clone());
+                                    }
+                                }
                             }
                         }
                     });
@@ -1474,10 +1710,28 @@ impl eframe::App for RapidApp {
                 });
             });
 
-        // Bottom Details Panel (Connection / Segment Progress - only when active segments exist)
-        let has_segments_to_show = {
+        // Bottom Details Panel (Connection / Segment Progress - only when an active task is selected and visible)
+        let effective_details_idx = {
             if let Ok(tasks) = self.tasks.try_lock() {
-                if let Some(idx) = self.selected_task_index {
+                if let Some(first_checked) = self.selected_tasks.iter().next() {
+                    tasks.iter().position(|t| &t.id == first_checked && self.is_task_visible(t))
+                } else if let Some(idx) = self.selected_task_index {
+                    if idx < tasks.len() && self.is_task_visible(&tasks[idx]) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        let has_segments_to_show = {
+            if let Some(idx) = effective_details_idx {
+                if let Ok(tasks) = self.tasks.try_lock() {
                     idx < tasks.len() && !tasks[idx].segments.is_empty()
                 } else {
                     false
@@ -1497,7 +1751,7 @@ impl eframe::App for RapidApp {
                 )
                 .show(ctx, |ui| {
                     if let Ok(tasks) = self.tasks.try_lock() {
-                        if let Some(idx) = self.selected_task_index {
+                        if let Some(idx) = effective_details_idx {
                             if idx < tasks.len() {
                                 let task = &tasks[idx];
 
@@ -1561,21 +1815,19 @@ impl eframe::App for RapidApp {
                                     ui.add_space(6.0);
                                 }
 
-                                // Stream Matrix Cards
+                                // Stream Matrix - Simple & Compact
                                 let avail_width = ui.available_width().max(300.0);
                                 let num_segs = task.segments.len();
-                                let cols = if num_segs <= 2 {
+                                let cols = if num_segs <= 4 {
                                     num_segs.max(1)
-                                } else if num_segs <= 4 {
-                                    ((avail_width / 220.0).floor() as usize).clamp(1, 4)
                                 } else {
-                                    ((avail_width / 220.0).floor() as usize).clamp(1, 6)
+                                    ((avail_width / 135.0).floor() as usize).clamp(2, 8)
                                 };
-                                let gap = 8.0_f32;
-                                let card_width = ((avail_width - ((cols - 1) as f32 * gap)) / cols as f32).max(140.0);
+                                let gap = 6.0_f32;
+                                let item_width = ((avail_width - ((cols - 1) as f32 * gap)) / cols as f32).max(110.0);
 
                                 egui::ScrollArea::vertical()
-                                    .max_height(145.0)
+                                    .max_height(80.0)
                                     .auto_shrink([false, true])
                                     .show(ui, |ui| {
                                         for chunk in task.segments.chunks(cols) {
@@ -1584,44 +1836,39 @@ impl eframe::App for RapidApp {
                                                 for seg in chunk {
                                                     let ratio = seg.progress_ratio();
                                                     let (status_color, status_text) = if seg.is_complete {
-                                                        (STATUS_COMPLETED, "✔ Done".to_string())
+                                                        (STATUS_COMPLETED, "Done".to_string())
                                                     } else if ratio > 0.0 {
                                                         (STATUS_DOWNLOADING, format!("{:.0}%", ratio * 100.0))
                                                     } else {
-                                                        (GLASS_MUTED, "Waiting".to_string())
+                                                        (GLASS_MUTED, "-".to_string())
                                                     };
 
+                                                    let dl_str = format_bytes(seg.downloaded_bytes);
+                                                    let tot_str = format_bytes(seg.total_bytes());
+                                                    let tooltip = format!("Part {}: {} / {} ({})", seg.index + 1, dl_str, tot_str, status_text);
+
                                                     egui::Frame::none()
-                                                        .fill(GLASS_CARD)
-                                                        .stroke(Stroke::new(1.0_f32, if seg.is_complete { Color32::from_rgb(16, 185, 129) } else { GLASS_BORDER }))
-                                                        .rounding(egui::Rounding::same(6.0))
-                                                        .inner_margin(Margin::symmetric(9.0, 6.0))
+                                                        .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 200))
+                                                        .stroke(Stroke::new(1.0_f32, if seg.is_complete { Color32::from_rgba_unmultiplied(16, 185, 129, 140) } else { GLASS_BORDER }))
+                                                        .rounding(egui::Rounding::same(4.0))
+                                                        .inner_margin(Margin::symmetric(7.0, 4.0))
                                                         .show(ui, |ui| {
-                                                            ui.set_width(card_width - 18.0);
-                                                            ui.vertical(|ui| {
-                                                                ui.horizontal(|ui| {
-                                                                    ui.label(RichText::new(format!("Part {}", seg.index + 1)).size(11.0).color(GLASS_TEXT).strong());
-                                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                                        ui.label(RichText::new(&status_text).size(10.5).color(status_color).strong());
-                                                                    });
-                                                                });
-                                                                ui.add_space(2.0);
+                                                            ui.set_width(item_width - 14.0);
+                                                            ui.horizontal(|ui| {
+                                                                ui.label(RichText::new(format!("P{}", seg.index + 1)).size(10.5).color(GLASS_TEXT).strong());
                                                                 let bar = egui::ProgressBar::new(ratio)
                                                                     .fill(if seg.is_complete { STATUS_COMPLETED } else { GLASS_PRIMARY })
-                                                                    .desired_height(5.0)
-                                                                    .desired_width(ui.available_width());
+                                                                    .desired_height(4.0)
+                                                                    .desired_width(ui.available_width() - 36.0);
                                                                 ui.add(bar);
-                                                                ui.add_space(2.0);
-                                                                ui.horizontal(|ui| {
-                                                                    let dl_str = format_bytes(seg.downloaded_bytes);
-                                                                    let tot_str = format_bytes(seg.total_bytes());
-                                                                    ui.label(RichText::new(format!("{} / {}", dl_str, tot_str)).size(9.5).color(GLASS_MUTED));
+                                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                    ui.label(RichText::new(&status_text).size(9.5).color(status_color).strong());
                                                                 });
                                                             });
-                                                        });
+                                                        }).response.on_hover_text(tooltip);
                                                 }
                                             });
-                                            ui.add_space(6.0);
+                                            ui.add_space(4.0);
                                         }
                                     });
                             }
@@ -1659,23 +1906,75 @@ impl eframe::App for RapidApp {
                     }).map(|(i, _)| i).collect();
 
                     if tasks.is_empty() {
+                        selected = None;
+                        self.selected_tasks.clear();
                         ui.vertical_centered(|ui| {
-                            ui.add_space(80.0);
-                            let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(48.0, 48.0), egui::Sense::hover());
-                            draw_modern_icon(ui.painter(), ModernIcon::Plus, icon_rect, PINK_ROSE);
+                            let avail_h = ui.available_height();
+                            let content_h = 86.0_f32;
+                            let top_space = ((avail_h - content_h) * 0.5).max(20.0);
+                            ui.add_space(top_space);
+
+                            let btn_size = Vec2::new(54.0, 54.0);
+                            let (rect, resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+                            let hovered = resp.hovered();
+
+                            if hovered {
+                                ui.painter().rect_filled(
+                                    rect.expand(3.0),
+                                    egui::Rounding::same(18.0),
+                                    Color32::from_rgba_unmultiplied(139, 92, 246, 45),
+                                );
+                            }
+
+                            let bg_color = if hovered {
+                                GLASS_PRIMARY
+                            } else {
+                                Color32::from_rgba_unmultiplied(139, 92, 246, 35)
+                            };
+                            let border_color = if hovered {
+                                Color32::WHITE
+                            } else {
+                                GLASS_PRIMARY
+                            };
+                            let icon_color = if hovered {
+                                Color32::WHITE
+                            } else {
+                                GLASS_PRIMARY
+                            };
+
+                            ui.painter().rect(
+                                rect,
+                                egui::Rounding::same(16.0),
+                                bg_color,
+                                Stroke::new(if hovered { 2.0_f32 } else { 1.5_f32 }, border_color),
+                            );
+                            draw_modern_icon(ui.painter(), ModernIcon::Plus, rect, icon_color);
+
+                            let mut clicked = resp
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Add Download (Ctrl+N)")
+                                .clicked();
+
                             ui.add_space(12.0);
-                            ui.label(RichText::new("No downloads in queue").size(18.0).color(PINK_PASTEL).strong());
-                            ui.add_space(4.0);
-                            ui.label(RichText::new("Add a URL or trigger from Chrome / Edge / Brave extension").size(12.0).color(PINK_MUTED));
-                            ui.add_space(16.0);
-                            let add_btn = egui::Button::new(RichText::new("+ Add your first download").size(13.0).strong().color(Color32::WHITE))
-                                .fill(PINK_NEON)
-                                .rounding(egui::Rounding::same(6.0));
-                            if ui.add(add_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                self.show_add_dialog = true;
+                            let label_resp = ui.add(
+                                egui::Label::new(
+                                    RichText::new("Add new download")
+                                        .size(13.5)
+                                        .color(if hovered { GLASS_TEXT } else { GLASS_MUTED })
+                                )
+                                .sense(egui::Sense::click())
+                            );
+                            if label_resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                clicked = true;
+                            }
+
+                            if clicked {
+                                do_open_add_dialog = true;
                             }
                         });
                     } else if filtered_indices.is_empty() {
+                        selected = None;
+                        self.selected_tasks.clear();
                         ui.vertical_centered(|ui| {
                             ui.add_space(80.0);
                             let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(36.0, 36.0), egui::Sense::hover());
@@ -1714,10 +2013,14 @@ impl eframe::App for RapidApp {
                                                     for &i in &filtered_indices {
                                                         self.selected_tasks.insert(tasks[i].id.clone());
                                                     }
+                                                    if !filtered_indices.is_empty() {
+                                                        selected = Some(filtered_indices[0]);
+                                                    }
                                                 } else {
                                                     for &i in &filtered_indices {
                                                         self.selected_tasks.remove(&tasks[i].id);
                                                     }
+                                                    selected = None;
                                                 }
                                             }
                                         });
@@ -1734,119 +2037,99 @@ impl eframe::App for RapidApp {
                                             let filter_idx = row.index();
                                             let i = filtered_indices[filter_idx];
                                             let item = &tasks[i];
-                                            let is_sel = selected == Some(i);
+                                            let is_checked = self.selected_tasks.contains(&item.id);
+                                            let is_sel = selected == Some(i) || is_checked;
                                             let is_downloading = item.status == DownloadStatus::Downloading;
                                             let is_resumable = matches!(item.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
                                             let is_complete = item.status == DownloadStatus::Completed;
 
                                             row.set_selected(is_sel);
                                             
+                                            // 0. Checkbox column
                                             row.col(|ui| {
-                                                let mut check = self.selected_tasks.contains(&item.id);
+                                                let mut check = is_checked;
                                                 if ui.checkbox(&mut check, "").clicked() {
                                                     if check {
                                                         self.selected_tasks.insert(item.id.clone());
+                                                        selected = Some(i);
                                                     } else {
                                                         self.selected_tasks.remove(&item.id);
+                                                        if selected == Some(i) {
+                                                            selected = self.selected_tasks.iter().find_map(|checked_id| {
+                                                                tasks.iter().position(|t| &t.id == checked_id)
+                                                            });
+                                                        }
                                                     }
                                                 }
                                             });
 
-                                            // 1. Filename column with modern badge + click to open
+                                            // 1. Filename column with modern badge + click to select / double-click to open
                                             row.col(|ui| {
                                                 ui.horizontal(|ui| {
                                                     let ext = item.filename.rsplit('.').next().unwrap_or("").to_lowercase();
                                                     render_file_type_badge(ui, &ext);
                                                     ui.add_space(4.0);
 
-                                                    if is_complete {
-                                                        let label_text = RichText::new(&item.filename)
-                                                            .color(STATUS_COMPLETED)
-                                                            .underline();
-                                                        let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()).truncate())
-                                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                            .on_hover_text("✔ Download complete! Click to open file directly");
-                                                        if resp.clicked() {
-                                                            action_open_file = Some(i);
-                                                        }
-                                                        resp.context_menu(|ui| {
-                                                            if ui.button("▶ Open File").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                    let name_col = if is_sel {
+                                                        Color32::WHITE
+                                                    } else if is_complete {
+                                                        STATUS_COMPLETED
+                                                    } else {
+                                                        Color32::from_rgb(240, 232, 248)
+                                                    };
+                                                    let label_text = if is_complete {
+                                                        RichText::new(&item.filename).color(name_col).strong().underline()
+                                                    } else {
+                                                        RichText::new(&item.filename).color(name_col).strong()
+                                                    };
+                                                    let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()).truncate())
+                                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                        .on_hover_text(if is_complete { "Click to select, double-click to open file" } else { "Click to select" });
+
+                                                    if is_complete && resp.double_clicked() {
+                                                        action_open_file = Some(i);
+                                                    } else if resp.clicked() {
+                                                        selected = Some(i);
+                                                        self.selected_tasks.clear();
+                                                        self.selected_tasks.insert(item.id.clone());
+                                                    }
+
+                                                    resp.context_menu(|ui| {
+                                                        if is_complete {
+                                                            if ui.button("▶  Open File").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                                 action_open_file = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            if ui.button("📁 Open Containing Folder").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_open_folder = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                            if ui.button("📋 Copy URL").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_copy_url = Some(item.url.clone());
-                                                                ui.close_menu();
-                                                            }
-                                                            ui.separator();
-                                                            if ui.button("🔄 Redownload").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_redownload = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_remove = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                        });
-                                                    } else {
-                                                        let name_col = if is_sel {
-                                                            Color32::WHITE
-                                                        } else {
-                                                            Color32::from_rgb(240, 232, 248)
-                                                        };
-                                                        let label_text = RichText::new(&item.filename)
-                                                            .color(name_col)
-                                                            .strong();
-                                                        let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()).truncate())
-                                                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                                        if resp.clicked() {
-                                                            selected = Some(i);
                                                         }
-                                                        resp.context_menu(|ui| {
-                                                            if is_downloading {
-                                                                if ui.button("⏸ Pause").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                    action_pause = Some(i);
-                                                                    ui.close_menu();
-                                                                }
-                                                            } else if is_resumable {
-                                                                if ui.button("▶ Resume").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                    action_resume = Some(i);
-                                                                    ui.close_menu();
-                                                                }
-                                                            }
-                                                            if ui.button("📁 Open Containing Folder").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_open_folder = Some(i);
+                                                        if is_downloading {
+                                                            if ui.button("⏸  Pause").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                                action_pause = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            if ui.button("📋 Copy URL").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_copy_url = Some(item.url.clone());
+                                                        } else if is_resumable {
+                                                            if ui.button("▶  Resume").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                                action_resume = Some(i);
                                                                 ui.close_menu();
                                                             }
-                                                            ui.separator();
-                                                            if ui.button("🔄 Redownload").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_redownload = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                            if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_remove = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                        });
-                                                    }
-
-                                                    if is_complete {
-                                                        if modern_icon_button(ui, ModernIcon::ExternalFile, Vec2::new(20.0, 18.0), PINK_ROSE, PINK_NEON, "Open / Launch file") {
-                                                            action_open_file = Some(i);
                                                         }
-                                                    }
-
-                                                    if modern_icon_button(ui, ModernIcon::Folder, Vec2::new(20.0, 18.0), PINK_MUTED, PINK_ROSE, "Open containing folder") {
-                                                        action_open_folder = Some(i);
-                                                    }
+                                                        if ui.button("📁 Open Containing Folder").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                            action_open_folder = Some(i);
+                                                            ui.close_menu();
+                                                        }
+                                                        if ui.button("🔗 Copy URL").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                            action_copy_url = Some(item.url.clone());
+                                                            ui.close_menu();
+                                                        }
+                                                        ui.separator();
+                                                        if ui.button("🔄 Redownload").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                            action_redownload = Some(i);
+                                                            ui.close_menu();
+                                                        }
+                                                        if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                            action_remove_ids.push(item.id.clone());
+                                                            ui.close_menu();
+                                                        }
+                                                    });
                                                 });
                                             });
 
@@ -1859,7 +2142,12 @@ impl eframe::App for RapidApp {
                                                 } else {
                                                     "--".to_string()
                                                 };
-                                                ui.label(RichText::new(sz_text).color(Color32::from_rgb(226, 232, 240)).strong());
+                                                let resp = ui.add(egui::Label::new(RichText::new(sz_text).color(Color32::from_rgb(226, 232, 240)).strong()).sense(egui::Sense::click()));
+                                                if resp.clicked() {
+                                                    selected = Some(i);
+                                                    self.selected_tasks.clear();
+                                                    self.selected_tasks.insert(item.id.clone());
+                                                }
                                             });
 
                                             // 3. Status column
@@ -1871,9 +2159,14 @@ impl eframe::App for RapidApp {
                                                     DownloadStatus::Failed(err) => (STATUS_FAILED, "Failed".to_string(), Some(format!("Failure reason: {}\nClick Resume/Retry to retry.", err))),
                                                     _ => (PINK_MUTED, "Queued".to_string(), None),
                                                 };
-                                                let label = ui.label(RichText::new(text).color(color).strong());
+                                                let label = ui.add(egui::Label::new(RichText::new(text).color(color).strong()).sense(egui::Sense::click()));
                                                 if let Some(tip) = tooltip {
-                                                    label.on_hover_text(tip);
+                                                    label.clone().on_hover_text(tip);
+                                                }
+                                                if label.clicked() {
+                                                    selected = Some(i);
+                                                    self.selected_tasks.clear();
+                                                    self.selected_tasks.insert(item.id.clone());
                                                 }
                                             });
 
@@ -1887,7 +2180,7 @@ impl eframe::App for RapidApp {
                                                     DownloadStatus::Failed(_) => (STATUS_FAILED, format!("{:.0}%", item.progress_percent)),
                                                     _ => (Color32::from_rgb(80, 50, 80), format!("{:.0}%", item.progress_percent)),
                                                 };
-                                                ui.horizontal(|ui| {
+                                                let resp = ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
                                                     let bar_width = (ui.available_width() - 50.0).max(40.0);
                                                     let bar = egui::ProgressBar::new(ratio)
@@ -1896,28 +2189,46 @@ impl eframe::App for RapidApp {
                                                         .desired_height(7.0);
                                                     ui.add(bar);
                                                     ui.label(RichText::new(pct_label).color(Color32::WHITE).size(12.0).strong());
-                                                });
+                                                }).response;
+                                                let interact_resp = ui.interact(resp.rect, ui.id().with(("progress_click", i)), egui::Sense::click());
+                                                if interact_resp.clicked() {
+                                                    selected = Some(i);
+                                                    self.selected_tasks.clear();
+                                                    self.selected_tasks.insert(item.id.clone());
+                                                }
                                             });
 
                                             // 5. Speed column - Electric Emerald Mint for high contrast
                                             row.col(|ui| {
-                                                if item.status == DownloadStatus::Downloading {
-                                                    ui.label(RichText::new(format_speed(item.speed_bps)).color(Color32::from_rgb(52, 211, 153)).strong());
+                                                let speed_text = if item.status == DownloadStatus::Downloading {
+                                                    format_speed(item.speed_bps)
                                                 } else {
-                                                    ui.label(RichText::new("--").color(PINK_MUTED));
+                                                    "--".to_string()
+                                                };
+                                                let resp = ui.add(egui::Label::new(RichText::new(speed_text).color(Color32::from_rgb(52, 211, 153)).strong()).sense(egui::Sense::click()));
+                                                if resp.clicked() {
+                                                    selected = Some(i);
+                                                    self.selected_tasks.clear();
+                                                    self.selected_tasks.insert(item.id.clone());
                                                 }
                                             });
 
                                             // 6. ETA column - Crisp Light Slate
                                             row.col(|ui| {
-                                                if item.status == DownloadStatus::Downloading {
+                                                let eta_text = if item.status == DownloadStatus::Downloading {
                                                     if let Some(eta) = item.eta_seconds {
-                                                        ui.label(RichText::new(format_eta(eta)).color(Color32::from_rgb(203, 213, 225)).strong());
+                                                        format_eta(eta)
                                                     } else {
-                                                        ui.label(RichText::new("--").color(PINK_MUTED));
+                                                        "--".to_string()
                                                     }
                                                 } else {
-                                                    ui.label(RichText::new("--").color(PINK_MUTED));
+                                                    "--".to_string()
+                                                };
+                                                let resp = ui.add(egui::Label::new(RichText::new(eta_text).color(Color32::from_rgb(203, 213, 225)).strong()).sense(egui::Sense::click()));
+                                                if resp.clicked() {
+                                                    selected = Some(i);
+                                                    self.selected_tasks.clear();
+                                                    self.selected_tasks.insert(item.id.clone());
                                                 }
                                             });
 
@@ -1940,7 +2251,7 @@ impl eframe::App for RapidApp {
                                                     }
 
                                                     if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(24.0, 22.0), STATUS_FAILED, Color32::WHITE, "Delete") {
-                                                        action_remove = Some(i);
+                                                        action_remove_ids.push(item.id.clone());
                                                     }
                                                 });
                                             });
@@ -1953,6 +2264,171 @@ impl eframe::App for RapidApp {
             });
 
         // Modern Cyber-Obsidian Add Download Modal Dialog
+
+fn render_parallel_connections_combobox(
+    ui: &mut egui::Ui,
+    id_source: &str,
+    segments: &mut usize,
+    is_gdrive: bool,
+) {
+    if is_gdrive {
+        egui::Frame::none()
+            .fill(Color32::from_rgb(18, 30, 48))
+            .stroke(Stroke::new(1.0_f32, GLASS_SECONDARY))
+            .rounding(egui::Rounding::same(6.0))
+            .inner_margin(Margin::symmetric(10.0, 7.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("🛡️ 1 Stream (Google Drive Single Stream Mode Enforced)")
+                            .size(12.5)
+                            .color(GLASS_SECONDARY)
+                            .strong(),
+                    );
+                });
+            });
+        return;
+    }
+
+    let stream_label = match *segments {
+        1 => "1 Stream (Single • Safe)".to_string(),
+        4 => "4 Streams (Eco • Balanced)".to_string(),
+        8 => "8 Streams (Default • Recommended)".to_string(),
+        16 => "16 Streams (Turbo Speed)".to_string(),
+        32 => "32 Streams (Extreme Speed)".to_string(),
+        n => format!("{} Streams", n),
+    };
+
+    let options = [
+        (1, "1 Stream", "Single connection • Safe", "🛡️"),
+        (4, "4 Streams", "Eco • Balanced connections", "🌱"),
+        (8, "8 Streams", "Default • Recommended", "★"),
+        (16, "16 Streams", "Turbo • High performance", "⚡"),
+        (32, "32 Streams", "Extreme Speed • Max", "🚀"),
+    ];
+
+    ui.scope(|ui| {
+        // Set widget visuals to match exactly the input fields (GLASS_BG, GLASS_BORDER, 6.0 rounding)
+        ui.visuals_mut().widgets.inactive.weak_bg_fill = GLASS_BG;
+        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0_f32, GLASS_BORDER);
+        ui.visuals_mut().widgets.inactive.rounding = egui::Rounding::same(6.0);
+        ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, GLASS_TEXT);
+
+        ui.visuals_mut().widgets.hovered.weak_bg_fill = Color32::from_rgb(16, 24, 46);
+        ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::new(1.0_f32, GLASS_PRIMARY);
+        ui.visuals_mut().widgets.hovered.rounding = egui::Rounding::same(6.0);
+        ui.visuals_mut().widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+
+        ui.visuals_mut().widgets.open.weak_bg_fill = Color32::from_rgb(20, 28, 54);
+        ui.visuals_mut().widgets.open.bg_stroke = Stroke::new(1.5_f32, GLASS_PRIMARY);
+        ui.visuals_mut().widgets.open.rounding = egui::Rounding::same(6.0);
+        ui.visuals_mut().widgets.open.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+
+        ui.spacing_mut().button_padding = Vec2::new(10.0, 7.0);
+
+        // Modern luxury dropdown popup styling
+        ui.visuals_mut().window_fill = Color32::from_rgb(15, 23, 42); // GLASS_SURFACE
+        ui.visuals_mut().window_stroke = Stroke::new(1.0_f32, Color32::from_rgb(45, 60, 95));
+        ui.visuals_mut().window_rounding = egui::Rounding::same(8.0);
+        ui.visuals_mut().popup_shadow = egui::epaint::Shadow {
+            offset: [0.0, 10.0].into(),
+            blur: 28.0,
+            spread: 2.0,
+            color: Color32::from_black_alpha(240),
+        };
+        ui.spacing_mut().item_spacing = Vec2::new(0.0, 3.0);
+        ui.spacing_mut().window_margin = Margin::same(6.0);
+
+        let combo = egui::ComboBox::from_id_source(id_source)
+            .selected_text(RichText::new(stream_label).size(12.5).color(GLASS_TEXT).strong())
+            .width(ui.available_width() - 4.0)
+            .height(32.0)
+            .icon(|ui, rect, visuals, _is_open, _above_or_below| {
+                let center = rect.center();
+                let stroke = Stroke::new(1.5_f32, visuals.fg_stroke.color);
+                ui.painter().line_segment(
+                    [egui::pos2(center.x - 4.0, center.y - 2.0), egui::pos2(center.x, center.y + 2.5)],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [egui::pos2(center.x, center.y + 2.5), egui::pos2(center.x + 4.0, center.y - 2.0)],
+                    stroke,
+                );
+            });
+
+        combo.show_ui(ui, |ui| {
+            ui.set_min_width(ui.available_width().max(420.0));
+            for (val, title, desc, icon) in options {
+                let is_selected = *segments == val;
+                let (bg, border, text_col) = if is_selected {
+                    (
+                        Color32::from_rgb(42, 26, 85),
+                        Color32::from_rgb(140, 95, 245),
+                        Color32::WHITE,
+                    )
+                } else {
+                    (
+                        Color32::TRANSPARENT,
+                        Color32::TRANSPARENT,
+                        GLASS_TEXT,
+                    )
+                };
+
+                let item_frame = egui::Frame::none()
+                    .fill(bg)
+                    .stroke(Stroke::new(if is_selected { 1.0_f32 } else { 0.0_f32 }, border))
+                    .rounding(egui::Rounding::same(6.0))
+                    .inner_margin(Margin::symmetric(10.0, 7.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(icon).size(13.0));
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(title).size(12.5).color(text_col).strong());
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(format!("•  {}", desc))
+                                    .size(11.5)
+                                    .color(if is_selected { Color32::from_rgb(200, 180, 255) } else { GLASS_MUTED }),
+                            );
+
+                            if is_selected {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(
+                                        RichText::new("✓")
+                                            .size(13.0)
+                                            .color(Color32::from_rgb(160, 115, 255))
+                                            .strong(),
+                                    );
+                                });
+                            }
+                        });
+                    });
+
+                let resp = ui.interact(
+                    item_frame.response.rect,
+                    ui.make_persistent_id(format!("{}_{}", id_source, val)),
+                    egui::Sense::click(),
+                );
+                if resp.hovered() && !is_selected {
+                    ui.painter().rect_filled(resp.rect, 6.0, Color32::from_rgba_unmultiplied(255, 255, 255, 15));
+                }
+                if resp.hovered() {
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    *segments = val;
+                    ui.memory_mut(|mem| mem.close_popup());
+                }
+            }
+        });
+    });
+}
+
+        if do_open_add_dialog {
+            self.open_add_download_dialog(ctx);
+        }
+
         if self.show_add_dialog {
             // Backdrop dimming scrim
             let screen_rect = ctx.screen_rect();
@@ -1963,7 +2439,7 @@ impl eframe::App for RapidApp {
                 .fill(GLASS_SURFACE)
                 .stroke(Stroke::NONE)
                 .rounding(egui::Rounding::same(12.0))
-                .inner_margin(Margin::same(22.0))
+                .inner_margin(Margin::ZERO)
                 .shadow(egui::epaint::Shadow {
                     offset: [0.0, 10.0].into(),
                     blur: 32.0,
@@ -1973,192 +2449,251 @@ impl eframe::App for RapidApp {
 
             let mut close_modal = false;
             let mut start_download_req = false;
+            let mut url_to_probe: Option<String> = None;
 
             egui::Window::new("add_download_modal")
                 .title_bar(false)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(550.0, 330.0))
+                .fixed_size(Vec2::new(600.0, 365.0))
                 .frame(modal_frame)
                 .show(ctx, |ui| {
-                    // Header Section
-                    ui.horizontal(|ui| {
-                        let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::hover());
-                        draw_modern_icon(ui.painter(), ModernIcon::Plus, icon_rect, GLASS_PRIMARY);
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new("Add Download")
-                                .size(17.0)
-                                .color(GLASS_TEXT)
-                                .strong(),
-                        );
+                    // Top Bar with flush right-top 0, 0 Red Close Button (icon white)
+                    let top_bar_h = 30.0_f32;
+                    let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if modern_icon_button(
-                                ui,
-                                ModernIcon::Close,
-                                Vec2::new(26.0, 26.0),
-                                GLASS_MUTED,
-                                Color32::from_rgb(255, 80, 80),
-                                "Close dialog",
-                            ) {
-                                close_modal = true;
-                            }
-                        });
-                    });
-
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(10.0);
-
-                    // Field 1: Download URL
-                    ui.label(
-                        RichText::new("Download URL")
-                            .size(12.5)
-                            .color(GLASS_TEXT)
-                            .strong(),
+                    let close_w = 42.0_f32;
+                    let close_h = 30.0_f32;
+                    let close_rect = egui::Rect::from_min_max(
+                        egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
+                        egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + close_h),
                     );
 
-                    ui.add_space(4.0);
-                    egui::Frame::none()
-                        .fill(GLASS_BG)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(10.0, 8.0))
-                        .show(ui, |ui| {
-                            let edit = egui::TextEdit::singleline(&mut self.input_url)
-                                .hint_text("Paste URL here e.g. https://example.com/file.zip")
-                                .font(egui::TextStyle::Body)
-                                .frame(false)
-                                .desired_width(ui.available_width());
-                            ui.add(edit);
-                        });
-
-                    ui.add_space(10.0);
-
-                    // Field 2: Save Destination Directory
-                    ui.label(
-                        RichText::new("Save Destination")
-                            .size(12.5)
-                            .color(GLASS_TEXT)
-                            .strong(),
-                    );
-
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        egui::Frame::none()
-                            .fill(GLASS_BG)
-                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                            .rounding(egui::Rounding::same(6.0))
-                            .inner_margin(Margin::symmetric(10.0, 7.0))
-                            .show(ui, |ui| {
-                                let edit = egui::TextEdit::singleline(&mut self.input_dest)
-                                    .font(egui::TextStyle::Monospace)
-                                    .frame(false)
-                                    .desired_width(ui.available_width() - 85.0);
-                                ui.add(edit);
-                            });
-
-                        let browse_btn = egui::Button::new(
-                            RichText::new("Browse")
-                                .size(12.0)
-                                .color(GLASS_SECONDARY)
-                                .strong(),
-                        )
-                        .fill(GLASS_CARD)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0));
-
-                        if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Choose download destination folder").clicked() {
-                            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                self.input_dest = folder.to_string_lossy().to_string();
-                            }
-                        }
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Field 3: Parallel Connections (Modern Dropdown Selector)
-                    ui.label(
-                        RichText::new("Parallel Connections")
-                            .size(12.5)
-                            .color(GLASS_TEXT)
-                            .strong(),
-                    );
-
-                    ui.add_space(4.0);
-
-                    let stream_label = match self.input_segments {
-                        1 => "1 Stream (Single • Safe)".to_string(),
-                        4 => "4 Streams (Eco)".to_string(),
-                        8 => "8 Streams (Default • Recommended)".to_string(),
-                        16 => "16 Streams (Turbo)".to_string(),
-                        32 => "32 Streams (Extreme Speed)".to_string(),
-                        n => format!("{} Streams", n),
-                    };
-
-                    egui::Frame::none()
-                        .fill(GLASS_BG)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(10.0, 6.0))
-                        .show(ui, |ui| {
-                            egui::ComboBox::from_id_source("input_segments_select")
-                                .selected_text(RichText::new(stream_label).size(12.0).color(GLASS_TEXT).strong())
-                                .width(ui.available_width())
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.input_segments, 1, "1 Stream (Single • Safe)");
-                                    ui.selectable_value(&mut self.input_segments, 4, "4 Streams (Eco)");
-                                    ui.selectable_value(&mut self.input_segments, 8, "8 Streams (Default • Recommended)");
-                                    ui.selectable_value(&mut self.input_segments, 16, "16 Streams (Turbo)");
-                                    ui.selectable_value(&mut self.input_segments, 32, "32 Streams (Extreme Speed)");
-                                });
-                        });
-
-                    // Error Message Banner (if any)
-                    if let Some(ref err) = self.add_error {
-                        ui.add_space(8.0);
-                        egui::Frame::none()
-                            .fill(Color32::from_rgb(45, 18, 24))
-                            .stroke(Stroke::new(1.0_f32, STATUS_FAILED))
-                            .rounding(egui::Rounding::same(6.0))
-                            .inner_margin(Margin::symmetric(10.0, 6.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("⚠").color(STATUS_FAILED).strong());
-                                    ui.label(RichText::new(err).color(Color32::from_rgb(255, 180, 190)).size(12.0));
-                                });
-                            });
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("add_modal_close_btn_top_right"), egui::Sense::click());
+                    let is_close_hovered = close_resp.hovered();
+                    if is_close_hovered {
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    }
+                    if close_resp.clicked() {
+                        close_modal = true;
                     }
 
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.add_space(10.0);
+                    // Background: Red (bright red on hover)
+                    let bg_color = if is_close_hovered {
+                        Color32::from_rgb(255, 60, 60)
+                    } else {
+                        Color32::from_rgb(220, 38, 38)
+                    };
 
-                    // Modal Footer - Only Prominent Start Download Button
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let start_btn = egui::Button::new(
-                                RichText::new("Start Download")
-                                    .size(13.0)
-                                    .color(Color32::WHITE)
+                    // Top-right corner rounding 12.0 matching the modal frame, bottom-left 6.0
+                    let close_rounding = egui::Rounding {
+                        nw: 0.0,
+                        ne: 12.0,
+                        sw: 6.0,
+                        se: 0.0,
+                    };
+
+                    ui.painter().rect_filled(close_rect, close_rounding, bg_color);
+
+                    // Icon: White 'X'
+                    let icon_center = close_rect.center();
+                    let stroke = Stroke::new(1.8_f32, Color32::WHITE);
+                    let sz = 4.5_f32;
+                    ui.painter().line_segment(
+                        [egui::pos2(icon_center.x - sz, icon_center.y - sz), egui::pos2(icon_center.x + sz, icon_center.y + sz)],
+                        stroke,
+                    );
+                    ui.painter().line_segment(
+                        [egui::pos2(icon_center.x + sz, icon_center.y - sz), egui::pos2(icon_center.x - sz, icon_center.y + sz)],
+                        stroke,
+                    );
+
+                    egui::Frame::none()
+                        .inner_margin(Margin { left: 22.0, right: 22.0, top: 4.0, bottom: 20.0 })
+                        .show(ui, |ui| {
+                            // Field 1: Source URL + Copy Button (Right-aligned center)
+                            ui.label(RichText::new("Source URL").size(12.5).color(GLASS_TEXT).strong());
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                egui::Frame::none()
+                                    .fill(GLASS_BG)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(Margin::symmetric(10.0, 7.0))
+                                    .show(ui, |ui| {
+                                        let prev_url = self.input_url.clone();
+                                        let edit = egui::TextEdit::singleline(&mut self.input_url)
+                                            .hint_text("Paste URL here e.g. https://example.com/file.zip")
+                                            .font(egui::TextStyle::Body)
+                                            .frame(false)
+                                            .desired_width(ui.available_width() - 85.0);
+                                        ui.add(edit);
+
+                                        if self.input_url != prev_url {
+                                            let candidate = extract_filename_from_url(&self.input_url);
+                                            if !candidate.is_empty() && !rapid_core::engine::is_generic_placeholder(&candidate) {
+                                                self.input_filename = candidate;
+                                            } else {
+                                                self.input_filename.clear();
+                                            }
+                                            if self.input_url.starts_with("http://") || self.input_url.starts_with("https://") {
+                                                url_to_probe = Some(self.input_url.clone());
+                                            }
+                                        }
+                                    });
+
+                                let copy_btn = egui::Button::new(
+                                    RichText::new("Copy")
+                                        .size(12.0)
+                                        .color(GLASS_SECONDARY)
+                                        .strong(),
+                                )
+                                .min_size(Vec2::new(75.0, 32.0))
+                                .fill(GLASS_CARD)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(6.0));
+
+                                if ui.add(copy_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Copy Source URL to clipboard").clicked() {
+                                    ui.output_mut(|o| o.copied_text = self.input_url.clone());
+                                }
+                            });
+
+                            ui.add_space(10.0);
+
+                            // Field 2: File Name (Full width)
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("File Name").size(12.5).color(GLASS_TEXT).strong());
+                                let ext = std::path::Path::new(&self.input_filename)
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+                                if !ext.is_empty() && ext != "bin" && ext != "tmp" {
+                                    render_file_type_badge(ui, &ext);
+                                }
+                            });
+                            ui.add_space(4.0);
+                            egui::Frame::none()
+                                .fill(GLASS_BG)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(6.0))
+                                .inner_margin(Margin::symmetric(10.0, 7.0))
+                                .show(ui, |ui| {
+                                    let edit = egui::TextEdit::singleline(&mut self.input_filename)
+                                        .hint_text(if self.input_url.is_empty() { "Enter file name or paste URL" } else { "Resolving original filename..." })
+                                        .font(egui::TextStyle::Body)
+                                        .frame(false)
+                                        .desired_width(ui.available_width());
+                                    ui.add(edit);
+                                });
+
+                            ui.add_space(10.0);
+
+                            // Field 3: Save To + Browse Button (Right-aligned center)
+                            ui.label(RichText::new("Save To").size(12.5).color(GLASS_TEXT).strong());
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                egui::Frame::none()
+                                    .fill(GLASS_BG)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(Margin::symmetric(10.0, 7.0))
+                                    .show(ui, |ui| {
+                                        let edit = egui::TextEdit::singleline(&mut self.input_dest)
+                                            .font(egui::TextStyle::Body)
+                                            .frame(false)
+                                            .desired_width(ui.available_width() - 85.0);
+                                        ui.add(edit);
+                                    });
+
+                                let browse_btn = egui::Button::new(
+                                    RichText::new("Browse...")
+                                        .size(12.0)
+                                        .color(GLASS_SECONDARY)
+                                        .strong(),
+                                )
+                                .min_size(Vec2::new(75.0, 32.0))
+                                .fill(GLASS_CARD)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(6.0));
+
+                                if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Select download folder").clicked() {
+                                    let start_dir = PathBuf::from(&self.input_dest);
+                                    let mut dialog = rfd::FileDialog::new();
+                                    if start_dir.exists() {
+                                        dialog = dialog.set_directory(&start_dir);
+                                    }
+                                    if let Some(folder) = dialog.pick_folder() {
+                                        self.input_dest = folder.to_string_lossy().to_string();
+                                    }
+                                }
+                            });
+
+                            ui.add_space(10.0);
+
+                            // Field 4: Parallel Connections (Modern Dropdown Selector)
+                            let is_gdrive = self.input_url.contains("drive.google.com")
+                                || self.input_url.contains("googleusercontent.com")
+                                || self.input_url.contains("docs.google.com");
+                            ui.label(
+                                RichText::new("Parallel Connections")
+                                    .size(12.5)
+                                    .color(GLASS_TEXT)
                                     .strong(),
-                            )
-                            .min_size(Vec2::new(140.0, 34.0))
-                            .fill(GLASS_PRIMARY)
-                            .rounding(egui::Rounding::same(7.0));
+                            );
+                            ui.add_space(4.0);
+                            render_parallel_connections_combobox(ui, "add_modal_segments_select", &mut self.input_segments, is_gdrive);
 
-                            if ui.add(start_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
-                                start_download_req = true;
+                            // Error Message Banner (if any)
+                            if let Some(ref err) = self.add_error {
+                                ui.add_space(8.0);
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgb(45, 18, 24))
+                                    .stroke(Stroke::new(1.0_f32, STATUS_FAILED))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(Margin::symmetric(10.0, 6.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("!").color(STATUS_FAILED).strong());
+                                            ui.label(RichText::new(err).color(Color32::from_rgb(255, 180, 190)).size(12.0));
+                                        });
+                                    });
                             }
+
+                            ui.add_space(14.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+
+                            // Modal Footer - Prominent Start Download Button
+                            ui.horizontal(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let start_btn = egui::Button::new(
+                                        RichText::new("Start Download")
+                                            .size(13.0)
+                                            .color(Color32::WHITE)
+                                            .strong(),
+                                    )
+                                    .min_size(Vec2::new(140.0, 34.0))
+                                    .fill(GLASS_PRIMARY)
+                                    .rounding(egui::Rounding::same(7.0));
+
+                                    if ui.add(start_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                                        start_download_req = true;
+                                    }
+                                });
+                            });
                         });
-                    });
                 });
+
+            if let Some(ref u) = url_to_probe {
+                self.probe_url_filename(u, ctx);
+            }
 
             if close_modal {
                 self.show_add_dialog = false;
                 self.add_error = None;
+                self.input_filename.clear();
             }
 
             if start_download_req {
@@ -2168,7 +2703,12 @@ impl eframe::App for RapidApp {
                     let url = self.input_url.trim().to_string();
                     let dest = PathBuf::from(&self.input_dest);
                     let segs = self.input_segments;
-                    self.start_new_download(url, dest, segs);
+                    let custom_fname = if self.input_filename.trim().is_empty() {
+                        None
+                    } else {
+                        Some(self.input_filename.trim().to_string())
+                    };
+                    self.start_new_download(url, dest, segs, custom_fname);
                 }
             }
         }
@@ -2185,7 +2725,7 @@ impl eframe::App for RapidApp {
                 .fill(GLASS_SURFACE)
                 .stroke(Stroke::NONE)
                 .rounding(egui::Rounding::same(12.0))
-                .inner_margin(Margin::same(22.0))
+                .inner_margin(Margin::ZERO)
                 .shadow(egui::epaint::Shadow {
                     offset: [0.0, 10.0].into(),
                     blur: 32.0,
@@ -2201,210 +2741,203 @@ impl eframe::App for RapidApp {
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(600.0, 430.0))
+                .fixed_size(Vec2::new(600.0, 355.0))
                 .frame(modal_frame)
                 .show(ctx, |ui| {
                     let prompt = self.current_browser_prompt.as_mut().unwrap();
 
-                    // Header Section
-                    ui.horizontal(|ui| {
-                        let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), egui::Sense::hover());
-                        draw_modern_icon(ui.painter(), ModernIcon::PulseBeacon, icon_rect, GLASS_SECONDARY);
-                        ui.add_space(6.0);
-                        ui.vertical(|ui| {
+                    // Top Bar with flush right-top 0, 0 Red Close Button (icon white)
+                    let top_bar_h = 30.0_f32;
+                    let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
+
+                    let close_w = 42.0_f32;
+                    let close_h = 30.0_f32;
+                    let close_rect = egui::Rect::from_min_max(
+                        egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
+                        egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + close_h),
+                    );
+
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("modal_close_btn_top_right"), egui::Sense::click());
+                    let is_close_hovered = close_resp.hovered();
+                    if is_close_hovered {
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    }
+                    if close_resp.clicked() {
+                        close_modal = true;
+                    }
+
+                    // Background: Red (bright red on hover)
+                    let bg_color = if is_close_hovered {
+                        Color32::from_rgb(255, 60, 60)
+                    } else {
+                        Color32::from_rgb(220, 38, 38)
+                    };
+
+                    // Top-right corner rounding 12.0 matching the modal frame, bottom-left 6.0
+                    let close_rounding = egui::Rounding {
+                        nw: 0.0,
+                        ne: 12.0,
+                        sw: 6.0,
+                        se: 0.0,
+                    };
+
+                    ui.painter().rect_filled(close_rect, close_rounding, bg_color);
+
+                    // Icon: White '✕'
+                    let icon_center = close_rect.center();
+                    let stroke = Stroke::new(1.8_f32, Color32::WHITE);
+                    let sz = 4.5_f32;
+                    ui.painter().line_segment(
+                        [egui::pos2(icon_center.x - sz, icon_center.y - sz), egui::pos2(icon_center.x + sz, icon_center.y + sz)],
+                        stroke,
+                    );
+                    ui.painter().line_segment(
+                        [egui::pos2(icon_center.x + sz, icon_center.y - sz), egui::pos2(icon_center.x - sz, icon_center.y + sz)],
+                        stroke,
+                    );
+
+                    egui::Frame::none()
+                        .inner_margin(Margin { left: 22.0, right: 22.0, top: 4.0, bottom: 20.0 })
+                        .show(ui, |ui| {
+                            // Field 1: Source URL + Copy Button (Right-aligned center)
+                            ui.label(RichText::new("Source URL").size(12.5).color(GLASS_TEXT).strong());
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                egui::Frame::none()
+                                    .fill(GLASS_BG)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(Margin::symmetric(10.0, 7.0))
+                                    .show(ui, |ui| {
+                                        let edit = egui::TextEdit::singleline(&mut prompt.url)
+                                            .font(egui::TextStyle::Body)
+                                            .frame(false)
+                                            .desired_width(ui.available_width() - 85.0);
+                                        ui.add(edit);
+                                    });
+
+                                let copy_btn = egui::Button::new(
+                                    RichText::new("Copy")
+                                        .size(12.0)
+                                        .color(GLASS_SECONDARY)
+                                        .strong(),
+                                )
+                                .min_size(Vec2::new(75.0, 32.0))
+                                .fill(GLASS_CARD)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(6.0));
+
+                                if ui.add(copy_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Copy Source URL to clipboard").clicked() {
+                                    ui.output_mut(|o| o.copied_text = prompt.url.clone());
+                                }
+                            });
+
+                            ui.add_space(10.0);
+
+                            // Field 2: File Name (Full width)
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("File Name").size(12.5).color(GLASS_TEXT).strong());
+                                let ext = std::path::Path::new(&prompt.filename)
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+                                if !ext.is_empty() && ext != "bin" && ext != "tmp" {
+                                    render_file_type_badge(ui, &ext);
+                                }
+                            });
+                            ui.add_space(4.0);
+                            egui::Frame::none()
+                                .fill(GLASS_BG)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(6.0))
+                                .inner_margin(Margin::symmetric(10.0, 7.0))
+                                .show(ui, |ui| {
+                                    let edit = egui::TextEdit::singleline(&mut prompt.filename)
+                                        .hint_text("Resolving original filename...")
+                                        .font(egui::TextStyle::Body)
+                                        .frame(false)
+                                        .desired_width(ui.available_width());
+                                    ui.add(edit);
+                                });
+
+                            ui.add_space(10.0);
+
+                            // Field 3: Save To + Browse Button (Right-aligned center)
+                            ui.label(RichText::new("Save To").size(12.5).color(GLASS_TEXT).strong());
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                egui::Frame::none()
+                                    .fill(GLASS_BG)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(Margin::symmetric(10.0, 7.0))
+                                    .show(ui, |ui| {
+                                        let edit = egui::TextEdit::singleline(&mut prompt.dest_dir)
+                                            .font(egui::TextStyle::Body)
+                                            .frame(false)
+                                            .desired_width(ui.available_width() - 85.0);
+                                        ui.add(edit);
+                                    });
+
+                                let browse_btn = egui::Button::new(
+                                    RichText::new("Browse...")
+                                        .size(12.0)
+                                        .color(GLASS_SECONDARY)
+                                        .strong(),
+                                )
+                                .min_size(Vec2::new(75.0, 32.0))
+                                .fill(GLASS_CARD)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(6.0));
+
+                                if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Select download folder").clicked() {
+                                    let start_dir = PathBuf::from(&prompt.dest_dir);
+                                    let mut dialog = rfd::FileDialog::new();
+                                    if start_dir.exists() {
+                                        dialog = dialog.set_directory(&start_dir);
+                                    }
+                                    if let Some(folder) = dialog.pick_folder() {
+                                        prompt.dest_dir = folder.to_string_lossy().to_string();
+                                    }
+                                }
+                            });
+
+                            ui.add_space(10.0);
+
+                            // Field 4: Parallel Connections (Modern Dropdown Selector)
                             ui.label(
-                                RichText::new("Download File Info")
-                                    .size(17.0)
+                                RichText::new("Parallel Connections")
+                                    .size(12.5)
                                     .color(GLASS_TEXT)
                                     .strong(),
                             );
-                            ui.label(
-                                RichText::new("Browser Download Intercepted • Configure Destination")
-                                    .size(11.0)
-                                    .color(GLASS_SECONDARY),
-                            );
-                        });
+                            ui.add_space(4.0);
+                            render_parallel_connections_combobox(ui, "browser_prompt_segments_select", &mut prompt.segments, prompt.is_gdrive);
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if modern_icon_button(
-                                ui,
-                                ModernIcon::Close,
-                                Vec2::new(26.0, 26.0),
-                                GLASS_MUTED,
-                                Color32::from_rgb(255, 80, 80),
-                                "Cancel this download",
-                            ) {
-                                close_modal = true;
-                            }
-                        });
-                    });
+                            ui.add_space(14.0);
+                            ui.separator();
+                            ui.add_space(10.0);
 
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(10.0);
+                            // Modal Footer - Prominent Start Download Button
+                            ui.horizontal(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let start_btn = egui::Button::new(
+                                        RichText::new("Start Download")
+                                            .size(13.0)
+                                            .color(Color32::WHITE)
+                                            .strong(),
+                                    )
+                                    .min_size(Vec2::new(140.0, 34.0))
+                                    .fill(GLASS_PRIMARY)
+                                    .rounding(egui::Rounding::same(7.0));
 
-                    // Source URL row
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Source URL").size(12.0).color(GLASS_TEXT).strong());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(RichText::new("📋 Copy").size(10.5).color(GLASS_SECONDARY)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                ui.output_mut(|o| o.copied_text = prompt.url.clone());
-                            }
-                        });
-                    });
-                    ui.add_space(3.0);
-                    egui::Frame::none()
-                        .fill(GLASS_BG)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(10.0, 6.0))
-                        .show(ui, |ui| {
-                            let url_str = &prompt.url;
-                            let display_url = if url_str.len() > 68 {
-                                format!("{}...", &url_str[..65])
-                            } else {
-                                url_str.clone()
-                            };
-                            ui.label(RichText::new(display_url).size(11.0).color(GLASS_MUTED));
-                        });
-
-                    ui.add_space(10.0);
-
-                    // Field 1: File Name
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("File Name").size(12.5).color(GLASS_TEXT).strong());
-                        let ext = std::path::Path::new(&prompt.filename)
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        if !ext.is_empty() {
-                            render_file_type_badge(ui, &ext);
-                        }
-                    });
-                    ui.add_space(4.0);
-                    egui::Frame::none()
-                        .fill(GLASS_BG)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(10.0, 7.0))
-                        .show(ui, |ui| {
-                            let edit = egui::TextEdit::singleline(&mut prompt.filename)
-                                .font(egui::TextStyle::Body)
-                                .frame(false)
-                                .desired_width(ui.available_width());
-                            ui.add(edit);
-                        });
-
-                    ui.add_space(10.0);
-
-                    // Field 2: Save Destination Directory + Browse button
-                    ui.label(RichText::new("Save To").size(12.5).color(GLASS_TEXT).strong());
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        egui::Frame::none()
-                            .fill(GLASS_BG)
-                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                            .rounding(egui::Rounding::same(6.0))
-                            .inner_margin(Margin::symmetric(10.0, 7.0))
-                            .show(ui, |ui| {
-                                let edit = egui::TextEdit::singleline(&mut prompt.dest_dir)
-                                    .font(egui::TextStyle::Monospace)
-                                    .frame(false)
-                                    .desired_width(ui.available_width() - 85.0);
-                                ui.add(edit);
-                            });
-
-                        let browse_btn = egui::Button::new(
-                            RichText::new("Browse...")
-                                .size(12.0)
-                                .color(GLASS_SECONDARY)
-                                .strong(),
-                        )
-                        .fill(GLASS_CARD)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0));
-
-                        if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Select download folder").clicked() {
-                            let start_dir = PathBuf::from(&prompt.dest_dir);
-                            let mut dialog = rfd::FileDialog::new();
-                            if start_dir.exists() {
-                                dialog = dialog.set_directory(&start_dir);
-                            }
-                            if let Some(folder) = dialog.pick_folder() {
-                                prompt.dest_dir = folder.to_string_lossy().to_string();
-                            }
-                        }
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Field 3: Parallel Connections (Modern Dropdown Selector)
-                    ui.label(
-                        RichText::new("Parallel Connections")
-                            .size(12.5)
-                            .color(GLASS_TEXT)
-                            .strong(),
-                    );
-                    ui.add_space(4.0);
-
-                    let stream_label = if prompt.is_gdrive {
-                        "1 Stream (Google Drive Safe)".to_string()
-                    } else {
-                        match prompt.segments {
-                            1 => "1 Stream (Single • Safe)".to_string(),
-                            4 => "4 Streams (Eco)".to_string(),
-                            8 => "8 Streams (Default • Recommended)".to_string(),
-                            16 => "16 Streams (Turbo)".to_string(),
-                            32 => "32 Streams (Extreme Speed)".to_string(),
-                            n => format!("{} Streams", n),
-                        }
-                    };
-
-                    egui::Frame::none()
-                        .fill(GLASS_BG)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(10.0, 6.0))
-                        .show(ui, |ui| {
-                            egui::ComboBox::from_id_source("browser_prompt_segments_select")
-                                .selected_text(RichText::new(stream_label).size(12.0).color(GLASS_TEXT).strong())
-                                .width(ui.available_width())
-                                .show_ui(ui, |ui| {
-                                    if prompt.is_gdrive {
-                                        ui.selectable_value(&mut prompt.segments, 1, "1 Stream (Google Drive Safe)");
-                                    } else {
-                                        ui.selectable_value(&mut prompt.segments, 1, "1 Stream (Single • Safe)");
-                                        ui.selectable_value(&mut prompt.segments, 4, "4 Streams (Eco)");
-                                        ui.selectable_value(&mut prompt.segments, 8, "8 Streams (Default • Recommended)");
-                                        ui.selectable_value(&mut prompt.segments, 16, "16 Streams (Turbo)");
-                                        ui.selectable_value(&mut prompt.segments, 32, "32 Streams (Extreme Speed)");
+                                    if ui.add(start_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                                        start_download_req = true;
                                     }
                                 });
+                            });
                         });
-
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.add_space(10.0);
-
-                    // Modal Footer - Only Prominent Start Download Button
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let start_btn = egui::Button::new(
-                                RichText::new("Start Download")
-                                    .size(13.0)
-                                    .color(Color32::WHITE)
-                                    .strong(),
-                            )
-                            .min_size(Vec2::new(140.0, 34.0))
-                            .fill(GLASS_PRIMARY)
-                            .rounding(egui::Rounding::same(7.0));
-
-                            if ui.add(start_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
-                                start_download_req = true;
-                            }
-                        });
-                    });
                 });
 
             if close_modal {
@@ -2418,7 +2951,12 @@ impl eframe::App for RapidApp {
                     let url = prompt.url;
                     let dest = PathBuf::from(&prompt.dest_dir);
                     let segs = prompt.segments;
-                    let custom_fn = if prompt.filename.trim().is_empty() {
+                    let custom_fn = if prompt.filename.trim().is_empty()
+                        || prompt.filename == "Downloading..."
+                        || prompt.filename == "Resolving filename..."
+                        || prompt.filename == "Resolving original filename..."
+                        || prompt.filename == "Detecting filename..."
+                        || rapid_core::engine::is_generic_placeholder(&prompt.filename) {
                         None
                     } else {
                         Some(prompt.filename.trim().to_string())
@@ -2454,14 +2992,9 @@ impl eframe::App for RapidApp {
         if let Some(idx) = action_redownload {
             self.redownload(idx);
         }
-        if let Some(idx) = action_remove {
-            if let Ok(list) = self.tasks.try_lock() {
-                if idx < list.len() {
-                    self.tasks_to_delete.clear();
-                    self.tasks_to_delete.insert(list[idx].id.clone());
-                    self.show_delete_modal = true;
-                }
-            }
+        if !action_remove_ids.is_empty() {
+            self.tasks_to_delete = action_remove_ids.into_iter().collect();
+            self.show_delete_modal = true;
         }
         if let Some(idx) = action_open_folder {
             self.open_download_folder(idx);
@@ -2582,10 +3115,21 @@ impl eframe::App for RapidApp {
                             list.remove(i);
                         }
                     }
-                    if let Some(sel) = self.selected_task_index {
-                        if sel >= list.len() {
-                            self.selected_task_index = if list.is_empty() { None } else { Some(list.len() - 1) };
+                    if list.is_empty() {
+                        self.selected_task_index = None;
+                        self.selected_tasks.clear();
+                    } else if let Some(first_checked) = self.selected_tasks.iter().next() {
+                        if let Some(pos) = list.iter().position(|t| &t.id == first_checked) {
+                            self.selected_task_index = Some(pos);
+                        } else {
+                            self.selected_task_index = Some(0);
                         }
+                    } else if let Some(sel) = self.selected_task_index {
+                        if sel >= list.len() {
+                            self.selected_task_index = Some(list.len() - 1);
+                        }
+                    } else {
+                        self.selected_task_index = None;
                     }
                 }
                 self.tasks_to_delete.clear();
@@ -2709,6 +3253,7 @@ async fn run_extension_server(
     pending_queue: Arc<std::sync::Mutex<VecDeque<PendingBrowserDownload>>>,
     dest_dir: PathBuf,
     ctx: egui::Context,
+    resolver_tx: std::sync::mpsc::Sender<(String, String)>,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -2735,6 +3280,7 @@ async fn run_extension_server(
         let queue_clone = Arc::clone(&pending_queue);
         let dest_clone = dest_dir.clone();
         let ctx_clone = ctx.clone();
+        let resolver_tx_clone = resolver_tx.clone();
 
         tokio::spawn(async move {
             let mut buffer = Vec::new();
@@ -2829,7 +3375,12 @@ async fn run_extension_server(
                 if let Ok(body_str) = std::str::from_utf8(body_slice) {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(body_str.trim()) {
                         if let Some(url) = val.get("url").and_then(|u| u.as_str()) {
-                            let custom_fn = val.get("filename").and_then(|f| f.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+                            let custom_fn = val.get("filename")
+                                .and_then(|f| f.as_str())
+                                .map(|s| s.trim())
+                                .filter(|s| !s.is_empty())
+                                .filter(|s| !rapid_core::engine::is_generic_placeholder(s))
+                                .map(|s| s.to_string());
                             let cookies_str = val.get("cookies").and_then(|c| c.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                             let user_agent_str = val.get("user_agent").and_then(|ua| ua.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                             let referrer_str = val.get("referrer").and_then(|r| r.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
@@ -2849,29 +3400,90 @@ async fn run_extension_server(
                             } else {
                                 let clean = url_str.split('?').next().unwrap_or(&url_str).split('#').next().unwrap_or(&url_str);
                                 if let Some(last_seg) = clean.trim_end_matches('/').rsplit('/').next() {
-                                    if !last_seg.is_empty() && !last_seg.contains(':') {
-                                        last_seg.to_string()
+                                    if !last_seg.is_empty() && !last_seg.contains(':') && !rapid_core::engine::is_generic_placeholder(last_seg) {
+                                        urlencoding::decode(last_seg).map(|d| d.into_owned()).unwrap_or_else(|_| last_seg.to_string())
                                     } else {
-                                        "download.bin".to_string()
+                                        "Resolving filename...".to_string()
                                     }
                                 } else {
-                                    "download.bin".to_string()
+                                    "Resolving filename...".to_string()
                                 }
                             };
 
                             let pending = PendingBrowserDownload {
-                                url: url_str,
-                                filename: display_filename,
+                                url: url_str.clone(),
+                                filename: display_filename.clone(),
                                 dest_dir: dest_clone.to_string_lossy().to_string(),
                                 segments: segments_count,
-                                cookies: cookies_str,
-                                user_agent: user_agent_str,
-                                referrer: referrer_str,
+                                cookies: cookies_str.clone(),
+                                user_agent: user_agent_str.clone(),
+                                referrer: referrer_str.clone(),
                                 is_gdrive,
                             };
 
                             if let Ok(mut q) = queue_clone.lock() {
                                 q.push_back(pending);
+                            }
+
+                            // Immediately spawn background probe to detect real original filename
+                            if custom_fn.is_none() || rapid_core::engine::is_generic_placeholder(&display_filename) {
+                                let tx_p = resolver_tx_clone.clone();
+                                let u_p = url_str.clone();
+                                let c_p = cookies_str.clone();
+                                let ua_p = user_agent_str.clone();
+                                let r_p = referrer_str.clone();
+                                let is_gd_p = is_gdrive;
+                                let ctx_p = ctx_clone.clone();
+
+                                tokio::spawn(async move {
+                                    let mut cb = reqwest::Client::builder()
+                                        .timeout(std::time::Duration::from_secs(12))
+                                        .redirect(reqwest::redirect::Policy::limited(10));
+
+                                    let mut hdrs = reqwest::header::HeaderMap::new();
+                                    if let Some(ref ua) = ua_p {
+                                        if let Ok(v) = reqwest::header::HeaderValue::from_str(ua) {
+                                            hdrs.insert(reqwest::header::USER_AGENT, v);
+                                        }
+                                    }
+                                    if let Some(ref r) = r_p {
+                                        if let Ok(v) = reqwest::header::HeaderValue::from_str(r) {
+                                            hdrs.insert(reqwest::header::REFERER, v);
+                                        }
+                                    }
+                                    if let Some(ref c) = c_p {
+                                        if let Ok(v) = reqwest::header::HeaderValue::from_str(c) {
+                                            hdrs.insert(reqwest::header::COOKIE, v);
+                                        }
+                                    }
+                                    cb = cb.default_headers(hdrs);
+
+                                    if let Ok(client) = cb.build() {
+                                        let detected_name = if is_gd_p {
+                                            let res_type = rapid_core::gdrive::GDriveResolver::parse_resource_type(&u_p);
+                                            if let rapid_core::gdrive::GDriveResourceType::File(file_id) = res_type {
+                                                rapid_core::gdrive::GDriveResolver::resolve_file_download_url(&client, &file_id)
+                                                    .await
+                                                    .ok()
+                                                    .map(|r| r.name)
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            rapid_core::Probe::inspect(&client, &u_p)
+                                                .await
+                                                .ok()
+                                                .map(|m| m.filename)
+                                        };
+
+                                        if let Some(fname) = detected_name {
+                                            if !rapid_core::engine::is_generic_placeholder(&fname) {
+                                                let _ = tx_p.send((u_p, fname));
+                                                ctx_p.request_repaint();
+                                            }
+                                        }
+                                    }
+                                });
                             }
 
                             // Force window visible, restore from minimized, and elevate to AlwaysOnTop so it pops over Chrome
@@ -3055,6 +3667,7 @@ fn main() -> Result<(), eframe::Error> {
         .with_inner_size([win_w, win_h])
         .with_min_inner_size([650.0, 380.0])
         .with_decorations(false)
+        .with_taskbar(true)
         .with_resizable(true)
         .with_title("Rapid Download Manager")
         .with_visible(true)

@@ -33,11 +33,17 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
 
+    let dlAttr = (target.getAttribute("download") || "").trim();
+    let fnVal = "";
+    if (dlAttr && !["download", "true", "false", "undefined", "null", "file"].includes(dlAttr.toLowerCase())) {
+      fnVal = dlAttr;
+    }
+
     chrome.runtime.sendMessage({
       type: "RAPID_INTERCEPT_LINK",
       url: href,
       referrer: window.location.href,
-      filename: target.getAttribute("download") || ""
+      filename: fnVal
     });
   }
 }, true);

@@ -126,7 +126,8 @@ impl GDriveResolver {
 
         if let Some(confirmed_url) = Self::extract_confirm_form_url(&html, &direct_url) {
             let confirmed_resp = client
-                .head(&confirmed_url)
+                .get(&confirmed_url)
+                .header(reqwest::header::RANGE, "bytes=0-0")
                 .send()
                 .await;
 
@@ -138,9 +139,16 @@ impl GDriveResolver {
                     .and_then(Self::extract_filename_from_disposition);
                 let sz_opt = cr
                     .headers()
-                    .get(reqwest::header::CONTENT_LENGTH)
+                    .get(reqwest::header::CONTENT_RANGE)
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse::<u64>().ok());
+                    .and_then(|cr_str| cr_str.rsplit('/').next())
+                    .and_then(|tot| tot.trim().parse::<u64>().ok())
+                    .or_else(|| {
+                        cr.headers()
+                            .get(reqwest::header::CONTENT_LENGTH)
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.parse::<u64>().ok())
+                    });
                 (fn_opt, sz_opt)
             } else {
                 (None, None)
@@ -148,7 +156,7 @@ impl GDriveResolver {
 
             let final_name = filename
                 .or_else(|| Self::extract_filename_from_html(&html))
-                .unwrap_or_else(|| format!("file_{}.bin", file_id));
+                .unwrap_or_else(|| format!("Google_File_{}.bin", file_id));
 
             return Ok(ResolvedGDriveFile {
                 id: file_id.to_string(),
@@ -339,6 +347,7 @@ impl GDriveResolver {
     }
 
     fn extract_filename_from_html(html: &str) -> Option<String> {
+        // Pattern 1: class="uc-name-size"
         if let Some(pos) = html.find("class=\"uc-name-size\"") {
             let slice = &html[pos..];
             if let Some(a_pos) = slice.find("<a ") {
@@ -347,34 +356,46 @@ impl GDriveResolver {
                     let name_slice = &after_a[text_pos + 1..];
                     if let Some(end_tag) = name_slice.find("</a>") {
                         let fn_str = name_slice[..end_tag].trim();
-                        if !fn_str.is_empty() {
+                        if !fn_str.is_empty() && !crate::engine::is_generic_placeholder(fn_str) {
                             return Some(fn_str.to_string());
                         }
                     }
                 }
             }
         }
+
+        // Pattern 2: Title tag: <title>Filename.ext - Google Drive</title>
+        if let Some(t_start) = html.find("<title>") {
+            let slice = &html[t_start + 7..];
+            if let Some(t_end) = slice.find("</title>") {
+                let title_text = slice[..t_end].trim();
+                if let Some(pos) = title_text.find(" - Google Drive") {
+                    let fn_str = title_text[..pos].trim();
+                    if !fn_str.is_empty() && !crate::engine::is_generic_placeholder(fn_str) {
+                        return Some(fn_str.to_string());
+                    }
+                }
+            }
+        }
+
+        // Pattern 3: input hidden name="filename" value="..."
+        if let Some(fn_pos) = html.find("name=\"filename\"") {
+            let slice = &html[fn_pos..];
+            if let Some(val_pos) = slice.find("value=\"") {
+                let val_slice = &slice[val_pos + 7..];
+                if let Some(end_quote) = val_slice.find('"') {
+                    let fn_str = val_slice[..end_quote].trim();
+                    if !fn_str.is_empty() && !crate::engine::is_generic_placeholder(fn_str) {
+                        return Some(fn_str.to_string());
+                    }
+                }
+            }
+        }
+
         None
     }
 
     fn extract_filename_from_disposition(disposition: &str) -> Option<String> {
-        for part in disposition.split(';') {
-            let part = part.trim();
-            if part.to_ascii_lowercase().starts_with("filename*=") {
-                let val = &part[10..];
-                if let Some(idx) = val.find("''") {
-                    let encoded = val[idx + 2..].trim_matches('"');
-                    if let Ok(decoded) = urlencoding::decode(encoded) {
-                        return Some(decoded.into_owned());
-                    }
-                }
-            } else if part.to_ascii_lowercase().starts_with("filename=") {
-                let val = part[9..].trim_matches('"').trim();
-                if !val.is_empty() {
-                    return Some(val.to_string());
-                }
-            }
-        }
-        None
+        crate::probe::Probe::extract_filename_from_cd(disposition)
     }
 }

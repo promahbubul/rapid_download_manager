@@ -58,7 +58,8 @@ impl Probe {
                     .get(CONTENT_DISPOSITION)
                     .and_then(|v| v.to_str().ok());
 
-                let filename = Self::determine_filename(disposition, &parsed_url);
+                let content_type = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
+        let filename = Self::determine_filename(disposition, content_type, &parsed_url);
 
                 // If we got content_length, we are good!
                 if content_length.is_some() {
@@ -112,7 +113,8 @@ impl Probe {
         let disposition = headers
             .get(CONTENT_DISPOSITION)
             .and_then(|v| v.to_str().ok());
-        let filename = Self::determine_filename(disposition, &parsed_url);
+        let content_type = headers.get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
+        let filename = Self::determine_filename(disposition, content_type, &parsed_url);
 
         let etag = headers
             .get("etag")
@@ -134,54 +136,105 @@ impl Probe {
         })
     }
 
-    fn determine_filename(content_disposition: Option<&str>, url: &Url) -> String {
-        // Try content-disposition
+    pub fn determine_filename(
+        content_disposition: Option<&str>,
+        content_type: Option<&str>,
+        url: &Url,
+    ) -> String {
+        // 1. Try content-disposition (RFC 6266 / RFC 5987 aware)
         if let Some(cd) = content_disposition {
             if let Some(name) = Self::extract_filename_from_cd(cd) {
                 let sanitized = Self::sanitize_filename(&name);
-                if !sanitized.is_empty() {
-                    return sanitized;
-                }
-            }
-        }
-
-        // Try URL path segments
-        if let Some(segments) = url.path_segments() {
-            let last = segments.filter(|s| !s.is_empty()).last();
-            if let Some(name) = last {
-                if let Ok(decoded) = url_decode(name) {
-                    let sanitized = Self::sanitize_filename(&decoded);
-                    if !sanitized.is_empty() {
+                if !sanitized.is_empty() && !crate::engine::is_generic_placeholder(&sanitized) {
+                    if has_file_extension(&sanitized) {
+                        return sanitized;
+                    } else if let Some(ext) = extension_from_mime(content_type) {
+                        return format!("{}.{}", sanitized, ext);
+                    } else {
                         return sanitized;
                     }
                 }
             }
         }
 
-        "download.bin".to_string()
-    }
-
-    fn extract_filename_from_cd(cd: &str) -> Option<String> {
-        // e.g. attachment; filename*=UTF-8''my%20file.zip
-        for part in cd.split(';') {
-            let part = part.trim();
-            if part.to_lowercase().starts_with("filename*=") {
-                let value = &part[10..].trim();
-                let value = value.trim_matches('"');
-                if let Some(rest) = value.strip_prefix("UTF-8''").or_else(|| value.strip_prefix("utf-8''")) {
-                    if let Ok(decoded) = url_decode(rest) {
-                        return Some(decoded.into_owned());
+        // 2. Try URL path segments
+        let mut candidate_from_url: Option<String> = None;
+        if let Some(segments) = url.path_segments() {
+            let last = segments.filter(|s| !s.is_empty()).last();
+            if let Some(name) = last {
+                if let Ok(decoded) = url_decode(name) {
+                    let sanitized = Self::sanitize_filename(&decoded);
+                    if !sanitized.is_empty() {
+                        let stripped = strip_script_extension(&sanitized);
+                        if !crate::engine::is_generic_placeholder(&stripped) {
+                            candidate_from_url = Some(stripped);
+                        }
                     }
-                }
-            } else if part.to_lowercase().starts_with("filename=") {
-                let value = &part[9..].trim();
-                let value = value.trim_matches('"').trim_matches('\'');
-                if !value.is_empty() {
-                    return Some(value.to_string());
                 }
             }
         }
-        None
+
+        if let Some(cand) = candidate_from_url {
+            if has_file_extension(&cand) {
+                return cand;
+            } else if let Some(ext) = extension_from_mime(content_type) {
+                return format!("{}.{}", cand, ext);
+            } else {
+                return cand;
+            }
+        }
+
+        // 3. Deduce from MIME type
+        if let Some(ext) = extension_from_mime(content_type) {
+            return format!("download.{}", ext);
+        }
+
+        "download.bin".to_string()
+    }
+
+    pub fn extract_filename_from_cd(cd: &str) -> Option<String> {
+        let mut filename_star = None;
+        let mut regular_filename = None;
+
+        for part in cd.split(';') {
+            let part = part.trim();
+            let lower = part.to_ascii_lowercase();
+
+            if lower.starts_with("filename*") {
+                if let Some(eq_pos) = part.find('=') {
+                    let val = part[eq_pos + 1..].trim().trim_matches('"');
+                    if let Some(first_quote) = val.find(|c: char| c == '\'') {
+                        if let Some(second_quote) = val[first_quote + 1..].find(|c: char| c == '\'') {
+                            let encoded = &val[first_quote + 1 + second_quote + 1..];
+                            if let Ok(decoded) = url_decode(encoded) {
+                                let name = decoded.into_owned();
+                                if !name.is_empty() {
+                                    filename_star = Some(name);
+                                }
+                            }
+                        }
+                    } else if let Ok(decoded) = url_decode(val) {
+                        let name = decoded.into_owned();
+                        if !name.is_empty() {
+                            filename_star = Some(name);
+                        }
+                    }
+                }
+            } else if lower.starts_with("filename") {
+                if let Some(eq_pos) = part.find('=') {
+                    let val = part[eq_pos + 1..].trim().trim_matches('"').trim_matches(|c: char| c == '\'');
+                    if !val.is_empty() {
+                        let base = std::path::Path::new(val)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(val);
+                        regular_filename = Some(base.to_string());
+                    }
+                }
+            }
+        }
+
+        filename_star.or(regular_filename)
     }
 
     pub fn sanitize_filename(name: &str) -> String {
@@ -194,4 +247,89 @@ impl Probe {
     }
 }
 
-// url_decode removed - now using the `urlencoding` crate (url_decode alias above).
+fn has_file_extension(name: &str) -> bool {
+    if let Some(pos) = name.rfind('.') {
+        let ext = &name[pos + 1..];
+        !ext.is_empty() && ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric())
+    } else {
+        false
+    }
+}
+
+fn strip_script_extension(name: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    let script_exts = [".php", ".asp", ".aspx", ".jsp", ".do", ".action", ".cgi", ".pl"];
+    for ext in script_exts {
+        if lower.ends_with(ext) {
+            return name[..name.len() - ext.len()].to_string();
+        }
+    }
+    name.to_string()
+}
+
+pub fn extension_from_mime(content_type: Option<&str>) -> Option<&'static str> {
+    let ct = content_type?.to_ascii_lowercase();
+    let mime = ct.split(';').next()?.trim();
+
+    match mime {
+        "video/mp4" => Some("mp4"),
+        "video/x-matroska" => Some("mkv"),
+        "video/webm" => Some("webm"),
+        "video/quicktime" => Some("mov"),
+        "video/x-msvideo" => Some("avi"),
+        "video/x-flv" => Some("flv"),
+        "audio/mpeg" | "audio/mp3" => Some("mp3"),
+        "audio/wav" | "audio/x-wav" => Some("wav"),
+        "audio/flac" | "audio/x-flac" => Some("flac"),
+        "audio/aac" => Some("aac"),
+        "audio/ogg" | "application/ogg" => Some("ogg"),
+        "audio/mp4" | "audio/m4a" | "audio/x-m4a" => Some("m4a"),
+        "application/pdf" => Some("pdf"),
+        "application/zip" | "application/x-zip-compressed" => Some("zip"),
+        "application/x-rar-compressed" | "application/x-rar" | "application/vnd.rar" => Some("rar"),
+        "application/x-7z-compressed" => Some("7z"),
+        "application/x-tar" => Some("tar"),
+        "application/gzip" | "application/x-gzip" => Some("gz"),
+        "application/vnd.android.package-archive" => Some("apk"),
+        "application/msword" => Some("doc"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some("docx"),
+        "application/vnd.ms-excel" => Some("xls"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some("xlsx"),
+        "application/vnd.ms-powerpoint" => Some("ppt"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        "image/svg+xml" => Some("svg"),
+        "text/plain" => Some("txt"),
+        "application/json" => Some("json"),
+        _ => None,
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use url::Url;
+
+    #[test]
+    fn test_rfc5987_filename_precedence() {
+        let cd = r#"attachment; filename="fallback.bin"; filename*=UTF-8''My%20Lecture%2001.mp4"#;
+        let url = Url::parse("https://example.com/download").unwrap();
+        let name = Probe::determine_filename(Some(cd), None, &url);
+        assert_eq!(name, "My Lecture 01.mp4");
+    }
+
+    #[test]
+    fn test_mime_extension_deduction() {
+        let url = Url::parse("https://example.com/stream/v1/987654321").unwrap();
+        let name = Probe::determine_filename(None, Some("video/mp4"), &url);
+        assert_eq!(name, "987654321.mp4");
+
+        let url2 = Url::parse("https://example.com/get_file.php?id=42").unwrap();
+        let name2 = Probe::determine_filename(None, Some("application/pdf"), &url2);
+        assert_eq!(name2, "get_file.pdf");
+    }
+}

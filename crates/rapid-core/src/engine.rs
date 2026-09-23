@@ -48,48 +48,32 @@ impl DownloadTask {
                 crate::gdrive::GDriveResourceType::File(file_id) => {
                     match crate::gdrive::GDriveResolver::resolve_file_download_url(&client, &file_id).await {
                         Ok(resolved) => {
-                            let fname = config
-                                .custom_filename
-                                .clone()
-                                .filter(|s| !s.is_empty())
-                                .unwrap_or(resolved.name);
-                            (resolved.download_url, fname, resolved.size_bytes, false)
+                            let best_name = resolve_best_filename(config.custom_filename.as_deref(), &resolved.name);
+                            let unique_name = Self::resolve_unique_filename(&config.output_dir, &best_name);
+                            (resolved.download_url, unique_name, resolved.size_bytes, false)
                         }
                         Err(_) => {
-                            let resolved_filename = config
-                                .custom_filename
-                                .clone()
-                                .filter(|s| !s.is_empty())
-                                .unwrap_or_else(|| {
-                                    Self::resolve_unique_filename(&config.output_dir, "Google_Drive_Download.zip")
-                                });
-                            (config.url.clone(), resolved_filename, None, false)
+                            let candidate = config.custom_filename.as_deref().unwrap_or("Google_Drive_Download.zip");
+                            let best_name = resolve_best_filename(Some(candidate), "Google_Drive_Download.zip");
+                            let unique_name = Self::resolve_unique_filename(&config.output_dir, &best_name);
+                            (config.url.clone(), unique_name, None, false)
                         }
                     }
                 }
                 _ => {
-                    let resolved_filename = config
-                        .custom_filename
-                        .clone()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| {
-                            Self::resolve_unique_filename(&config.output_dir, "Google_Drive_Download.zip")
-                        });
-                    (config.url.clone(), resolved_filename, None, false)
+                    let candidate = config.custom_filename.as_deref().unwrap_or("Google_Drive_Download.zip");
+                    let best_name = resolve_best_filename(Some(candidate), "Google_Drive_Download.zip");
+                    let unique_name = Self::resolve_unique_filename(&config.output_dir, &best_name);
+                    (config.url.clone(), unique_name, None, false)
                 }
             }
         } else {
             let metadata = Probe::inspect(&client, &config.url).await?;
-            let resolved_filename = config
-                .custom_filename
-                .clone()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    Self::resolve_unique_filename(&config.output_dir, &metadata.filename)
-                });
+            let best_name = resolve_best_filename(config.custom_filename.as_deref(), &metadata.filename);
+            let unique_name = Self::resolve_unique_filename(&config.output_dir, &best_name);
             (
                 metadata.url,
-                resolved_filename,
+                unique_name,
                 metadata.content_length,
                 metadata.accept_ranges,
             )
@@ -493,4 +477,119 @@ fn build_client_with_config(config: &DownloadConfig, timeout_secs: u64) -> Resul
     client_builder
         .build()
         .map_err(|e| crate::error::RapidError::Network(e))
+}
+
+
+pub fn is_generic_placeholder(name: &str) -> bool {
+    let s = name.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        return true;
+    }
+    let exact_generics = [
+        "download", "downloads", "download.bin", "download.crdownload", "download.tmp",
+        "file", "file.bin", "file.tmp", "document.bin",
+        "bin", "default", "unnamed", "undefined", "null", "true", "false",
+        "uc", "uc.bin", "view", "index", "get", "media",
+        "downloading...", "google_drive_download.zip", "google_drive_download",
+    ];
+    if exact_generics.contains(&s.as_str()) {
+        return true;
+    }
+
+    let p = std::path::Path::new(&s);
+    let stem = p.file_stem().and_then(|st| st.to_str()).unwrap_or(&s);
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    // If it has no extension, or extension is dummy (.bin, .tmp, .crdownload)
+    if ext.is_empty() || ext == "bin" || ext == "tmp" || ext == "crdownload" {
+        if stem == "download" || stem == "downloads" || stem == "file" || stem == "document" || stem == "uc" {
+            return true;
+        }
+        if (s.starts_with("file_") || s.starts_with("google_file_")) && (ext == "bin" || ext.is_empty()) {
+            return true;
+        }
+    }
+
+    // If stem is literally "download" or "downloads" (e.g. download.pdf, download.mp4)
+    if stem == "download" || stem == "downloads" {
+        return true;
+    }
+
+    false
+}
+
+pub fn resolve_best_filename(custom: Option<&str>, probed: &str) -> String {
+    let custom_cleaned = custom.map(|s| s.trim()).filter(|s| !s.is_empty());
+    match custom_cleaned {
+        None => probed.to_string(),
+        Some(c) => {
+            if is_generic_placeholder(c) {
+                if !is_generic_placeholder(probed) {
+                    probed.to_string()
+                } else {
+                    c.to_string()
+                }
+            } else {
+                let custom_ext = std::path::Path::new(c)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+                let probed_ext = std::path::Path::new(probed)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+                if custom_ext.is_empty() && !probed_ext.is_empty() {
+                    format!("{}.{}", c, probed_ext)
+                } else {
+                    c.to_string()
+                }
+            }
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generic_placeholder() {
+        assert!(is_generic_placeholder("download"));
+        assert!(is_generic_placeholder("Download"));
+        assert!(is_generic_placeholder("download.bin"));
+        assert!(is_generic_placeholder("file_12345.bin"));
+        assert!(is_generic_placeholder("uc"));
+        assert!(is_generic_placeholder("Downloading..."));
+        assert!(!is_generic_placeholder("Lecture_01.mp4"));
+        assert!(!is_generic_placeholder("document.pdf"));
+    }
+
+    #[test]
+    fn test_resolve_best_filename() {
+        // Generic custom name yields to real probed name
+        assert_eq!(
+            resolve_best_filename(Some("Download"), "Lecture_01.mp4"),
+            "Lecture_01.mp4"
+        );
+        assert_eq!(
+            resolve_best_filename(Some("download.bin"), "Physics_Notes.pdf"),
+            "Physics_Notes.pdf"
+        );
+        // Custom name without extension gets real extension appended
+        assert_eq!(
+            resolve_best_filename(Some("My Video"), "stream_098.mp4"),
+            "My Video.mp4"
+        );
+        // Explicit custom name with extension is respected
+        assert_eq!(
+            resolve_best_filename(Some("Custom_Archive.zip"), "original.zip"),
+            "Custom_Archive.zip"
+        );
+        // None custom yields probed name
+        assert_eq!(
+            resolve_best_filename(None, "Archive.tar.gz"),
+            "Archive.tar.gz"
+        );
+    }
 }

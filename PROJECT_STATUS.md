@@ -37,7 +37,7 @@
 
 ### C. Desktop UI (`crates/rapid-gui`)
 - Rust + `egui` / `eframe` with dark glassmorphic velvet theme.
-- Native Windows decorations, taskbar visibility, and centered auto-focus display.
+- Frameless custom glass velvet title bar (with_decorations(false) + with_taskbar(true)), full Windows taskbar visibility, and smooth drag/caption controls.
 - Local background HTTP receiver on `127.0.0.1:9669`.
 - Multi-segment live connection visualizer, ETA, speed gauge, and pause/resume controls.
 
@@ -58,3 +58,21 @@
 - **Phase 5**: Browser UI Enhancements (Hover download button, media popup scanner).
 - **Phase 6**: Persistent Queue & Database Management (SQLite/sled history, reordering).
 - **Phase 7**: Production Hardening & Testing.
+
+
+### C. Selection, Window Design & Original Filename Preservation Updates (September 2026)
+1. **Permanent Custom Window Title Bar**:
+   - Fixed title bar flickering and resetting back to Windows default bar by configuring `ViewportBuilder::default().with_decorations(false).with_taskbar(true)` in `rapid-gui/src/main.rs`.
+   - Rendered a custom dark velvet glassmorphism title bar (`render_custom_title_bar(ctx)`) with drag-to-move, minimize, maximize, and close controls.
+
+2. **Selection & Multi-Delete Synchronization**:
+   - Reconciled single-selection (`selected_task_index`) and multi-selection (`selected_tasks` HashSet).
+   - Entire row is clickable to select; checkboxes seamlessly toggle multi-selection and update the top status bar.
+   - Delete action properly handles all selected/checked downloads simultaneously.
+
+3. **Original Filename & Extension Preservation**:
+   - **RFC 5987 / RFC 6266 Precedence**: `Probe::extract_filename_from_cd` now strictly prioritizes `filename*=` (UTF-8 percent-encoded) over `filename=`, handling all quotes, whitespace, and path traversal characters.
+   - **Google Drive CDN Probe Fix**: Replaced rejected `HEAD` requests on confirmed Google CDN URLs with `GET` requests using `Range: bytes=0-0`. This guarantees Google CDN returns the real `Content-Disposition` header with the original filename (e.g. `Lecture_01.mp4`) and `Content-Range` with the exact total file size.
+   - **Automatic MIME Extension Fallback**: Added `extension_from_mime` in `probe.rs`. If a download URL is dynamic (e.g., `/download/stream?id=...` or `/get.php`) and has no file extension or server content disposition, the real extension is deduced from `Content-Type` (e.g. `video/mp4` -> `.mp4`, `application/pdf` -> `.pdf`).
+   - **Generic Placeholder Overrides**: Added `is_generic_placeholder` and `resolve_best_filename` in `engine.rs`. If the browser extension or URL passes generic names like `"download"`, `"download.bin"`, `"uc"`, `"file"`, etc., the engine defers to the real probed filename. If a custom name has no extension, the real probed extension is automatically preserved and attached.
+   - **Browser Extension Cleaning**: Updated `content.js` and `background.js` to discard generic `<a download="Download">` attributes and Chrome fallback names so only verified original filenames reach the desktop client.
