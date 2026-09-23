@@ -30,3 +30,4 @@ test*.py
 test*.html
 dev_watch.*
 *.zip
+/yt-dlp.exe

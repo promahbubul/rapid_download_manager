@@ -1,4 +1,4 @@
-// Rapid Download Manager — Background Service Worker
+﻿// Rapid Download Manager - Background Service Worker
 const PRIMARY_SERVER = "http://127.0.0.1:9669/add_download";
 const FALLBACK_SERVER = "http://localhost:9669/add_download";
 const STATUS_SERVER = "http://127.0.0.1:9669/";
@@ -6,7 +6,77 @@ const STATUS_SERVER = "http://127.0.0.1:9669/";
 // Prevent duplicate processing of the same download item
 const processedDownloadIds = new Set();
 
+// Active media streams per tab: tabId -> { video, audio, m3u8 }
+const tabMediaStreams = new Map();
+
+// ---------------------------------------------------------
+// 0. Live Network Stream Sniffer (YouTube, GoogleVideo, HLS)
+// ---------------------------------------------------------
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (!details.url || details.tabId < 0) return;
+    try {
+      let u = new URL(details.url);
+
+      // 1. YouTube & Google Video Streams
+      if (u.hostname.includes("googlevideo.com") && u.pathname.includes("videoplayback")) {
+        // Strip byte range and chunking params to get full unsegmented stream
+        u.searchParams.delete("range");
+        u.searchParams.delete("rn");
+        u.searchParams.delete("rbuf");
+        let fullStreamUrl = u.toString();
+
+        let mime = (u.searchParams.get("mime") || "").toLowerCase();
+        let itag = u.searchParams.get("itag") || "";
+
+        let tabData = tabMediaStreams.get(details.tabId) || { video: null, audio: null, m3u8: null };
+
+        if (mime.startsWith("video") || itag === "18" || itag === "22") {
+          tabData.video = {
+            url: fullStreamUrl,
+            mime: mime,
+            itag: itag,
+            timestamp: Date.now()
+          };
+        } else if (mime.startsWith("audio") || itag === "140" || itag === "251") {
+          tabData.audio = {
+            url: fullStreamUrl,
+            mime: mime,
+            itag: itag,
+            timestamp: Date.now()
+          };
+        }
+        tabMediaStreams.set(details.tabId, tabData);
+      }
+
+      // 2. HLS (.m3u8) Streams
+      if (u.pathname.includes(".m3u8") || details.url.includes(".m3u8")) {
+        let tabData = tabMediaStreams.get(details.tabId) || { video: null, audio: null, m3u8: null };
+        tabData.m3u8 = {
+          url: details.url,
+          timestamp: Date.now()
+        };
+        tabMediaStreams.set(details.tabId, tabData);
+      }
+    } catch (e) {}
+  },
+  {
+    urls: [
+      "*://*.googlevideo.com/videoplayback*",
+      "*://*/*.m3u8*",
+      "*://*/*.m3u8"
+    ]
+  }
+);
+
+// Clean up memory when tab is closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabMediaStreams.delete(tabId);
+});
+
+// ---------------------------------------------------------
 // 1. Context Menu Setup
+// ---------------------------------------------------------
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "rapid-download-link",
@@ -23,7 +93,6 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "rapid-scan-page") {
-    // Open extension popup or prompt scan
     if (tab && tab.id) {
       chrome.action.openPopup().catch(() => {});
     }
@@ -71,11 +140,17 @@ function isGoogleDriveUrl(urlStr) {
 // Helper: Extract cookies for target URL + originating referrer page
 async function extractCookiesForUrl(targetUrl, isGoogle, pageReferrer) {
   try {
-    if (isGoogle) {
-      const [driveCookies, googleCookies, rootGoogleCookies, contentCookies, dotContentCookies, userContentCookies, dotUserContentCookies, accountsCookies, urlCookies, refCookies] = await Promise.all([
+    let isYT = targetUrl.includes("googlevideo.com") || 
+               targetUrl.includes("youtube.com") || 
+               (pageReferrer && pageReferrer.includes("youtube.com"));
+
+    if (isGoogle || isYT) {
+      const [driveCookies, googleCookies, rootGoogleCookies, ytCookies, rootYtCookies, contentCookies, dotContentCookies, userContentCookies, dotUserContentCookies, accountsCookies, urlCookies, refCookies] = await Promise.all([
         chrome.cookies.getAll({ domain: "drive.google.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: ".google.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: "google.com" }).catch(() => []),
+        chrome.cookies.getAll({ domain: ".youtube.com" }).catch(() => []),
+        chrome.cookies.getAll({ domain: "youtube.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: "googleusercontent.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: ".googleusercontent.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: "usercontent.google.com" }).catch(() => []),
@@ -90,6 +165,8 @@ async function extractCookiesForUrl(targetUrl, isGoogle, pageReferrer) {
         ...googleCookies,
         ...rootGoogleCookies,
         ...driveCookies,
+        ...ytCookies,
+        ...rootYtCookies,
         ...contentCookies,
         ...dotContentCookies,
         ...userContentCookies,
@@ -168,10 +245,18 @@ function showNotification(title, message) {
 }
 
 // ---------------------------------------------------------
-// Message Router for Content Script and Popup
+// 2. Message Router for Content Script and Popup
 // ---------------------------------------------------------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+
+  // Query captured streams for current tab
+  if (msg.type === "RAPID_GET_TAB_STREAM") {
+    let tabId = sender.tab ? sender.tab.id : null;
+    let tabData = tabId ? tabMediaStreams.get(tabId) : null;
+    sendResponse({ status: "ok", data: tabData || null });
+    return true;
+  }
 
   // 1. Direct link click interception
   if (msg.type === "RAPID_INTERCEPT_LINK") {
@@ -199,11 +284,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 2. In-Page Media Sniffer Interception
   if (msg.type === "RAPID_INTERCEPT_MEDIA") {
     (async () => {
-      let isGoogle = isGoogleDriveUrl(msg.url);
+      let targetUrl = msg.url || "";
+      let tabId = sender.tab ? sender.tab.id : null;
+      let tabStreams = tabId ? tabMediaStreams.get(tabId) : null;
+
+      // If incoming URL is a blob or missing, resolve from sniffed tab streams
+      if (!targetUrl || targetUrl.startsWith("blob:") || msg.is_blob) {
+        if (tabStreams) {
+          if (msg.mediaType === "audio" && tabStreams.audio) {
+            targetUrl = tabStreams.audio.url;
+          } else if (tabStreams.video) {
+            targetUrl = tabStreams.video.url;
+          } else if (tabStreams.m3u8) {
+            targetUrl = tabStreams.m3u8.url;
+          }
+        }
+      }
+
+      // If still unresolved blob, notify user to trigger stream
+      if (!targetUrl || targetUrl.startsWith("blob:")) {
+        showNotification(
+          "Rapid Media Capture",
+          "Please play 1-2 seconds of the video so Rapid can capture the high-speed stream!"
+        );
+        sendResponse({ success: false, reason: "needs_playback" });
+        return;
+      }
+
+      let isGoogle = isGoogleDriveUrl(targetUrl);
       let ref = msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : "");
-      let cookies = await extractCookiesForUrl(msg.url, isGoogle, ref);
+      let cookies = await extractCookiesForUrl(targetUrl, isGoogle, ref);
       let success = await sendToRapidApp({
-        url: msg.url,
+        url: targetUrl,
         referrer: ref,
         filename: msg.filename || "",
         cookies: cookies,
@@ -249,7 +361,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           is_gdrive: isGoogle
         });
         if (ok) successCount++;
-        // Small delay between queuing items
         await new Promise(r => setTimeout(r, 120));
       }
       showNotification("⚡ Rapid Batch Downloader", `Dispatched ${successCount} items to Rapid Download Manager.`);

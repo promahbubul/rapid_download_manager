@@ -870,6 +870,11 @@ impl RapidApp {
     }
 
     fn start_new_download(&mut self, url: String, dest_dir: PathBuf, segments: usize, custom_filename: Option<String>) {
+        if url.trim().starts_with("blob:") {
+            self.add_error = Some("Invalid URL: 'blob:' URLs are internal browser memory objects. Please play the video in your browser so Rapid captures the real stream, or use a direct HTTP/HTTPS link.".to_string());
+            return;
+        }
+
         let res_type = rapid_core::GDriveResolver::parse_resource_type(&url);
         if let rapid_core::GDriveResourceType::Folder(folder_id) = res_type {
             let rt_crawl = Arc::clone(&self.tokio_rt);
@@ -3074,6 +3079,22 @@ fn render_parallel_connections_combobox(
                                     });
                             }
 
+                            let is_blob_input = self.input_url.trim().starts_with("blob:");
+                            if is_blob_input {
+                                ui.add_space(6.0);
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 35))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("⚠ Browser Media Stream (blob:)").color(Color32::from_rgb(248, 113, 113)).size(12.0).strong());
+                                        });
+                                        ui.label(RichText::new("Browser memory buffer cannot be downloaded directly. Please play 1-2 seconds of the video in Chrome so Rapid can capture the direct high-speed stream.").color(Color32::from_rgb(252, 165, 165)).size(11.0));
+                                    });
+                            }
+
                             ui.add_space(14.0);
                             ui.separator();
                             ui.add_space(10.0);
@@ -3081,6 +3102,11 @@ fn render_parallel_connections_combobox(
                             // Modal Footer - Prominent Start Download Button
                             ui.horizontal(|ui| {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn_color = if is_blob_input {
+                                        Color32::from_rgb(71, 85, 105)
+                                    } else {
+                                        GLASS_PRIMARY
+                                    };
                                     let start_btn = egui::Button::new(
                                         RichText::new("Start Download")
                                             .size(13.0)
@@ -3088,17 +3114,21 @@ fn render_parallel_connections_combobox(
                                             .strong(),
                                     )
                                     .min_size(Vec2::new(140.0, 34.0))
-                                    .fill(GLASS_PRIMARY)
+                                    .fill(btn_color)
                                     .rounding(egui::Rounding::same(7.0));
 
-                                    if ui.add(start_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
-                                        start_download_req = true;
+                                    let resp = ui.add_enabled(!is_blob_input, start_btn);
+                                    if is_blob_input {
+                                        resp.on_hover_text("Cannot download internal browser blob memory. Play video in Chrome to capture direct stream.");
+                                    } else {
+                                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                                            start_download_req = true;
+                                        }
                                     }
                                 });
                             });
                         });
                 });
-
             if let Some(ref u) = url_to_probe {
                 self.probe_url_filename(u, ctx);
             }
@@ -3333,6 +3363,22 @@ fn render_parallel_connections_combobox(
                             ui.add_space(4.0);
                             render_parallel_connections_combobox(ui, "browser_prompt_segments_select", &mut prompt.segments, prompt.is_gdrive);
 
+                            let is_prompt_blob = prompt.url.starts_with("blob:");
+                            if is_prompt_blob {
+                                ui.add_space(6.0);
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 35))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("⚠ Browser Media Stream (blob:)").color(Color32::from_rgb(248, 113, 113)).size(12.0).strong());
+                                        });
+                                        ui.label(RichText::new("Browser memory buffer cannot be downloaded directly. Please play 1-2 seconds of the video in Chrome so Rapid can capture the direct high-speed stream.").color(Color32::from_rgb(252, 165, 165)).size(11.0));
+                                    });
+                            }
+
                             ui.add_space(14.0);
                             ui.separator();
                             ui.add_space(10.0);
@@ -3340,6 +3386,11 @@ fn render_parallel_connections_combobox(
                             // Modal Footer - Prominent Start Download Button
                             ui.horizontal(|ui| {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn_color = if is_prompt_blob {
+                                        Color32::from_rgb(71, 85, 105)
+                                    } else {
+                                        GLASS_PRIMARY
+                                    };
                                     let start_btn = egui::Button::new(
                                         RichText::new("Start Download")
                                             .size(13.0)
@@ -3347,11 +3398,16 @@ fn render_parallel_connections_combobox(
                                             .strong(),
                                     )
                                     .min_size(Vec2::new(140.0, 34.0))
-                                    .fill(GLASS_PRIMARY)
+                                    .fill(btn_color)
                                     .rounding(egui::Rounding::same(7.0));
 
-                                    if ui.add(start_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
-                                        start_download_req = true;
+                                    let resp = ui.add_enabled(!is_prompt_blob, start_btn);
+                                    if is_prompt_blob {
+                                        resp.on_hover_text("Cannot download internal browser blob memory. Play video in Chrome to capture direct stream.");
+                                    } else {
+                                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                                            start_download_req = true;
+                                        }
                                     }
                                 });
                             });
@@ -3857,8 +3913,8 @@ fn spawn_download_task(
             || url.contains("takeout-download-drive");
         let config = DownloadConfig {
             url: url.clone(),
-            output_dir: dest_dir,
-            custom_filename,
+            output_dir: dest_dir.clone(),
+            custom_filename: custom_filename.clone(),
             num_segments: if gdrive { 1 } else { segments },
             cookies: cookies.clone(),
             user_agent: user_agent.clone(),
@@ -3960,6 +4016,33 @@ fn spawn_download_task(
             }
             Err(e) => {
                 eprintln!("Failed to create download: {}", e);
+                let fallback_name = custom_filename
+                    .clone()
+                    .unwrap_or_else(|| {
+                        let clean = url.split('?').next().unwrap_or(&url);
+                        clean.rsplit('/').next().unwrap_or("Failed_Download").to_string()
+                    });
+                let ui_entry = ActiveTaskUI {
+                    id: task_id.clone(),
+                    filename: fallback_name,
+                    url: url.clone(),
+                    target_file: dest_dir.join("failed_download"),
+                    total_bytes: None,
+                    downloaded_bytes: 0,
+                    progress_percent: 0.0,
+                    speed_bps: 0,
+                    eta_seconds: None,
+                    status: DownloadStatus::Failed(format!("Failed to start: {}", e)),
+                    segments: Vec::new(),
+                    task_handle: None,
+                    num_segments: segments,
+                    is_resuming: false,
+                    cookies: cookies.clone(),
+                    referrer: referrer.clone(),
+                    user_agent: user_agent.clone(),
+                };
+                let mut list = tasks_arc.lock().await;
+                list.push(ui_entry);
             }
         }
     });
@@ -4136,6 +4219,13 @@ async fn run_extension_server(
                             let user_agent_str = val.get("user_agent").and_then(|ua| ua.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                             let referrer_str = val.get("referrer").and_then(|r| r.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
                             let url_str = url.to_string();
+
+                            if url_str.starts_with("blob:") {
+                                eprintln!("[Rapid] Extension sent unresolvable blob: URL. Rejecting with HTTP 400.");
+                                let err_resp = b"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{\"status\":\"error\",\"message\":\"blob_urls_not_supported\"}";
+                                let _ = socket.write_all(err_resp).await;
+                                return;
+                            }
 
                             let is_gdrive = val.get("is_gdrive").and_then(|g| g.as_bool()).unwrap_or(false)
                                 || url_str.contains("drive.google.com")

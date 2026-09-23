@@ -1,4 +1,4 @@
-// Rapid Download Manager - Content Script
+﻿// Rapid Download Manager - Content Script
 // Link Click Interception, In-Page Floating Media Sniffer, and Page Scanner
 
 const DOWNLOAD_EXTENSIONS = new Set([
@@ -64,8 +64,8 @@ const hookedMedia = new WeakSet();
 
 function getMediaSource(el) {
   if (!el) return "";
-  if (el.currentSrc && !el.currentSrc.startsWith("blob:")) return el.currentSrc;
-  if (el.src && !el.src.startsWith("blob:")) return el.src;
+  if (el.currentSrc && !el.currentSrc.startsWith("blob:") && el.currentSrc.startsWith("http")) return el.currentSrc;
+  if (el.src && !el.src.startsWith("blob:") && el.src.startsWith("http")) return el.src;
 
   let sources = el.querySelectorAll("source");
   for (let s of sources) {
@@ -75,26 +75,56 @@ function getMediaSource(el) {
     }
   }
 
-  // Fallback to blob if that is all that is exposed
-  return el.currentSrc || el.src || "";
+  // Do NOT return blob: directly, as external clients cannot download RAM blobs
+  return "";
+}
+
+function sanitizeTitleString(str) {
+  if (!str) return "";
+  // Strip YouTube notification count e.g. "(40) "
+  let cleaned = str.replace(/^\(\d+\)\s*/, "");
+  // Strip trailing platform branding e.g. " - YouTube"
+  cleaned = cleaned.replace(/\s*-\s*YouTube$/i, "");
+  // Strip characters forbidden in filenames: < > : " / \ | ? *
+  cleaned = cleaned.replace(/[<>:"/\\|?*]/g, "_").trim();
+  // Collapse whitespace
+  cleaned = cleaned.replace(/\s+/g, " ");
+  return cleaned;
 }
 
 function resolveMediaTitle(el, type) {
+  // Special handling for YouTube
+  if (window.location.hostname.includes("youtube.com")) {
+    const ytSelectors = [
+      "h1.ytd-watch-metadata yt-formatted-string",
+      "#title h1 yt-formatted-string",
+      "h1.title yt-formatted-string",
+      "h1.title",
+      "#video-title"
+    ];
+    for (let sel of ytSelectors) {
+      let node = document.querySelector(sel);
+      if (node && node.textContent && node.textContent.trim()) {
+        return sanitizeTitleString(node.textContent.trim());
+      }
+    }
+  }
+
   let title = (el.getAttribute("title") || el.getAttribute("aria-label") || "").trim();
-  if (title) return title;
+  if (title) return sanitizeTitleString(title);
 
   // Check parent figure or container
   let container = el.closest("figure, article, [data-video-id], .video-js, .player");
   if (container) {
     let heading = container.querySelector("h1, h2, h3, h4, .title, .caption");
     if (heading && heading.textContent.trim()) {
-      return heading.textContent.trim();
+      return sanitizeTitleString(heading.textContent.trim());
     }
   }
 
   // Fallback to document title
   let docTitle = document.title.trim();
-  if (docTitle) return docTitle;
+  if (docTitle) return sanitizeTitleString(docTitle);
 
   return (type === "audio" ? "Audio" : "Video") + "_" + Date.now();
 }
@@ -170,6 +200,10 @@ function attachFloatingWidget(mediaEl, type) {
     .dl-btn.success {
       background: linear-gradient(135deg, #10B981 0%, #059669 100%);
       box-shadow: 0 2px 10px rgba(16, 185, 129, 0.5);
+    }
+    .dl-btn.sniffing {
+      background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+      box-shadow: 0 2px 10px rgba(245, 158, 11, 0.5);
     }
     .icon {
       font-size: 13px;
@@ -310,21 +344,70 @@ function attachFloatingWidget(mediaEl, type) {
     widget.classList.remove("active");
   });
 
+  // Helper to query sniffed stream from background service worker
+  async function querySniffedStream() {
+    try {
+      let resp = await new Promise((res) => {
+        chrome.runtime.sendMessage({ type: "RAPID_GET_TAB_STREAM" }, res);
+      });
+      if (resp && resp.data) {
+        if (type === "audio" && resp.data.audio) {
+          return resp.data.audio.url;
+        } else if (resp.data.video) {
+          return resp.data.video.url;
+        } else if (resp.data.m3u8) {
+          return resp.data.m3u8.url;
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   // Click to Download via Rapid Download Manager
-  dlButton.addEventListener("click", (e) => {
+  dlButton.addEventListener("click", async (e) => {
     e.stopPropagation();
     e.preventDefault();
 
     let mediaSrc = getMediaSource(mediaEl);
-    if (!mediaSrc) {
-      alert("Unable to capture direct stream URL. Try playing the video first.");
-      return;
-    }
-
     let title = resolveMediaTitle(mediaEl, type);
     let ext = type === "audio" ? "mp3" : "mp4";
     if (!title.toLowerCase().endsWith("." + ext)) {
       title += "." + ext;
+    }
+
+    // If media source is not direct (e.g. YouTube MediaSource blob)
+    if (!mediaSrc) {
+      btnText.textContent = "Sniffing stream...";
+      dlButton.classList.add("sniffing");
+
+      // 1. Check if background sniffer has already captured stream
+      let captured = await querySniffedStream();
+
+      // 2. If not yet captured and video is paused, trigger play briefly to initiate stream request
+      if (!captured && mediaEl.paused) {
+        try {
+          await mediaEl.play();
+        } catch (err) {}
+        await new Promise((r) => setTimeout(r, 700));
+        captured = await querySniffedStream();
+      } else if (!captured) {
+        await new Promise((r) => setTimeout(r, 600));
+        captured = await querySniffedStream();
+      }
+
+      dlButton.classList.remove("sniffing");
+
+      if (captured) {
+        mediaSrc = captured;
+      }
+    }
+
+    if (!mediaSrc) {
+      btnText.textContent = "Play video 1s to capture!";
+      setTimeout(() => {
+        btnText.textContent = type === "audio" ? "Download Audio" : "Download Video";
+      }, 2500);
+      return;
     }
 
     btnText.textContent = "Sending to Rapid...";
@@ -336,8 +419,12 @@ function attachFloatingWidget(mediaEl, type) {
       filename: title,
       referrer: window.location.href,
       mediaType: type
-    }, () => {
-      btnText.textContent = "✓ Sent to Rapid!";
+    }, (resp) => {
+      if (resp && resp.success) {
+        btnText.textContent = "✓ Sent to Rapid!";
+      } else {
+        btnText.textContent = "Play video 1s to capture!";
+      }
       setTimeout(() => {
         btnText.textContent = type === "audio" ? "Download Audio" : "Download Video";
         dlButton.classList.remove("success");
@@ -377,107 +464,129 @@ observer.observe(document.documentElement, { childList: true, subtree: true });
 // ---------------------------------------------------------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "RAPID_SCAN_PAGE_MEDIA") {
-    let collected = {
-      videos: [],
-      audio: [],
-      images: [],
-      files: []
-    };
+    (async () => {
+      let collected = {
+        videos: [],
+        audio: [],
+        images: [],
+        files: []
+      };
 
-    const seenUrls = new Set();
+      const seenUrls = new Set();
 
-    // 1. Gather Videos
-    document.querySelectorAll("video").forEach(v => {
-      let src = getMediaSource(v);
-      if (src && !seenUrls.has(src)) {
-        seenUrls.add(src);
-        let title = resolveMediaTitle(v, "video");
-        collected.videos.push({
-          url: src,
-          title: title,
-          type: "video",
-          poster: v.poster || ""
+      // Query any sniffed streams from background worker for MSE players
+      let sniffedData = null;
+      try {
+        let resp = await new Promise((res) => {
+          chrome.runtime.sendMessage({ type: "RAPID_GET_TAB_STREAM" }, res);
         });
-      }
-    });
+        if (resp && resp.data) {
+          sniffedData = resp.data;
+        }
+      } catch (e) {}
 
-    // 2. Gather Audio
-    document.querySelectorAll("audio").forEach(a => {
-      let src = getMediaSource(a);
-      if (src && !seenUrls.has(src)) {
-        seenUrls.add(src);
-        let title = resolveMediaTitle(a, "audio");
-        collected.audio.push({
-          url: src,
-          title: title,
-          type: "audio"
-        });
-      }
-    });
+      // 1. Gather Videos
+      document.querySelectorAll("video").forEach(v => {
+        let src = getMediaSource(v);
+        if (!src && sniffedData && sniffedData.video) {
+          src = sniffedData.video.url;
+        } else if (!src && sniffedData && sniffedData.m3u8) {
+          src = sniffedData.m3u8.url;
+        }
 
-    // 3. Gather Large Images
-    document.querySelectorAll("img").forEach(img => {
-      let src = img.currentSrc || img.src || img.getAttribute("data-src") || "";
-      if (!src || src.startsWith("data:") || seenUrls.has(src)) return;
+        if (src && !seenUrls.has(src)) {
+          seenUrls.add(src);
+          let title = resolveMediaTitle(v, "video");
+          collected.videos.push({
+            url: src,
+            title: title,
+            type: "video",
+            poster: v.poster || ""
+          });
+        }
+      });
 
-      let w = img.naturalWidth || img.width || 0;
-      let h = img.naturalHeight || img.height || 0;
+      // 2. Gather Audio
+      document.querySelectorAll("audio").forEach(a => {
+        let src = getMediaSource(a);
+        if (!src && sniffedData && sniffedData.audio) {
+          src = sniffedData.audio.url;
+        }
+        if (src && !seenUrls.has(src)) {
+          seenUrls.add(src);
+          let title = resolveMediaTitle(a, "audio");
+          collected.audio.push({
+            url: src,
+            title: title,
+            type: "audio"
+          });
+        }
+      });
 
-      if ((w >= 60 && h >= 60) || isImageExtension(src)) {
-        seenUrls.add(src);
-        let alt = (img.alt || img.title || "").trim();
-        let fn = alt || extractFilenameFromUrl(src) || "image.jpg";
-        collected.images.push({
-          url: src,
-          title: fn,
-          type: "image",
-          thumbnail: src,
-          width: w,
-          height: h
-        });
-      }
-    });
+      // 3. Gather Large Images
+      document.querySelectorAll("img").forEach(img => {
+        let src = img.currentSrc || img.src || img.getAttribute("data-src") || "";
+        if (!src || src.startsWith("data:") || seenUrls.has(src)) return;
 
-    // 4. Gather Downloadable Links / Documents
-    document.querySelectorAll("a[href]").forEach(a => {
-      let href = a.href;
-      if (!href || !href.startsWith("http") || seenUrls.has(href)) return;
+        let w = img.naturalWidth || img.width || 0;
+        let h = img.naturalHeight || img.height || 0;
 
-      let ext = (href.split("?")[0].split("#")[0].split(".").pop() || "").toLowerCase();
-      if (VIDEO_EXTENSIONS.has(ext)) {
-        seenUrls.add(href);
-        collected.videos.push({
-          url: href,
-          title: a.textContent.trim() || extractFilenameFromUrl(href),
-          type: "video"
-        });
-      } else if (AUDIO_EXTENSIONS.has(ext)) {
-        seenUrls.add(href);
-        collected.audio.push({
-          url: href,
-          title: a.textContent.trim() || extractFilenameFromUrl(href),
-          type: "audio"
-        });
-      } else if (IMAGE_EXTENSIONS.has(ext)) {
-        seenUrls.add(href);
-        collected.images.push({
-          url: href,
-          title: a.textContent.trim() || extractFilenameFromUrl(href),
-          type: "image",
-          thumbnail: href
-        });
-      } else if (DOC_EXTENSIONS.has(ext) || a.hasAttribute("download")) {
-        seenUrls.add(href);
-        collected.files.push({
-          url: href,
-          title: a.getAttribute("download") || a.textContent.trim() || extractFilenameFromUrl(href),
-          type: "file",
-          ext: ext
-        });
-      }
-    });
+        if ((w >= 60 && h >= 60) || isImageExtension(src)) {
+          seenUrls.add(src);
+          let alt = (img.alt || img.title || "").trim();
+          let fn = alt || extractFilenameFromUrl(src) || "image.jpg";
+          collected.images.push({
+            url: src,
+            title: fn,
+            type: "image",
+            thumbnail: src,
+            width: w,
+            height: h
+          });
+        }
+      });
 
-    sendResponse({ status: "ok", data: collected });
+      // 4. Gather Downloadable Links / Documents
+      document.querySelectorAll("a[href]").forEach(a => {
+        let href = a.href;
+        if (!href || !href.startsWith("http") || seenUrls.has(href)) return;
+
+        let ext = (href.split("?")[0].split("#")[0].split(".").pop() || "").toLowerCase();
+        if (VIDEO_EXTENSIONS.has(ext)) {
+          seenUrls.add(href);
+          collected.videos.push({
+            url: href,
+            title: a.textContent.trim() || extractFilenameFromUrl(href),
+            type: "video"
+          });
+        } else if (AUDIO_EXTENSIONS.has(ext)) {
+          seenUrls.add(href);
+          collected.audio.push({
+            url: href,
+            title: a.textContent.trim() || extractFilenameFromUrl(href),
+            type: "audio"
+          });
+        } else if (IMAGE_EXTENSIONS.has(ext)) {
+          seenUrls.add(href);
+          collected.images.push({
+            url: href,
+            title: a.textContent.trim() || extractFilenameFromUrl(href),
+            type: "image",
+            thumbnail: href
+          });
+        } else if (DOC_EXTENSIONS.has(ext) || a.hasAttribute("download")) {
+          seenUrls.add(href);
+          collected.files.push({
+            url: href,
+            title: a.getAttribute("download") || a.textContent.trim() || extractFilenameFromUrl(href),
+            type: "file",
+            ext: ext
+          });
+        }
+      });
+
+      sendResponse({ status: "ok", data: collected });
+    })();
     return true;
   }
 });

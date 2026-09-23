@@ -16,6 +16,12 @@ impl Probe {
     }
 
     pub async fn inspect(client: &Client, url_str: &str) -> Result<DownloadMetadata> {
+        if url_str.starts_with("blob:") {
+            return Err(RapidError::InvalidUrl(
+                "Browser Blob URLs ('blob:...') cannot be downloaded directly. Please play 1-2 seconds of the video in your browser so Rapid's extension can capture the direct stream URL.".to_string(),
+            ));
+        }
+
         let parsed_url = Url::parse(url_str)
             .map_err(|e| RapidError::InvalidUrl(format!("{}: {}", url_str, e)))?;
 
@@ -125,6 +131,19 @@ impl Probe {
             .get("last-modified")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
+
+        if content_length.is_none() {
+            if let Some(query) = parsed_url.query() {
+                for pair in query.split('&') {
+                    if let Some(val) = pair.strip_prefix("clen=") {
+                        if let Ok(cl) = val.parse::<u64>() {
+                            content_length = Some(cl);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(DownloadMetadata {
             url: final_url,
