@@ -46,6 +46,7 @@ function isGoogleDriveUrl(urlStr) {
            u.hostname.includes("googleusercontent.com") || 
            u.hostname.includes("usercontent.google.com") ||
            u.hostname.includes("docs.google.com") ||
+           u.hostname.includes("takeout-download-drive") ||
            u.hostname.includes("google.com");
   } catch (e) {
     return false;
@@ -99,22 +100,30 @@ async function extractCookiesForUrl(targetUrl, isGoogle) {
 async function sendToRapidApp(payload) {
   for (const endpoint of [PRIMARY_SERVER, FALLBACK_SERVER]) {
     try {
+      console.log(`[Rapid] Dispatching to ${endpoint}:`, payload.url);
+      let controller = new AbortController();
+      let timeoutId = setTimeout(() => controller.abort(), 3000);
       let resp = await fetch(endpoint, {
         method: "POST",
+        mode: "cors",
         headers: { 
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       if (resp.ok) {
         let data = await resp.json().catch(() => ({}));
         if (data.status === "ok" || resp.status === 200) {
           console.log("[Rapid] Successfully dispatched download:", payload.url);
           return true;
         }
+      } else {
+        console.warn(`[Rapid] Server returned status ${resp.status} for ${endpoint}`);
       }
     } catch (err) {
-      console.warn(`[Rapid] Connection to ${endpoint} failed:`, err.message);
+      console.warn(`[Rapid] Connection to ${endpoint} failed:`, err);
     }
   }
   return false;
@@ -132,37 +141,70 @@ function showNotification(title, message) {
   } catch (e) {}
 }
 
-// 2. Intercept browser native downloads (IDM style)
-// We use onDeterminingFilename so that final Content-Disposition filenames and Google Drive dynamic zips are fully resolved
+// 1. Message listener from content script (Direct link click interceptor)
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "RAPID_INTERCEPT_LINK") {
+    (async () => {
+      let isGoogle = isGoogleDriveUrl(msg.url);
+      let cookies = await extractCookiesForUrl(msg.url, isGoogle);
+      let success = await sendToRapidApp({
+        url: msg.url,
+        referrer: msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : ""),
+        filename: msg.filename || "",
+        cookies: cookies,
+        user_agent: navigator.userAgent,
+        is_gdrive: isGoogle
+      });
+      if (success) {
+        showNotification("⚡ Rapid Download Manager", `Accelerating: ${msg.filename || "Link"}`);
+      } else {
+        // App is offline, fallback to browser native download
+        chrome.downloads.download({ url: msg.url }).catch(() => {});
+      }
+    })();
+    return true;
+  }
+});
+
+// 2. Intercept browser native downloads (IDM style - onDeterminingFilename)
+// NOTE: We deliberately do NOT listen to onCreated because onCreated runs before filename
+// determination and causes race conditions with Chrome's native Save dialog.
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-  // Pass-through blob:, data:, chrome://, or extensions
-  if (!downloadItem.url || 
-      downloadItem.url.startsWith("blob:") || 
-      downloadItem.url.startsWith("data:") || 
-      downloadItem.url.startsWith("chrome://") ||
-      downloadItem.url.startsWith("chrome-extension://")) {
+  let targetUrl = downloadItem.finalUrl || downloadItem.url;
+
+  // Ignore internal/browser URLs
+  if (!targetUrl || 
+      targetUrl.startsWith("blob:") || 
+      targetUrl.startsWith("data:") || 
+      targetUrl.startsWith("chrome://") ||
+      targetUrl.startsWith("chrome-extension://")) {
     suggest();
     return false;
   }
 
-  // If already processed, let it proceed
+  // Prevent duplicate execution for the same download ID
   if (processedDownloadIds.has(downloadItem.id)) {
-    suggest();
+    suggest({ filename: downloadItem.filename || "download", conflictAction: "uniquify" });
     return false;
   }
+  processedDownloadIds.add(downloadItem.id);
 
-  // Handle asynchronously
+  // Keep set bounded to prevent memory growth
+  if (processedDownloadIds.size > 200) {
+    const first = processedDownloadIds.values().next().value;
+    processedDownloadIds.delete(first);
+  }
+
+  // Return true to tell Chrome to wait for suggest() asynchronously
   (async () => {
     try {
-      processedDownloadIds.add(downloadItem.id);
-
-      let isGoogle = isGoogleDriveUrl(downloadItem.url);
-      let cookies = await extractCookiesForUrl(downloadItem.url, isGoogle);
+      let isGoogle = isGoogleDriveUrl(targetUrl);
+      let cookies = await extractCookiesForUrl(targetUrl, isGoogle);
       let ref = downloadItem.referrer || (isGoogle ? "https://drive.google.com/" : "");
       let resolvedFilename = downloadItem.filename || "";
 
       let success = await sendToRapidApp({
-        url: downloadItem.url,
+        url: targetUrl,
         referrer: ref,
         filename: resolvedFilename,
         cookies: cookies,
@@ -171,22 +213,23 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       });
 
       if (success) {
-        // Cancel browser download only because Rapid successfully accepted it
-        chrome.downloads.cancel(downloadItem.id, () => {
-          chrome.downloads.erase({ id: downloadItem.id });
-        });
+        // Complete suggest first to satisfy Chrome API event lifecycle, then cancel native download
+        suggest({ filename: resolvedFilename || "download", conflictAction: "uniquify" });
+        try {
+          await chrome.downloads.cancel(downloadItem.id);
+          await chrome.downloads.erase({ id: downloadItem.id });
+        } catch (e) {}
+
         showNotification("⚡ Rapid Download Manager", `Accelerating: ${resolvedFilename || "File"}`);
       } else {
-        // Rapid app is not running; allow Chrome to download the file natively!
-        console.warn("[Rapid] Desktop app offline. Allowing browser native download.");
-        suggest();
+        // Desktop app not running, let Chrome download natively
+        suggest({ filename: resolvedFilename || downloadItem.filename || "download", conflictAction: "uniquify" });
       }
     } catch (err) {
-      console.error("[Rapid] Interception error:", err);
+      console.warn("[Rapid] Interception error:", err);
       suggest();
     }
   })();
 
-  // Returning true informs Chrome that suggest() might be called asynchronously if not cancelled
   return true;
 });
