@@ -375,6 +375,28 @@ function attachFloatingWidget(mediaEl, type) {
       title += "." + ext;
     }
 
+    let isYouTube = window.location.hostname.includes("youtube.com") || window.location.hostname.includes("youtu.be");
+    if (isYouTube) {
+      chrome.runtime.sendMessage({
+        type: "RAPID_INTERCEPT_MEDIA",
+        url: window.location.href,
+        referrer: window.location.href,
+        filename: title,
+        mediaType: type,
+        is_youtube: true
+      }, (res) => {
+        if (res && res.success) {
+          btnText.textContent = "Dispatched!";
+          dlButton.classList.add("success");
+          setTimeout(() => {
+            btnText.textContent = type === "audio" ? "Download Audio" : "Download Video";
+            dlButton.classList.remove("success");
+          }, 2000);
+        }
+      });
+      return;
+    }
+
     // If media source is not direct (e.g. YouTube MediaSource blob)
     if (!mediaSrc) {
       btnText.textContent = "Sniffing stream...";

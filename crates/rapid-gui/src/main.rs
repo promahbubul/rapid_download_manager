@@ -660,6 +660,12 @@ impl RapidApp {
                     } else {
                         None
                     }
+                } else if rapid_core::youtube::YoutubeResolver::is_youtube(&url_clone) {
+                    let canonical = rapid_core::youtube::YoutubeResolver::canonicalize_url(&url_clone, None);
+                    rapid_core::youtube::YoutubeResolver::resolve_metadata(&canonical)
+                        .await
+                        .ok()
+                        .map(|m| m.clean_filename)
                 } else {
                     rapid_core::Probe::inspect(&client, &url_clone)
                         .await
@@ -3904,6 +3910,107 @@ fn spawn_download_task(
         return;
     }
 
+    let is_yt = rapid_core::youtube::YoutubeDownloader::is_youtube(&url)
+        || referrer.as_deref().map(|r| rapid_core::youtube::YoutubeDownloader::is_youtube(r)).unwrap_or(false);
+
+    if is_yt {
+        let speed_limit_for_yt = speed_limit.clone();
+        let canonical_url = rapid_core::youtube::YoutubeResolver::canonicalize_url(&url, referrer.as_deref());
+        rt.spawn(async move {
+            let (resolved_fn, resolved_url) = if let Some(ref cf) = custom_filename {
+                let name = if cf.to_lowercase().ends_with(".mp4") {
+                    cf.clone()
+                } else {
+                    format!("{}.mp4", cf)
+                };
+                (name, canonical_url)
+            } else {
+                match rapid_core::youtube::YoutubeResolver::resolve_metadata(&canonical_url).await {
+                    Ok(meta) => (meta.clean_filename, canonical_url),
+                    Err(_) => ("YouTube_Video.mp4".to_string(), canonical_url),
+                }
+            };
+
+            let target_file = dest_dir.join(&resolved_fn);
+            let cancel_token = tokio_util::sync::CancellationToken::new();
+            let (progress_tx, mut rx) = tokio::sync::broadcast::channel::<rapid_core::DownloadProgress>(100);
+
+            let downloader = rapid_core::youtube::YoutubeDownloader::new(
+                task_id.clone(),
+                resolved_url.clone(),
+                resolved_fn.clone(),
+                target_file.clone(),
+                speed_limit_for_yt,
+                cancel_token,
+            );
+
+            let ui_entry = ActiveTaskUI {
+                id: task_id.clone(),
+                filename: resolved_fn.clone(),
+                url: resolved_url.clone(),
+                target_file: target_file.clone(),
+                total_bytes: None,
+                downloaded_bytes: 0,
+                progress_percent: 0.0,
+                speed_bps: 0,
+                eta_seconds: None,
+                status: DownloadStatus::Downloading,
+                segments: Vec::new(),
+                task_handle: None,
+                num_segments: 8,
+                is_resuming: false,
+                cookies: cookies.clone(),
+                referrer: referrer.clone(),
+                user_agent: user_agent.clone(),
+            };
+
+            {
+                let mut list = tasks_arc.lock().await;
+                list.push(ui_entry);
+            }
+
+            let tasks_for_progress = Arc::clone(&tasks_arc);
+            let task_id_for_progress = task_id.clone();
+
+            tokio::spawn(async move {
+                while let Ok(prog) = rx.recv().await {
+                    let mut list = tasks_for_progress.lock().await;
+                    if let Some(item) = list.iter_mut().find(|t| t.id == task_id_for_progress) {
+                        item.downloaded_bytes = prog.downloaded_bytes;
+                        item.progress_percent = prog.progress_percent;
+                        item.speed_bps = prog.speed_bps;
+                        item.eta_seconds = prog.eta_seconds;
+                        item.status = prog.status.clone();
+                        item.segments = prog.segments;
+                        if let Some(tot) = prog.total_bytes {
+                            item.total_bytes = Some(tot);
+                        }
+                    }
+                }
+            });
+
+            let res = downloader.run(progress_tx).await;
+            let mut list = tasks_arc.lock().await;
+            if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
+                match res {
+                    Ok(_) => {
+                        item.status = DownloadStatus::Completed;
+                        item.progress_percent = 100.0;
+                        item.speed_bps = 0;
+                        item.eta_seconds = None;
+                        save_task_to_history(item);
+                    }
+                    Err(e) => {
+                        item.status = DownloadStatus::Failed(e.to_string());
+                        item.speed_bps = 0;
+                        item.eta_seconds = None;
+                    }
+                }
+            }
+        });
+        return;
+    }
+
     rt.spawn(async move {
         let gdrive = is_gdrive
             || url.contains("drive.google.com")
@@ -4234,6 +4341,16 @@ async fn run_extension_server(
                                 || url_str.contains("docs.google.com")
                                 || url_str.contains("takeout-download-drive");
 
+                            let is_youtube = val.get("is_youtube").and_then(|y| y.as_bool()).unwrap_or(false)
+                                || rapid_core::youtube::YoutubeResolver::is_youtube(&url_str)
+                                || referrer_str.as_deref().map(|r| rapid_core::youtube::YoutubeResolver::is_youtube(r)).unwrap_or(false);
+
+                            let url_str = if is_youtube {
+                                rapid_core::youtube::YoutubeResolver::canonicalize_url(&url_str, referrer_str.as_deref())
+                            } else {
+                                url_str
+                            };
+
                             let segments_count = if is_gdrive { 1 } else { 8 };
 
                             let display_filename = if let Some(ref f) = custom_fn {
@@ -4310,6 +4427,11 @@ async fn run_extension_server(
                                             } else {
                                                 None
                                             }
+                                        } else if rapid_core::youtube::YoutubeResolver::is_youtube(&u_p) {
+                                            rapid_core::youtube::YoutubeResolver::resolve_metadata(&u_p)
+                                                .await
+                                                .ok()
+                                                .map(|m| m.clean_filename)
                                         } else {
                                             rapid_core::Probe::inspect(&client, &u_p)
                                                 .await

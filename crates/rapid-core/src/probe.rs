@@ -22,6 +22,20 @@ impl Probe {
             ));
         }
 
+        if crate::youtube::YoutubeResolver::is_youtube(url_str) {
+            let canonical = crate::youtube::YoutubeResolver::canonicalize_url(url_str, None);
+            if let Ok(meta) = crate::youtube::YoutubeResolver::resolve_metadata(&canonical).await {
+                return Ok(DownloadMetadata {
+                    url: canonical,
+                    filename: meta.clean_filename,
+                    content_length: None,
+                    accept_ranges: true,
+                    etag: None,
+                    last_modified: None,
+                });
+            }
+        }
+
         let parsed_url = Url::parse(url_str)
             .map_err(|e| RapidError::InvalidUrl(format!("{}: {}", url_str, e)))?;
 

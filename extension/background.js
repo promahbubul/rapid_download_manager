@@ -287,6 +287,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       let targetUrl = msg.url || "";
       let tabId = sender.tab ? sender.tab.id : null;
       let tabStreams = tabId ? tabMediaStreams.get(tabId) : null;
+      let pageUrl = (sender.tab && sender.tab.url) ? sender.tab.url : (msg.referrer || "");
+      let isYT = msg.is_youtube || pageUrl.includes("youtube.com") || pageUrl.includes("youtu.be") || targetUrl.includes("googlevideo.com");
+
+      if (isYT) {
+        let ytUrl = (pageUrl.includes("youtube.com") || pageUrl.includes("youtu.be")) ? pageUrl : targetUrl;
+        let cookies = await extractCookiesForUrl(ytUrl, false, pageUrl);
+        let fn = msg.filename || (sender.tab && sender.tab.title ? sender.tab.title.replace(/\s*-\s*YouTube$/i, "") : "") || "YouTube_Video.mp4";
+        let success = await sendToRapidApp({
+          url: ytUrl,
+          referrer: pageUrl,
+          filename: fn,
+          cookies: cookies,
+          user_agent: navigator.userAgent,
+          is_youtube: true
+        });
+        if (success) {
+          showNotification("Rapid YouTube Download", `Captured: ${fn}`);
+          sendResponse({ success: true });
+        } else {
+          showNotification("Rapid Download Manager Offline", "Please start rapid-gui.exe to accelerate this video.");
+          sendResponse({ success: false });
+        }
+        return;
+      }
 
       // If incoming URL is a blob or missing, resolve from sniffed tab streams
       if (!targetUrl || targetUrl.startsWith("blob:") || msg.is_blob) {
