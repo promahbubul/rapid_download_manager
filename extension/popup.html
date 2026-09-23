@@ -3,89 +3,330 @@
 <head>
   <meta charset="utf-8">
   <style>
-    body {
-      width: 290px;
+    * {
+      box-sizing: border-box;
       margin: 0;
-      padding: 16px;
+      padding: 0;
+    }
+    body {
+      width: 380px;
+      max-height: 580px;
+      overflow-y: auto;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: #0B0E14;
       color: #F0F4F8;
+      font-size: 13px;
     }
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0B0E14;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #232A38;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #00D2FF;
+    }
+
+    /* Header */
     .header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #0E121B;
+      padding: 12px 16px;
+      border-bottom: 1px solid #1E2638;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 12px;
-      border-bottom: 1px solid #232A38;
-      padding-bottom: 8px;
     }
-    .title {
-      font-size: 15px;
-      font-weight: bold;
-      color: #00D2FF;
+    .brand-icon {
+      font-size: 18px;
+      filter: drop-shadow(0 0 6px rgba(0, 210, 255, 0.6));
     }
-    .status-card {
-      background: #151922;
-      border: 1px solid #232A38;
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 12px;
+    .brand-name {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      background: linear-gradient(135deg, #00D2FF 0%, #0077FE 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
-    .status-header {
+    .status-badge {
       display: flex;
       align-items: center;
-      font-size: 13px;
+      gap: 6px;
+      font-size: 11px;
       font-weight: 600;
-      margin-bottom: 6px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: #151922;
+      border: 1px solid #232A38;
     }
     .status-dot {
-      display: inline-block;
-      width: 9px;
-      height: 9px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      background: #8A99AD;
-      margin-right: 8px;
-      transition: background 0.3s;
+      background: #E74C3C;
     }
     .status-dot.online {
       background: #2ECC71;
-      box-shadow: 0 0 8px rgba(46, 204, 113, 0.6);
+      box-shadow: 0 0 8px rgba(46, 204, 113, 0.7);
     }
-    .status-dot.offline {
-      background: #E74C3C;
-      box-shadow: 0 0 8px rgba(231, 76, 60, 0.6);
+
+    /* Main Container */
+    .content {
+      padding: 12px 16px;
     }
-    .info {
+
+    /* Filter Tabs */
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .tab-btn {
+      background: #151922;
+      border: 1px solid #232A38;
+      color: #8A99AD;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover {
+      color: #F0F4F8;
+      border-color: #38455B;
+    }
+    .tab-btn.active {
+      background: rgba(0, 210, 255, 0.12);
+      border-color: #00D2FF;
+      color: #00D2FF;
+    }
+
+    /* Action Bar */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #1E2638;
+    }
+    .select-all-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
       font-size: 12px;
       color: #8A99AD;
-      line-height: 1.4;
+      cursor: pointer;
     }
-    .badge {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 10px;
-      font-weight: bold;
+    .download-batch-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: linear-gradient(135deg, #00D2FF 0%, #0077FE 100%);
+      color: #FFFFFF;
+      font-size: 11.5px;
+      font-weight: 700;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: 0 2px 10px rgba(0, 210, 255, 0.35);
+      transition: all 0.15s ease;
+    }
+    .download-batch-btn:hover {
+      filter: brightness(1.1);
+      transform: translateY(-1px);
+    }
+    .download-batch-btn:disabled {
       background: #232A38;
+      color: #617085;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    /* Media List */
+    .media-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .media-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #131722;
+      border: 1px solid #1E2638;
+      border-radius: 8px;
+      padding: 8px 10px;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .media-card:hover {
+      border-color: #2F3B52;
+      background: #171C28;
+    }
+    .media-thumb {
+      width: 42px;
+      height: 42px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: #0B0E14;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+      border: 1px solid #232A38;
+    }
+    .media-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .media-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #F0F4F8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 3px;
+    }
+    .media-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10.5px;
+      color: #8A99AD;
+    }
+    .badge-ext {
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(0, 210, 255, 0.1);
       color: #00D2FF;
-      margin-top: 6px;
+      font-weight: 700;
+      font-size: 9px;
+      text-transform: uppercase;
+    }
+    .item-dl-btn {
+      background: transparent;
+      border: 1px solid #232A38;
+      color: #00D2FF;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .item-dl-btn:hover {
+      background: #00D2FF;
+      color: #0B0E14;
+      border-color: #00D2FF;
+      box-shadow: 0 0 8px rgba(0, 210, 255, 0.5);
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 32px 16px;
+      color: #8A99AD;
+    }
+    .empty-icon {
+      font-size: 36px;
+      margin-bottom: 8px;
+      opacity: 0.6;
+    }
+    .empty-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #CBD5E1;
+      margin-bottom: 4px;
+    }
+    .empty-desc {
+      font-size: 11.5px;
+      line-height: 1.4;
+      margin-bottom: 12px;
+    }
+    .rescan-btn {
+      background: #151922;
+      border: 1px solid #232A38;
+      color: #00D2FF;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .rescan-btn:hover {
+      border-color: #00D2FF;
+      background: rgba(0, 210, 255, 0.08);
     }
   </style>
 </head>
 <body>
   <div class="header">
-    <span style="font-size: 20px;">⚡</span>
-    <span class="title">Rapid Download Manager</span>
-  </div>
-  <div class="status-card">
-    <div class="status-header">
+    <div class="brand">
+      <span class="brand-icon">⚡</span>
+      <span class="brand-name">Rapid Downloader</span>
+    </div>
+    <div class="status-badge" id="status-badge">
       <span class="status-dot" id="status-dot"></span>
-      <span id="status-text">Checking Connection...</span>
+      <span id="status-text">Engine Offline</span>
     </div>
-    <div class="info" id="status-desc">
-      Connecting to local Rapid Download Manager engine on port 9669...
+  </div>
+
+  <div class="content">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="all">All (<span id="count-all">0</span>)</button>
+      <button class="tab-btn" data-tab="videos">🎥 Videos (<span id="count-videos">0</span>)</button>
+      <button class="tab-btn" data-tab="audio">🎵 Audio (<span id="count-audio">0</span>)</button>
+      <button class="tab-btn" data-tab="images">🖼 Images (<span id="count-images">0</span>)</button>
+      <button class="tab-btn" data-tab="files">📁 Files (<span id="count-files">0</span>)</button>
     </div>
-    <div class="badge" id="port-badge">Port: 127.0.0.1:9669</div>
+
+    <div class="action-bar">
+      <label class="select-all-label">
+        <input type="checkbox" id="select-all" checked>
+        <span>Select All</span>
+      </label>
+      <button class="download-batch-btn" id="download-selected-btn" disabled>
+        <span>⚡ Download Selected</span>
+        <span id="selected-count-badge">(0)</span>
+      </button>
+    </div>
+
+    <div class="media-list" id="media-list">
+      <!-- Media Items dynamically populated -->
+    </div>
+
+    <div class="empty-state" id="empty-state" style="display: none;">
+      <div class="empty-icon">🔍</div>
+      <div class="empty-title">No Media Detected</div>
+      <div class="empty-desc">Play a video or click below to scan this page for downloadable media.</div>
+      <button class="rescan-btn" id="rescan-btn">🔄 Rescan Page</button>
+    </div>
   </div>
 
   <script src="popup.js"></script>

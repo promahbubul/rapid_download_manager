@@ -1,20 +1,35 @@
 // Rapid Download Manager — Background Service Worker
 const PRIMARY_SERVER = "http://127.0.0.1:9669/add_download";
 const FALLBACK_SERVER = "http://localhost:9669/add_download";
+const STATUS_SERVER = "http://127.0.0.1:9669/";
 
 // Prevent duplicate processing of the same download item
 const processedDownloadIds = new Set();
 
-// 1. Context Menu: Right click on any link, image, video, audio
+// 1. Context Menu Setup
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "rapid-download-link",
     title: "⚡ Download with Rapid Download Manager",
     contexts: ["link", "image", "video", "audio"]
   });
+
+  chrome.contextMenus.create({
+    id: "rapid-scan-page",
+    title: "🔍 Scan page with Rapid Media Scanner",
+    contexts: ["page"]
+  });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === "rapid-scan-page") {
+    // Open extension popup or prompt scan
+    if (tab && tab.id) {
+      chrome.action.openPopup().catch(() => {});
+    }
+    return;
+  }
+
   let targetUrl = info.linkUrl || info.srcUrl;
   if (!targetUrl) return;
 
@@ -34,7 +49,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (success) {
     showNotification("⚡ Rapid Download Manager", "Download dispatched to Rapid Download Manager!");
   } else {
-    showNotification("⚠ Rapid Download Manager Offline", "Please ensure rapid-gui.exe is open on your computer.");
+    showNotification("⚡ Rapid Download Manager Offline", "Please ensure rapid-gui.exe is open on your computer.");
   }
 });
 
@@ -113,7 +128,7 @@ async function sendToRapidApp(payload) {
     try {
       console.log(`[Rapid] Dispatching to ${endpoint}:`, payload.url);
       let controller = new AbortController();
-      let timeoutId = setTimeout(() => controller.abort(), 3000);
+      let timeoutId = setTimeout(() => controller.abort(), 3500);
       let resp = await fetch(endpoint, {
         method: "POST",
         mode: "cors",
@@ -152,16 +167,21 @@ function showNotification(title, message) {
   } catch (e) {}
 }
 
-// 1. Message listener from content script (Direct link click interceptor)
+// ---------------------------------------------------------
+// Message Router for Content Script and Popup
+// ---------------------------------------------------------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg && msg.type === "RAPID_INTERCEPT_LINK") {
+  if (!msg || !msg.type) return;
+
+  // 1. Direct link click interception
+  if (msg.type === "RAPID_INTERCEPT_LINK") {
     (async () => {
       let isGoogle = isGoogleDriveUrl(msg.url);
       let ref = msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : "");
       let cookies = await extractCookiesForUrl(msg.url, isGoogle, ref);
       let success = await sendToRapidApp({
         url: msg.url,
-        referrer: msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : ""),
+        referrer: ref,
         filename: msg.filename || "",
         cookies: cookies,
         user_agent: navigator.userAgent,
@@ -170,21 +190,97 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (success) {
         showNotification("⚡ Rapid Download Manager", `Accelerating: ${msg.filename || "Link"}`);
       } else {
-        // App is offline, fallback to browser native download
         chrome.downloads.download({ url: msg.url }).catch(() => {});
+      }
+    })();
+    return true;
+  }
+
+  // 2. In-Page Media Sniffer Interception
+  if (msg.type === "RAPID_INTERCEPT_MEDIA") {
+    (async () => {
+      let isGoogle = isGoogleDriveUrl(msg.url);
+      let ref = msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : "");
+      let cookies = await extractCookiesForUrl(msg.url, isGoogle, ref);
+      let success = await sendToRapidApp({
+        url: msg.url,
+        referrer: ref,
+        filename: msg.filename || "",
+        cookies: cookies,
+        user_agent: navigator.userAgent,
+        is_gdrive: isGoogle
+      });
+      if (success) {
+        showNotification("⚡ Rapid Media Capture", `Captured: ${msg.filename || "Media stream"}`);
+        sendResponse({ success: true });
+      } else {
+        showNotification("⚡ Rapid Download Manager Offline", "Please start rapid-gui.exe to accelerate this media.");
+        sendResponse({ success: false });
+      }
+    })();
+    return true;
+  }
+
+  // 3. Update Extension Action Badge Count
+  if (msg.type === "RAPID_UPDATE_MEDIA_COUNT") {
+    if (sender.tab && sender.tab.id) {
+      let count = msg.count || 0;
+      let badgeText = count > 0 ? String(count) : "";
+      chrome.action.setBadgeText({ text: badgeText, tabId: sender.tab.id }).catch(() => {});
+      chrome.action.setBadgeBackgroundColor({ color: "#00D2FF", tabId: sender.tab.id }).catch(() => {});
+    }
+    return true;
+  }
+
+  // 4. Batch Download from Extension Popup Scanner
+  if (msg.type === "RAPID_BATCH_DOWNLOAD") {
+    (async () => {
+      let items = msg.items || [];
+      let successCount = 0;
+      for (let item of items) {
+        let isGoogle = isGoogleDriveUrl(item.url);
+        let cookies = await extractCookiesForUrl(item.url, isGoogle, item.referrer || "");
+        let ok = await sendToRapidApp({
+          url: item.url,
+          referrer: item.referrer || "",
+          filename: item.title || item.filename || "",
+          cookies: cookies,
+          user_agent: navigator.userAgent,
+          is_gdrive: isGoogle
+        });
+        if (ok) successCount++;
+        // Small delay between queuing items
+        await new Promise(r => setTimeout(r, 120));
+      }
+      showNotification("⚡ Rapid Batch Downloader", `Dispatched ${successCount} items to Rapid Download Manager.`);
+      sendResponse({ success: true, count: successCount });
+    })();
+    return true;
+  }
+
+  // 5. Check desktop engine status
+  if (msg.type === "RAPID_CHECK_STATUS") {
+    (async () => {
+      try {
+        let controller = new AbortController();
+        let timeoutId = setTimeout(() => controller.abort(), 1500);
+        let resp = await fetch(STATUS_SERVER, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        sendResponse({ online: resp.ok });
+      } catch (e) {
+        sendResponse({ online: false });
       }
     })();
     return true;
   }
 });
 
-// 2. Intercept browser native downloads (IDM style - onDeterminingFilename)
-// NOTE: We deliberately do NOT listen to onCreated because onCreated runs before filename
-// determination and causes race conditions with Chrome's native Save dialog.
+// ---------------------------------------------------------
+// 3. Intercept browser native downloads (IDM style)
+// ---------------------------------------------------------
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   let targetUrl = downloadItem.finalUrl || downloadItem.url;
 
-  // Ignore internal/browser URLs
   if (!targetUrl || 
       targetUrl.startsWith("blob:") || 
       targetUrl.startsWith("data:") || 
@@ -194,20 +290,17 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     return false;
   }
 
-  // Prevent duplicate execution for the same download ID
   if (processedDownloadIds.has(downloadItem.id)) {
     suggest({ filename: downloadItem.filename || "download", conflictAction: "uniquify" });
     return false;
   }
   processedDownloadIds.add(downloadItem.id);
 
-  // Keep set bounded to prevent memory growth
   if (processedDownloadIds.size > 200) {
     const first = processedDownloadIds.values().next().value;
     processedDownloadIds.delete(first);
   }
 
-  // Return true to tell Chrome to wait for suggest() asynchronously
   (async () => {
     try {
       let isGoogle = isGoogleDriveUrl(targetUrl);
@@ -239,7 +332,6 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       });
 
       if (success) {
-        // Complete suggest first to satisfy Chrome API event lifecycle, then cancel native download
         suggest({ filename: resolvedFilename || "download", conflictAction: "uniquify" });
         try {
           await chrome.downloads.cancel(downloadItem.id);
@@ -248,7 +340,6 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
 
         showNotification("⚡ Rapid Download Manager", `Accelerating: ${resolvedFilename || "File"}`);
       } else {
-        // Desktop app not running, let Chrome download natively
         suggest({ filename: resolvedFilename || downloadItem.filename || "download", conflictAction: "uniquify" });
       }
     } catch (err) {

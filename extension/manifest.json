@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Rapid Download Manager Integration",
-  "version": "1.0.1",
-  "description": "Seamlessly intercepts downloads and sends them to Rapid Download Manager for multi-threaded speed.",
+  "version": "1.1.0",
+  "description": "Seamlessly intercepts downloads, sniffs videos & media streams, and sends them to Rapid Download Manager for multi-threaded speed.",
   "permissions": [
     "downloads",
     "storage",
     "contextMenus",
     "cookies",
-    "notifications"
+    "notifications",
+    "activeTab"
   ],
   "host_permissions": [
     "<all_urls>",
