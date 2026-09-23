@@ -1,3 +1,4 @@
+use chrono::Timelike;
 use serde::{Deserialize, Serialize};
 // #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Console enabled for diagnostics
 
@@ -375,6 +376,56 @@ fn render_file_type_badge(ui: &mut egui::Ui, ext: &str) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerConfig {
+    pub enabled: bool,
+    pub start_hour: u32,
+    pub start_minute: u32,
+    pub stop_hour: u32,
+    pub stop_minute: u32,
+    pub auto_shutdown: bool,
+    #[serde(skip)]
+    pub has_triggered_start: bool,
+    #[serde(skip)]
+    pub has_triggered_stop: bool,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start_hour: 23,
+            start_minute: 0,
+            stop_hour: 6,
+            stop_minute: 0,
+            auto_shutdown: false,
+            has_triggered_start: false,
+            has_triggered_stop: false,
+        }
+    }
+}
+
+fn get_scheduler_file_path() -> PathBuf {
+    dirs_or_fallback().join(".rapid_scheduler.json")
+}
+
+fn load_scheduler_config() -> SchedulerConfig {
+    let path = get_scheduler_file_path();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(config) = serde_json::from_str::<SchedulerConfig>(&data) {
+            return config;
+        }
+    }
+    SchedulerConfig::default()
+}
+
+fn save_scheduler_config(config: &SchedulerConfig) {
+    let path = get_scheduler_file_path();
+    if let Ok(json) = serde_json::to_string_pretty(config) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct HistoryRecord {
     pub id: String,
     pub filename: String,
@@ -542,6 +593,8 @@ struct RapidApp {
     is_probing: bool,
     selected_tasks: HashSet<String>,
     show_delete_modal: bool,
+    show_scheduler_modal: bool,
+    scheduler: SchedulerConfig,
     tasks_to_delete: HashSet<String>,
     has_requested_initial_focus: bool,
     pub speed_limit_bps: Arc<AtomicU64>,
@@ -769,6 +822,8 @@ impl RapidApp {
             is_probing: false,
             selected_tasks: HashSet::new(),
             show_delete_modal: false,
+            show_scheduler_modal: false,
+            scheduler: load_scheduler_config(),
             tasks_to_delete: HashSet::new(),
             has_requested_initial_focus: false,
             speed_limit_bps: Arc::new(AtomicU64::new(0)),
@@ -1354,6 +1409,91 @@ impl eframe::App for RapidApp {
             ctx.request_repaint();
             self.render_splash_screen(ctx, elapsed);
             return;
+        }
+
+        // 1. Time-based Download Scheduler Tick (Section 32)
+        if self.scheduler.enabled {
+            let now = chrono::Local::now();
+            let cur_h = now.hour();
+            let cur_m = now.minute();
+            let cur_s = now.second();
+
+            // Trigger Start
+            if cur_s == 0 && cur_h == self.scheduler.start_hour && cur_m == self.scheduler.start_minute {
+                if !self.scheduler.has_triggered_start {
+                    self.scheduler.has_triggered_start = true;
+                    self.resume_all();
+                }
+            } else if cur_m != self.scheduler.start_minute {
+                self.scheduler.has_triggered_start = false;
+            }
+
+            // Trigger Stop
+            if cur_s == 0 && cur_h == self.scheduler.stop_hour && cur_m == self.scheduler.stop_minute {
+                if !self.scheduler.has_triggered_stop {
+                    self.scheduler.has_triggered_stop = true;
+                    self.pause_all();
+                    if self.scheduler.auto_shutdown {
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("shutdown").args(&["/s", "/t", "60"]).spawn();
+                        }
+                    }
+                }
+            } else if cur_m != self.scheduler.stop_minute {
+                self.scheduler.has_triggered_stop = false;
+            }
+        }
+
+        // 2. Drag & Drop Link/File Interception (Section 27)
+        let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
+        if !dropped_files.is_empty() {
+            for dropped in dropped_files {
+                let mut detected_url: Option<String> = None;
+                if let Some(ref path) = dropped.path {
+                    if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("url")).unwrap_or(false) {
+                        if let Ok(content) = std::fs::read_to_string(path) {
+                            for line in content.lines() {
+                                if line.trim().starts_with("URL=") {
+                                    detected_url = Some(line.trim()[4..].trim().to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    } else if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("txt")).unwrap_or(false) {
+                        if let Ok(content) = std::fs::read_to_string(path) {
+                            let first_line = content.lines().next().unwrap_or("").trim();
+                            if first_line.starts_with("http://") || first_line.starts_with("https://") {
+                                detected_url = Some(first_line.to_string());
+                            }
+                        }
+                    }
+                }
+                if let Some(url) = detected_url {
+                    self.open_add_download_dialog(ctx);
+                    self.input_url = url.clone();
+                    self.probe_url_filename(&url, ctx);
+                }
+            }
+        }
+
+        // Visual Drag & Drop Hover Overlay
+        if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+            let screen_rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drag_drop_overlay")));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 210));
+            painter.rect_stroke(
+                screen_rect.shrink(18.0),
+                12.0,
+                Stroke::new(2.5_f32, GLASS_SECONDARY),
+            );
+            painter.text(
+                screen_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "📥 Drop Link or File here to Download with Rapid!",
+                egui::FontId::proportional(18.0),
+                Color32::WHITE,
+            );
         }
 
         // Request repaint continuously if any download is active for smooth progress bars
@@ -3418,6 +3558,178 @@ fn render_parallel_connections_combobox(
                 self.show_delete_modal = false;
             }
         }
+
+        // Modern Cyber-Obsidian Scheduler Modal Dialog (Section 32)
+        if self.show_scheduler_modal {
+            let screen_rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("scheduler_modal_backdrop")));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 220));
+
+            let mut close_modal = false;
+            let mut save_schedule = false;
+
+            let modal_frame = egui::Frame::none()
+                .fill(GLASS_SURFACE)
+                .stroke(Stroke::NONE)
+                .rounding(egui::Rounding::same(12.0))
+                .inner_margin(Margin::same(0.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0.0, 10.0].into(),
+                    blur: 32.0,
+                    spread: 2.0,
+                    color: Color32::from_black_alpha(230),
+                });
+
+            egui::Window::new("scheduler_modal_window")
+                .title_bar(false)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .fixed_size(Vec2::new(540.0, 380.0))
+                .frame(modal_frame)
+                .show(ctx, |ui| {
+                    let top_bar_h = 34.0_f32;
+                    let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
+                    let close_w = 42.0_f32;
+                    let close_rect = egui::Rect::from_min_max(
+                        egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
+                        egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + top_bar_h),
+                    );
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("sched_close_btn"), egui::Sense::click());
+                    if close_resp.hovered() {
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    }
+                    if close_resp.clicked() {
+                        close_modal = true;
+                    }
+                    let bg_color = if close_resp.hovered() { Color32::from_rgb(255, 60, 60) } else { Color32::from_rgb(220, 38, 38) };
+                    ui.painter().rect_filled(close_rect, egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 0.0 }, bg_color);
+                    ui.painter().text(close_rect.center(), egui::Align2::CENTER_CENTER, "✕", egui::FontId::proportional(14.0), Color32::WHITE);
+
+                    ui.painter().text(
+                        egui::pos2(top_bar_rect.min.x + 20.0, top_bar_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "⏰ Download Scheduler",
+                        egui::FontId::proportional(15.0),
+                        GLASS_SECONDARY,
+                    );
+
+                    ui.add_space(14.0);
+
+                    egui::Frame::none().inner_margin(Margin::symmetric(24.0, 10.0)).show(ui, |ui| {
+                        egui::Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 200))
+                            .stroke(Stroke::new(1.0_f32, if self.scheduler.enabled { GLASS_SECONDARY } else { GLASS_BORDER }))
+                            .rounding(egui::Rounding::same(8.0))
+                            .inner_margin(Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let status_dot = if self.scheduler.enabled { "🟢" } else { "⚪" };
+                                    ui.label(RichText::new(status_dot).size(16.0));
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new("Automated Queue Scheduler").size(13.5).strong().color(Color32::WHITE));
+                                        ui.label(RichText::new("Start and stop download queues automatically at preset hours").size(11.0).color(GLASS_MUTED));
+                                    });
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let toggle_text = if self.scheduler.enabled { "ACTIVE (ON)" } else { "DISABLED (OFF)" };
+                                        let toggle_color = if self.scheduler.enabled { Color32::from_rgb(16, 185, 129) } else { GLASS_MUTED };
+                                        if ui.button(RichText::new(toggle_text).strong().size(11.5).color(toggle_color)).clicked() {
+                                            self.scheduler.enabled = !self.scheduler.enabled;
+                                            save_schedule = true;
+                                        }
+                                    });
+                                });
+                            });
+
+                        ui.add_space(12.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Presets:").size(11.5).color(GLASS_MUTED));
+                            if ui.button(RichText::new("🌙 Night Hours (23:00 - 06:00)").size(11.0)).clicked() {
+                                self.scheduler.start_hour = 23;
+                                self.scheduler.start_minute = 0;
+                                self.scheduler.stop_hour = 6;
+                                self.scheduler.stop_minute = 0;
+                                self.scheduler.enabled = true;
+                                save_schedule = true;
+                            }
+                            if ui.button(RichText::new("☀️ Daytime (09:00 - 18:00)").size(11.0)).clicked() {
+                                self.scheduler.start_hour = 9;
+                                self.scheduler.start_minute = 0;
+                                self.scheduler.stop_hour = 18;
+                                self.scheduler.stop_minute = 0;
+                                self.scheduler.enabled = true;
+                                save_schedule = true;
+                            }
+                        });
+
+                        ui.add_space(14.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("▶ Start Downloads at:").size(13.0).strong().color(GLASS_TEXT));
+                            ui.add_space(10.0);
+                            let mut sh = self.scheduler.start_hour as i32;
+                            let mut sm = self.scheduler.start_minute as i32;
+                            ui.label("Hour:");
+                            if ui.add(egui::DragValue::new(&mut sh).range(0..=23)).changed() {
+                                self.scheduler.start_hour = sh as u32;
+                                save_schedule = true;
+                            }
+                            ui.label("Min:");
+                            if ui.add(egui::DragValue::new(&mut sm).range(0..=59)).changed() {
+                                self.scheduler.start_minute = sm as u32;
+                                save_schedule = true;
+                            }
+                            ui.label(RichText::new(format!("({:02}:{:02})", self.scheduler.start_hour, self.scheduler.start_minute)).color(GLASS_SECONDARY).strong());
+                        });
+
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("⏸ Stop Downloads at:").size(13.0).strong().color(GLASS_TEXT));
+                            ui.add_space(10.0);
+                            let mut eh = self.scheduler.stop_hour as i32;
+                            let mut em = self.scheduler.stop_minute as i32;
+                            ui.label("Hour:");
+                            if ui.add(egui::DragValue::new(&mut eh).range(0..=23)).changed() {
+                                self.scheduler.stop_hour = eh as u32;
+                                save_schedule = true;
+                            }
+                            ui.label("Min:");
+                            if ui.add(egui::DragValue::new(&mut em).range(0..=59)).changed() {
+                                self.scheduler.stop_minute = em as u32;
+                                save_schedule = true;
+                            }
+                            ui.label(RichText::new(format!("({:02}:{:02})", self.scheduler.stop_hour, self.scheduler.stop_minute)).color(STATUS_PAUSED).strong());
+                        });
+
+                        ui.add_space(14.0);
+
+                        ui.checkbox(&mut self.scheduler.auto_shutdown, RichText::new("🔌 Auto-shutdown PC when schedule finishes").size(12.0).color(GLASS_TEXT));
+
+                        ui.add_space(16.0);
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let done_btn = egui::Button::new(RichText::new("✓ Done").size(13.0).strong().color(Color32::WHITE))
+                                .min_size(Vec2::new(100.0, 32.0))
+                                .fill(GLASS_PRIMARY)
+                                .rounding(egui::Rounding::same(6.0));
+                            if ui.add(done_btn).clicked() {
+                                save_schedule = true;
+                                close_modal = true;
+                            }
+                        });
+                    });
+                });
+
+            if save_schedule {
+                save_scheduler_config(&self.scheduler);
+            }
+            if close_modal {
+                self.show_scheduler_modal = false;
+            }
+        }
+
 
     }
 }
