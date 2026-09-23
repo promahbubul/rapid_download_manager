@@ -514,6 +514,8 @@ struct PendingBrowserDownload {
     user_agent: Option<String>,
     referrer: Option<String>,
     is_gdrive: bool,
+    is_youtube: bool,
+    quality: rapid_core::youtube::DownloadQuality,
 }
 
 fn extract_filename_from_url(url_str: &str) -> String {
@@ -587,6 +589,7 @@ struct RapidApp {
     input_filename: String,
     input_dest: String,
     input_segments: usize,
+    input_quality: rapid_core::youtube::DownloadQuality,
     base_download_dir: PathBuf,
     max_concurrent_downloads: usize,
     add_error: Option<String>,
@@ -616,6 +619,7 @@ impl RapidApp {
         self.add_error = None;
         self.input_url.clear();
         self.input_filename.clear();
+        self.input_quality = rapid_core::youtube::DownloadQuality::Best;
         self.input_dest = self.base_download_dir.to_string_lossy().to_string();
 
         // Auto-check system clipboard for URL
@@ -822,6 +826,7 @@ impl RapidApp {
             input_filename: String::new(),
             input_dest: default_download_dir.to_string_lossy().to_string(),
             input_segments: 8,
+            input_quality: rapid_core::youtube::DownloadQuality::Best,
             base_download_dir: default_download_dir.clone(),
             max_concurrent_downloads: 3,
             add_error: None,
@@ -875,7 +880,14 @@ impl RapidApp {
         }
     }
 
-    fn start_new_download(&mut self, url: String, dest_dir: PathBuf, segments: usize, custom_filename: Option<String>) {
+    fn start_new_download(
+        &mut self,
+        url: String,
+        dest_dir: PathBuf,
+        segments: usize,
+        custom_filename: Option<String>,
+        quality: Option<rapid_core::youtube::DownloadQuality>,
+    ) {
         if url.trim().starts_with("blob:") {
             self.add_error = Some("Invalid URL: 'blob:' URLs are internal browser memory objects. Please play the video in your browser so Rapid captures the real stream, or use a direct HTTP/HTTPS link.".to_string());
             return;
@@ -901,6 +913,7 @@ impl RapidApp {
                             None,
                             true,
                             None,
+                            None,
                             Arc::clone(&rt_inner),
                             Arc::clone(&tasks_crawl),
                         );
@@ -910,6 +923,7 @@ impl RapidApp {
             self.show_add_dialog = false;
             self.input_url.clear();
             self.input_filename.clear();
+            self.input_quality = rapid_core::youtube::DownloadQuality::Best;
             return;
         }
 
@@ -918,12 +932,26 @@ impl RapidApp {
         self.is_probing = true;
         self.add_error = None;
 
-        spawn_download_task(url, dest_dir, segments, custom_filename, None, None, None, false, Some(Arc::clone(&self.speed_limit_bps)), rt, tasks_arc);
+        spawn_download_task(
+            url,
+            dest_dir,
+            segments,
+            custom_filename,
+            None,
+            None,
+            None,
+            false,
+            Some(Arc::clone(&self.speed_limit_bps)),
+            quality,
+            rt,
+            tasks_arc,
+        );
 
         self.is_probing = false;
         self.show_add_dialog = false;
         self.input_url.clear();
         self.input_filename.clear();
+        self.input_quality = rapid_core::youtube::DownloadQuality::Best;
     }
 
     fn resume_download(&mut self, task_index: usize) {
@@ -2681,6 +2709,143 @@ impl eframe::App for RapidApp {
 
         // Modern Cyber-Obsidian Add Download Modal Dialog
 
+fn render_quality_selector_combobox(
+    ui: &mut egui::Ui,
+    id_source: &str,
+    quality: &mut rapid_core::youtube::DownloadQuality,
+    filename: &mut String,
+    dest_dir: &mut String,
+    base_download_dir: &PathBuf,
+) {
+    let current_quality = *quality;
+    let quality_label = current_quality.label();
+
+    let options = [
+        (rapid_core::youtube::DownloadQuality::Best, "Best Available (1080p+ • MP4)", "Highest resolution video + audio", "🎬"),
+        (rapid_core::youtube::DownloadQuality::P1080, "1080p Full HD (MP4)", "High definition 1920x1080", "✨"),
+        (rapid_core::youtube::DownloadQuality::P720, "720p HD (MP4)", "Standard HD 1280x720 • Fast", "⚡"),
+        (rapid_core::youtube::DownloadQuality::P480, "480p SD (MP4)", "Medium resolution • Low size", "📱"),
+        (rapid_core::youtube::DownloadQuality::P360, "360p (MP4)", "Low resolution • Ultra light", "💾"),
+        (rapid_core::youtube::DownloadQuality::AudioMp3, "Audio Only (MP3 • High Quality)", "High quality MP3 audio stream", "🎵"),
+        (rapid_core::youtube::DownloadQuality::AudioM4a, "Audio Only (M4A / AAC)", "Original AAC audio container", "🎧"),
+    ];
+
+    ui.scope(|ui| {
+        ui.visuals_mut().widgets.inactive.weak_bg_fill = GLASS_BG;
+        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0_f32, GLASS_BORDER);
+        ui.visuals_mut().widgets.inactive.rounding = egui::Rounding::same(6.0);
+        ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, GLASS_TEXT);
+
+        ui.visuals_mut().widgets.hovered.weak_bg_fill = Color32::from_rgb(16, 24, 46);
+        ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::new(1.0_f32, GLASS_PRIMARY);
+        ui.visuals_mut().widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+
+        ui.visuals_mut().widgets.open.weak_bg_fill = Color32::from_rgb(20, 28, 54);
+        ui.visuals_mut().widgets.open.bg_stroke = Stroke::new(1.5_f32, GLASS_PRIMARY);
+        ui.visuals_mut().widgets.open.rounding = egui::Rounding::same(6.0);
+        ui.visuals_mut().widgets.open.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+
+        ui.spacing_mut().button_padding = Vec2::new(10.0, 7.0);
+
+        ui.visuals_mut().window_fill = Color32::from_rgb(15, 23, 42);
+        ui.visuals_mut().window_stroke = Stroke::new(1.0_f32, Color32::from_rgb(45, 60, 95));
+        ui.visuals_mut().window_rounding = egui::Rounding::same(8.0);
+        ui.visuals_mut().popup_shadow = egui::epaint::Shadow {
+            offset: [0.0, 10.0].into(),
+            blur: 28.0,
+            spread: 2.0,
+            color: Color32::from_black_alpha(240),
+        };
+        ui.spacing_mut().item_spacing = Vec2::new(0.0, 3.0);
+        ui.spacing_mut().window_margin = Margin::same(6.0);
+
+        let combo = egui::ComboBox::from_id_source(id_source)
+            .selected_text(RichText::new(quality_label).size(12.5).color(GLASS_TEXT).strong())
+            .width(ui.available_width() - 4.0)
+            .height(32.0)
+            .icon(|ui, rect, visuals, _is_open, _above_or_below| {
+                let center = rect.center();
+                let stroke = Stroke::new(1.5_f32, visuals.fg_stroke.color);
+                ui.painter().line_segment(
+                    [egui::pos2(center.x - 4.0, center.y - 2.0), egui::pos2(center.x, center.y + 2.5)],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [egui::pos2(center.x, center.y + 2.5), egui::pos2(center.x + 4.0, center.y - 2.0)],
+                    stroke,
+                );
+            });
+
+        let mut changed_quality: Option<rapid_core::youtube::DownloadQuality> = None;
+
+        combo.show_ui(ui, |ui| {
+            ui.set_min_width(ui.available_width().max(420.0));
+            for (val, title, desc, icon) in options {
+                let is_selected = *quality == val;
+                let (bg, border, text_col) = if is_selected {
+                    (
+                        Color32::from_rgb(42, 26, 85),
+                        Color32::from_rgb(140, 95, 245),
+                        Color32::WHITE,
+                    )
+                } else {
+                    (
+                        Color32::TRANSPARENT,
+                        Color32::TRANSPARENT,
+                        GLASS_TEXT,
+                    )
+                };
+
+                let item_frame = egui::Frame::none()
+                    .fill(bg)
+                    .stroke(Stroke::new(if is_selected { 1.0_f32 } else { 0.0_f32 }, border))
+                    .rounding(egui::Rounding::same(6.0))
+                    .inner_margin(Margin::symmetric(10.0, 6.0));
+
+                let item_resp = item_frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(icon).size(13.0));
+                        ui.add_space(4.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new(title)
+                                    .size(12.5)
+                                    .color(text_col)
+                                    .strong(),
+                            );
+                            ui.label(
+                                RichText::new(desc)
+                                    .size(10.5)
+                                    .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                        });
+                    });
+                }).response;
+
+                let click_resp = ui.interact(item_resp.rect, ui.make_persistent_id(format!("{}_{:?}", id_source, val)), egui::Sense::click());
+                if click_resp.clicked() {
+                    changed_quality = Some(val);
+                }
+            }
+        });
+
+        if let Some(new_q) = changed_quality {
+            *quality = new_q;
+            let new_ext = new_q.target_extension();
+            if !filename.is_empty() {
+                let stem = if let Some(dot_idx) = filename.rfind('.') {
+                    &filename[..dot_idx]
+                } else {
+                    filename.as_str()
+                };
+                *filename = format!("{}.{}", stem, new_ext);
+                let cat_dest = get_categorized_destination(base_download_dir, filename);
+                *dest_dir = cat_dest.to_string_lossy().to_string();
+            }
+        }
+    });
+}
+
 fn render_parallel_connections_combobox(
     ui: &mut egui::Ui,
     id_source: &str,
@@ -2867,12 +3032,15 @@ fn render_parallel_connections_combobox(
             let mut start_download_req = false;
             let mut url_to_probe: Option<String> = None;
 
+            let is_input_yt = rapid_core::youtube::YoutubeResolver::is_youtube(&self.input_url);
+            let add_modal_h = if is_input_yt { 430.0 } else { 365.0 };
+
             egui::Window::new("add_download_modal")
                 .title_bar(false)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(600.0, 365.0))
+                .fixed_size(Vec2::new(600.0, add_modal_h))
                 .frame(modal_frame)
                 .show(ctx, |ui| {
                     // Top Bar with flush right-top 0, 0 Red Close Button (icon white)
@@ -3054,6 +3222,25 @@ fn render_parallel_connections_combobox(
                                 }
                             });
 
+                            if is_input_yt {
+                                ui.add_space(10.0);
+                                ui.label(
+                                    RichText::new("Quality / Format")
+                                        .size(12.5)
+                                        .color(GLASS_TEXT)
+                                        .strong(),
+                                );
+                                ui.add_space(4.0);
+                                render_quality_selector_combobox(
+                                    ui,
+                                    "add_modal_quality_select",
+                                    &mut self.input_quality,
+                                    &mut self.input_filename,
+                                    &mut self.input_dest,
+                                    &self.base_download_dir,
+                                );
+                            }
+
                             ui.add_space(10.0);
 
                             // Field 4: Parallel Connections (Modern Dropdown Selector)
@@ -3143,6 +3330,7 @@ fn render_parallel_connections_combobox(
                 self.show_add_dialog = false;
                 self.add_error = None;
                 self.input_filename.clear();
+                ctx.request_repaint();
             }
 
             if start_download_req {
@@ -3157,7 +3345,12 @@ fn render_parallel_connections_combobox(
                     } else {
                         Some(self.input_filename.trim().to_string())
                     };
-                    self.start_new_download(url, dest, segs, custom_fname);
+                    let q = self.input_quality;
+                    self.start_new_download(url, dest, segs, custom_fname, Some(q));
+                    self.show_add_dialog = false;
+                    self.input_url.clear();
+                    self.input_filename.clear();
+                    ctx.request_repaint();
                 }
             }
         }
@@ -3185,12 +3378,18 @@ fn render_parallel_connections_combobox(
             let mut close_modal = false;
             let mut start_download_req = false;
 
+            let is_prompt_yt = {
+                let p = self.current_browser_prompt.as_ref().unwrap();
+                p.is_youtube || rapid_core::youtube::YoutubeResolver::is_youtube(&p.url)
+            };
+            let browser_modal_h = if is_prompt_yt { 430.0 } else { 355.0 };
+
             egui::Window::new("browser_download_prompt_modal")
                 .title_bar(false)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(600.0, 355.0))
+                .fixed_size(Vec2::new(600.0, browser_modal_h))
                 .frame(modal_frame)
                 .show(ctx, |ui| {
                     let prompt = self.current_browser_prompt.as_mut().unwrap();
@@ -3357,6 +3556,25 @@ fn render_parallel_connections_combobox(
                                 }
                             });
 
+                            if is_prompt_yt {
+                                ui.add_space(10.0);
+                                ui.label(
+                                    RichText::new("Quality / Format")
+                                        .size(12.5)
+                                        .color(GLASS_TEXT)
+                                        .strong(),
+                                );
+                                ui.add_space(4.0);
+                                render_quality_selector_combobox(
+                                    ui,
+                                    "browser_prompt_quality_select",
+                                    &mut prompt.quality,
+                                    &mut prompt.filename,
+                                    &mut prompt.dest_dir,
+                                    &self.base_download_dir,
+                                );
+                            }
+
                             ui.add_space(10.0);
 
                             // Field 4: Parallel Connections (Modern Dropdown Selector)
@@ -3421,13 +3639,21 @@ fn render_parallel_connections_combobox(
                 });
 
             if close_modal {
+                if let Some(prompt) = self.current_browser_prompt.take() {
+                    let prompt_url = prompt.url.clone();
+                    if let Ok(mut q) = self.pending_browser_queue.lock() {
+                        q.retain(|item| item.url != prompt_url);
+                    }
+                }
                 self.current_browser_prompt = None;
                 ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                ctx.request_repaint();
             }
 
             if start_download_req {
                 ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                 if let Some(prompt) = self.current_browser_prompt.take() {
+                    let prompt_url = prompt.url.clone();
                     let url = prompt.url;
                     let dest = PathBuf::from(&prompt.dest_dir);
                     let segs = prompt.segments;
@@ -3445,6 +3671,12 @@ fn render_parallel_connections_combobox(
                     let ua = prompt.user_agent;
                     let referrer = prompt.referrer;
                     let is_gd = prompt.is_gdrive;
+                    let quality = prompt.quality;
+
+                    // Deduplicate any other pending items with this URL so modal never re-pops
+                    if let Ok(mut q) = self.pending_browser_queue.lock() {
+                        q.retain(|item| item.url != prompt_url);
+                    }
 
                     spawn_download_task(
                         url,
@@ -3456,10 +3688,13 @@ fn render_parallel_connections_combobox(
                         referrer,
                         is_gd,
                         Some(Arc::clone(&self.speed_limit_bps)),
+                        Some(quality),
                         Arc::clone(&self.tokio_rt),
                         Arc::clone(&self.tasks),
                     );
                 }
+                self.current_browser_prompt = None;
+                ctx.request_repaint();
             }
         }
 
@@ -3806,6 +4041,7 @@ fn spawn_download_task(
     referrer: Option<String>,
     is_gdrive: bool,
     speed_limit: Option<Arc<AtomicU64>>,
+    quality: Option<rapid_core::youtube::DownloadQuality>,
     rt: Arc<Runtime>,
     tasks_arc: Arc<Mutex<Vec<ActiveTaskUI>>>,
 ) {
@@ -3916,18 +4152,33 @@ fn spawn_download_task(
     if is_yt {
         let speed_limit_for_yt = speed_limit.clone();
         let canonical_url = rapid_core::youtube::YoutubeResolver::canonicalize_url(&url, referrer.as_deref());
+        let selected_quality = quality.unwrap_or(rapid_core::youtube::DownloadQuality::Best);
+        let target_ext = selected_quality.target_extension();
+
         rt.spawn(async move {
             let (resolved_fn, resolved_url) = if let Some(ref cf) = custom_filename {
-                let name = if cf.to_lowercase().ends_with(".mp4") {
+                let name = if cf.to_lowercase().ends_with(&format!(".{}", target_ext)) {
                     cf.clone()
                 } else {
-                    format!("{}.mp4", cf)
+                    let stem = if let Some(dot) = cf.rfind('.') {
+                        &cf[..dot]
+                    } else {
+                        cf.as_str()
+                    };
+                    format!("{}.{}", stem, target_ext)
                 };
                 (name, canonical_url)
             } else {
                 match rapid_core::youtube::YoutubeResolver::resolve_metadata(&canonical_url).await {
-                    Ok(meta) => (meta.clean_filename, canonical_url),
-                    Err(_) => ("YouTube_Video.mp4".to_string(), canonical_url),
+                    Ok(meta) => {
+                        let stem = if let Some(dot) = meta.clean_filename.rfind('.') {
+                            &meta.clean_filename[..dot]
+                        } else {
+                            &meta.clean_filename
+                        };
+                        (format!("{}.{}", stem, target_ext), canonical_url)
+                    }
+                    Err(_) => (format!("YouTube_Media.{}", target_ext), canonical_url),
                 }
             };
 
@@ -3940,6 +4191,7 @@ fn spawn_download_task(
                 resolved_url.clone(),
                 resolved_fn.clone(),
                 target_file.clone(),
+                selected_quality,
                 speed_limit_for_yt,
                 cancel_token,
             );
@@ -4368,6 +4620,14 @@ async fn run_extension_server(
                                 }
                             };
 
+                            let default_quality = if val.get("media_type").and_then(|m| m.as_str()) == Some("audio")
+                                || display_filename.to_lowercase().ends_with(".mp3")
+                                || display_filename.to_lowercase().ends_with(".m4a") {
+                                rapid_core::youtube::DownloadQuality::AudioMp3
+                            } else {
+                                rapid_core::youtube::DownloadQuality::Best
+                            };
+
                             let pending = PendingBrowserDownload {
                                 url: url_str.clone(),
                                 filename: display_filename.clone(),
@@ -4377,10 +4637,20 @@ async fn run_extension_server(
                                 user_agent: user_agent_str.clone(),
                                 referrer: referrer_str.clone(),
                                 is_gdrive,
+                                is_youtube,
+                                quality: default_quality,
                             };
 
-                            if let Ok(mut q) = queue_clone.lock() {
-                                q.push_back(pending);
+                            let already_queued = if let Ok(q) = queue_clone.lock() {
+                                q.iter().any(|item| item.url == url_str)
+                            } else {
+                                false
+                            };
+
+                            if !already_queued {
+                                if let Ok(mut q) = queue_clone.lock() {
+                                    q.push_back(pending);
+                                }
                             }
 
                             // Immediately spawn background probe to detect real original filename

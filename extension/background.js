@@ -300,7 +300,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           filename: fn,
           cookies: cookies,
           user_agent: navigator.userAgent,
-          is_youtube: true
+          is_youtube: true,
+          media_type: msg.mediaType || "video"
         });
         if (success) {
           showNotification("Rapid YouTube Download", `Captured: ${fn}`);

@@ -267,6 +267,41 @@ function attachFloatingWidget(mediaEl, type) {
 
   widget.appendChild(dlButton);
   widget.appendChild(formatBadge);
+
+  let isYouTubePage = window.location.hostname.includes("youtube.com") || window.location.hostname.includes("youtu.be");
+  if (isYouTubePage) {
+    const audioBtn = document.createElement("button");
+    audioBtn.className = "dl-btn";
+    audioBtn.style.background = "linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)";
+    audioBtn.style.boxShadow = "0 2px 8px rgba(139, 92, 246, 0.4)";
+    audioBtn.innerHTML = "<span class='icon'>🎵</span><span>MP3</span>";
+    audioBtn.title = "Download YouTube Audio directly as MP3";
+    audioBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      let title = resolveMediaTitle(mediaEl, "audio");
+      if (!title.toLowerCase().endsWith(".mp3")) {
+        title += ".mp3";
+      }
+      chrome.runtime.sendMessage({
+        type: "RAPID_INTERCEPT_MEDIA",
+        url: window.location.href,
+        referrer: window.location.href,
+        filename: title,
+        mediaType: "audio",
+        is_youtube: true
+      }, (res) => {
+        if (res && res.success) {
+          audioBtn.innerHTML = "<span class='icon'>✓</span><span>Sent!</span>";
+          setTimeout(() => {
+            audioBtn.innerHTML = "<span class='icon'>🎵</span><span>MP3</span>";
+          }, 2000);
+        }
+      });
+    });
+    widget.appendChild(audioBtn);
+  }
+
   widget.appendChild(closeButton);
 
   shadow.appendChild(style);

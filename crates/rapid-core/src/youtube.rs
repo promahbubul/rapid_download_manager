@@ -9,6 +9,49 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DownloadQuality {
+    Best,
+    P1080,
+    P720,
+    P480,
+    P360,
+    AudioMp3,
+    AudioM4a,
+}
+
+impl Default for DownloadQuality {
+    fn default() -> Self {
+        Self::Best
+    }
+}
+
+impl DownloadQuality {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Best => "Best Available (1080p+ • MP4)",
+            Self::P1080 => "1080p Full HD (MP4)",
+            Self::P720 => "720p HD (MP4)",
+            Self::P480 => "480p SD (MP4)",
+            Self::P360 => "360p (MP4)",
+            Self::AudioMp3 => "Audio Only (MP3 • High Quality)",
+            Self::AudioM4a => "Audio Only (M4A / AAC)",
+        }
+    }
+
+    pub fn is_audio(&self) -> bool {
+        matches!(self, Self::AudioMp3 | Self::AudioM4a)
+    }
+
+    pub fn target_extension(&self) -> &'static str {
+        match self {
+            Self::AudioMp3 => "mp3",
+            Self::AudioM4a => "m4a",
+            _ => "mp4",
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct YoutubeMetadata {
     pub id: String,
@@ -134,7 +177,7 @@ impl YoutubeResolver {
         }
 
         // 3. Known project directory
-        let proj_candidate = PathBuf::from(r"D:\mahbub\project\rapid_download_manager\yt-dlp.exe");
+        let proj_candidate = PathBuf::from("D:\\mahbub\\project\\rapid_download_manager\\yt-dlp.exe");
         if proj_candidate.exists() {
             return Some(proj_candidate);
         }
@@ -166,7 +209,7 @@ impl YoutubeResolver {
                 }
             }
         }
-        let proj_candidate = PathBuf::from(r"D:\mahbub\project\rapid_download_manager\ffmpeg.exe");
+        let proj_candidate = PathBuf::from("D:\\mahbub\\project\\rapid_download_manager\\ffmpeg.exe");
         if proj_candidate.exists() {
             return Some(proj_candidate);
         }
@@ -187,6 +230,7 @@ pub struct YoutubeDownloader {
     pub url: String,
     pub filename: String,
     pub target_file: PathBuf,
+    pub quality: DownloadQuality,
     pub speed_limit: Option<Arc<AtomicU64>>,
     pub cancel_token: CancellationToken,
 }
@@ -197,6 +241,7 @@ impl YoutubeDownloader {
         url: String,
         filename: String,
         target_file: PathBuf,
+        quality: DownloadQuality,
         speed_limit: Option<Arc<AtomicU64>>,
         cancel_token: CancellationToken,
     ) -> Self {
@@ -205,6 +250,7 @@ impl YoutubeDownloader {
             url,
             filename,
             target_file,
+            quality,
             speed_limit,
             cancel_token,
         }
@@ -235,10 +281,70 @@ impl YoutubeDownloader {
             "--progress-template",
             "download:%(progress.downloaded_bytes)s/%(progress.total_bytes)s/%(progress.speed)s/%(progress.eta)s",
             "--no-playlist",
-            "-f",
-            "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b/best",
-            "--merge-output-format",
-            "mp4",
+        ]);
+
+        match self.quality {
+            DownloadQuality::Best => {
+                cmd.args(&[
+                    "-f",
+                    "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b/best",
+                    "--merge-output-format",
+                    "mp4",
+                ]);
+            }
+            DownloadQuality::P1080 => {
+                cmd.args(&[
+                    "-f",
+                    "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080][ext=mp4]/b[height<=1080]/best",
+                    "--merge-output-format",
+                    "mp4",
+                ]);
+            }
+            DownloadQuality::P720 => {
+                cmd.args(&[
+                    "-f",
+                    "bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720][ext=mp4]/b[height<=720]/best",
+                    "--merge-output-format",
+                    "mp4",
+                ]);
+            }
+            DownloadQuality::P480 => {
+                cmd.args(&[
+                    "-f",
+                    "bv*[height<=480][ext=mp4]+ba[ext=m4a]/bv*[height<=480]+ba/b[height<=480][ext=mp4]/b[height<=480]/best",
+                    "--merge-output-format",
+                    "mp4",
+                ]);
+            }
+            DownloadQuality::P360 => {
+                cmd.args(&[
+                    "-f",
+                    "bv*[height<=360][ext=mp4]+ba[ext=m4a]/bv*[height<=360]+ba/b[height<=360][ext=mp4]/b[height<=360]/best",
+                    "--merge-output-format",
+                    "mp4",
+                ]);
+            }
+            DownloadQuality::AudioMp3 => {
+                cmd.args(&[
+                    "-x",
+                    "--audio-format",
+                    "mp3",
+                    "--audio-quality",
+                    "0",
+                ]);
+            }
+            DownloadQuality::AudioM4a => {
+                cmd.args(&[
+                    "-f",
+                    "ba[ext=m4a]/ba",
+                    "-x",
+                    "--audio-format",
+                    "m4a",
+                ]);
+            }
+        }
+
+        cmd.args(&[
             "-o",
             &out_target,
             &self.url,
