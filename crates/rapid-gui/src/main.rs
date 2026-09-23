@@ -427,6 +427,37 @@ fn extract_filename_from_url(url_str: &str) -> String {
     String::new()
 }
 
+pub fn categorize_filename(filename: &str) -> &'static str {
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "exe" | "msi" | "apk" | "bat" | "cmd" | "app" | "dmg" | "deb" | "rpm" => "Programs",
+        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "img" | "cab" => "Compressed",
+        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "3gp" | "ts" => "Videos",
+        "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "mid" | "opus" => "Music",
+        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "rtf" | "csv" | "epub" => "Documents",
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" => "Images",
+        _ => "",
+    }
+}
+
+pub fn get_categorized_destination(base_dir: &std::path::Path, filename: &str) -> PathBuf {
+    let cat = categorize_filename(filename);
+    if cat.is_empty() {
+        base_dir.to_path_buf()
+    } else {
+        if base_dir.file_name().and_then(|f| f.to_str()) == Some(cat) {
+            base_dir.to_path_buf()
+        } else {
+            base_dir.join(cat)
+        }
+    }
+}
+
 struct RapidApp {
     tokio_rt: Arc<Runtime>,
     tasks: Arc<Mutex<Vec<ActiveTaskUI>>>,
@@ -444,6 +475,8 @@ struct RapidApp {
     input_filename: String,
     input_dest: String,
     input_segments: usize,
+    base_download_dir: PathBuf,
+    max_concurrent_downloads: usize,
     add_error: Option<String>,
     is_probing: bool,
     selected_tasks: HashSet<String>,
@@ -467,6 +500,7 @@ impl RapidApp {
         self.add_error = None;
         self.input_url.clear();
         self.input_filename.clear();
+        self.input_dest = self.base_download_dir.to_string_lossy().to_string();
 
         // Auto-check system clipboard for URL
         if let Ok(mut clipboard) = arboard::Clipboard::new() {
@@ -476,7 +510,9 @@ impl RapidApp {
                     self.input_url = trimmed.to_string();
                     let candidate = extract_filename_from_url(&self.input_url);
                     if !candidate.is_empty() && !rapid_core::engine::is_generic_placeholder(&candidate) {
-                        self.input_filename = candidate;
+                        self.input_filename = candidate.clone();
+                        let cat_dest = get_categorized_destination(&self.base_download_dir, &candidate);
+                        self.input_dest = cat_dest.to_string_lossy().to_string();
                     }
                     self.probe_url_filename(trimmed, ctx);
                 }
@@ -529,7 +565,7 @@ impl RapidApp {
     fn is_task_visible(&self, task: &ActiveTaskUI) -> bool {
         let cat_ok = match self.selected_filter {
             FilterCategory::All => true,
-            FilterCategory::Active => task.status == DownloadStatus::Downloading,
+            FilterCategory::Active => matches!(task.status, DownloadStatus::Downloading | DownloadStatus::Queued),
             FilterCategory::Paused => matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_)),
             FilterCategory::Completed => task.status == DownloadStatus::Completed,
         };
@@ -630,6 +666,8 @@ impl RapidApp {
             input_filename: String::new(),
             input_dest: default_download_dir.to_string_lossy().to_string(),
             input_segments: 8,
+            base_download_dir: default_download_dir.clone(),
+            max_concurrent_downloads: 3,
             add_error: None,
             is_probing: false,
             selected_tasks: HashSet::new(),
@@ -1206,6 +1244,8 @@ impl eframe::App for RapidApp {
                         || prompt.filename == "Detecting filename..."
                         || rapid_core::engine::is_generic_placeholder(&prompt.filename) {
                         prompt.filename = p_name.clone();
+                        let cat_dest = get_categorized_destination(&self.base_download_dir, &p_name);
+                        prompt.dest_dir = cat_dest.to_string_lossy().to_string();
                     }
                 }
             }
@@ -1230,6 +1270,8 @@ impl eframe::App for RapidApp {
                     || !self.input_filename.contains('.')
                 {
                     self.input_filename = p_name.clone();
+                    let cat_dest = get_categorized_destination(&self.base_download_dir, &p_name);
+                    self.input_dest = cat_dest.to_string_lossy().to_string();
                 }
             }
         }
@@ -1307,6 +1349,34 @@ impl eframe::App for RapidApp {
             }
         }
 
+        // -------------------------------------------------------------
+        // Queue Manager: Auto-dispatch queued downloads up to max_concurrent_downloads
+        // -------------------------------------------------------------
+        let mut active_downloading = {
+            if let Ok(list) = self.tasks.try_lock() {
+                list.iter().filter(|t| t.status == DownloadStatus::Downloading).count()
+            } else {
+                self.max_concurrent_downloads
+            }
+        };
+
+        while active_downloading < self.max_concurrent_downloads {
+            let next_queued_idx = {
+                if let Ok(list) = self.tasks.try_lock() {
+                    list.iter().position(|t| t.status == DownloadStatus::Queued)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(idx) = next_queued_idx {
+                self.resume_download(idx);
+                active_downloading += 1;
+            } else {
+                break;
+            }
+        }
+
         let mut action_resume: Option<usize> = None;
         let mut action_pause: Option<usize> = None;
         let mut action_redownload: Option<usize> = None;
@@ -1322,6 +1392,7 @@ impl eframe::App for RapidApp {
         let mut active_count = 0;
         let mut paused_count = 0;
         let mut finished_count = 0;
+        let mut queued_count = 0;
         let mut total_downloaded: u64 = 0;
 
         if let Ok(tasks) = self.tasks.try_lock() {
@@ -1334,6 +1405,7 @@ impl eframe::App for RapidApp {
                     }
                     DownloadStatus::Paused => paused_count += 1,
                     DownloadStatus::Completed => finished_count += 1,
+                    DownloadStatus::Queued => queued_count += 1,
                     _ => {}
                 }
             }
@@ -1653,6 +1725,19 @@ impl eframe::App for RapidApp {
                         if paused_count > 0 { STATUS_PAUSED } else { GLASS_MUTED },
                         "Number of paused downloads",
                     );
+
+                    if queued_count > 0 {
+                        render_custom_chip_with_icon(
+                            ui,
+                            ModernIcon::Play,
+                            "Queued:",
+                            &queued_count.to_string(),
+                            Color32::from_rgb(32, 20, 54),
+                            GLASS_PRIMARY,
+                            Color32::from_rgb(216, 180, 254),
+                            "Downloads waiting in queue",
+                        );
+                    }
 
                     // 5. Finished Tasks Chip
                     render_custom_chip_with_icon(
@@ -2533,9 +2618,12 @@ fn render_parallel_connections_combobox(
                                         if self.input_url != prev_url {
                                             let candidate = extract_filename_from_url(&self.input_url);
                                             if !candidate.is_empty() && !rapid_core::engine::is_generic_placeholder(&candidate) {
-                                                self.input_filename = candidate;
+                                                self.input_filename = candidate.clone();
+                                                let cat_dest = get_categorized_destination(&self.base_download_dir, &candidate);
+                                                self.input_dest = cat_dest.to_string_lossy().to_string();
                                             } else {
                                                 self.input_filename.clear();
+                                                self.input_dest = self.base_download_dir.to_string_lossy().to_string();
                                             }
                                             if self.input_url.starts_with("http://") || self.input_url.starts_with("https://") {
                                                 url_to_probe = Some(self.input_url.clone());
@@ -2585,7 +2673,12 @@ fn render_parallel_connections_combobox(
                                         .font(egui::TextStyle::Body)
                                         .frame(false)
                                         .desired_width(ui.available_width());
-                                    ui.add(edit);
+                                    if ui.add(edit).changed() {
+                                        if !self.input_filename.trim().is_empty() {
+                                            let cat_dest = get_categorized_destination(&self.base_download_dir, &self.input_filename);
+                                            self.input_dest = cat_dest.to_string_lossy().to_string();
+                                        }
+                                    }
                                 });
 
                             ui.add_space(10.0);
@@ -2858,7 +2951,12 @@ fn render_parallel_connections_combobox(
                                         .font(egui::TextStyle::Body)
                                         .frame(false)
                                         .desired_width(ui.available_width());
-                                    ui.add(edit);
+                                    if ui.add(edit).changed() {
+                                        if !prompt.filename.trim().is_empty() {
+                                            let cat_dest = get_categorized_destination(&self.base_download_dir, &prompt.filename);
+                                            prompt.dest_dir = cat_dest.to_string_lossy().to_string();
+                                        }
+                                    }
                                 });
 
                             ui.add_space(10.0);
@@ -3187,6 +3285,17 @@ fn spawn_download_task(
 
                 let initial_segments = task_arc.snapshot_segments().await;
 
+                let should_queue = {
+                    let list = tasks_arc.lock().await;
+                    list.iter().filter(|t| t.status == DownloadStatus::Downloading).count() >= 3
+                };
+
+                let initial_status = if should_queue {
+                    DownloadStatus::Queued
+                } else {
+                    DownloadStatus::Downloading
+                };
+
                 let ui_entry = ActiveTaskUI {
                     id: task_id.clone(),
                     filename: filename.clone(),
@@ -3197,7 +3306,7 @@ fn spawn_download_task(
                     progress_percent: 0.0,
                     speed_bps: 0,
                     eta_seconds: None,
-                    status: DownloadStatus::Downloading,
+                    status: initial_status.clone(),
                     segments: initial_segments,
                     task_handle: Some(Arc::clone(&task_arc)),
                     num_segments: segments,
@@ -3210,6 +3319,10 @@ fn spawn_download_task(
                 {
                     let mut list = tasks_arc.lock().await;
                     list.push(ui_entry);
+                }
+
+                if should_queue {
+                    return;
                 }
 
                 let tasks_for_progress = Arc::clone(&tasks_arc);

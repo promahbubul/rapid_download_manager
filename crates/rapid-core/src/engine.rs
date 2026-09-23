@@ -123,7 +123,7 @@ impl DownloadTask {
 
         let (progress_tx, _) = broadcast::channel(100);
 
-        Ok(Self {
+        let task = Self {
             id,
             config,
             target_file,
@@ -134,7 +134,11 @@ impl DownloadTask {
             cancel_token: CancellationToken::new(),
             progress_tx,
             created_at: Utc::now(),
-        })
+        };
+
+        let _ = task.save_state().await;
+
+        Ok(task)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<DownloadProgress> {
@@ -372,7 +376,12 @@ impl DownloadTask {
         let target = dir.join(base_name);
         let manifest = DownloadTaskState::manifest_path(&target);
 
-        if !target.exists() && !manifest.exists() {
+        // If manifest exists, it's an existing in-progress/paused download to resume!
+        if manifest.exists() {
+            return base_name.to_string();
+        }
+
+        if !target.exists() {
             return base_name.to_string();
         }
 
