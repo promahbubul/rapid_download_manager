@@ -20,7 +20,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   let pageReferrer = tab && tab.url ? tab.url : "";
   let isGoogle = isGoogleDriveUrl(targetUrl);
-  let cookies = await extractCookiesForUrl(targetUrl, isGoogle);
+  let cookies = await extractCookiesForUrl(targetUrl, isGoogle, pageReferrer);
 
   let success = await sendToRapidApp({
     url: targetUrl,
@@ -53,11 +53,11 @@ function isGoogleDriveUrl(urlStr) {
   }
 }
 
-// Helper: Extract cookies for target URL
-async function extractCookiesForUrl(targetUrl, isGoogle) {
+// Helper: Extract cookies for target URL + originating referrer page
+async function extractCookiesForUrl(targetUrl, isGoogle, pageReferrer) {
   try {
     if (isGoogle) {
-      const [driveCookies, googleCookies, rootGoogleCookies, contentCookies, dotContentCookies, userContentCookies, dotUserContentCookies, accountsCookies, urlCookies] = await Promise.all([
+      const [driveCookies, googleCookies, rootGoogleCookies, contentCookies, dotContentCookies, userContentCookies, dotUserContentCookies, accountsCookies, urlCookies, refCookies] = await Promise.all([
         chrome.cookies.getAll({ domain: "drive.google.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: ".google.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: "google.com" }).catch(() => []),
@@ -66,7 +66,8 @@ async function extractCookiesForUrl(targetUrl, isGoogle) {
         chrome.cookies.getAll({ domain: "usercontent.google.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: ".usercontent.google.com" }).catch(() => []),
         chrome.cookies.getAll({ domain: "accounts.google.com" }).catch(() => []),
-        chrome.cookies.getAll({ url: targetUrl }).catch(() => [])
+        chrome.cookies.getAll({ url: targetUrl }).catch(() => []),
+        pageReferrer ? chrome.cookies.getAll({ url: pageReferrer }).catch(() => []) : []
       ]);
 
       const cookieMap = new Map();
@@ -79,7 +80,8 @@ async function extractCookiesForUrl(targetUrl, isGoogle) {
         ...userContentCookies,
         ...dotUserContentCookies,
         ...accountsCookies,
-        ...urlCookies
+        ...urlCookies,
+        ...(refCookies || [])
       ].forEach(c => {
         if (c && c.name) {
           cookieMap.set(c.name, c.value);
@@ -87,8 +89,17 @@ async function extractCookiesForUrl(targetUrl, isGoogle) {
       });
       return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
     } else {
-      let cookies = await chrome.cookies.getAll({ url: targetUrl });
-      return cookies.map(c => `${c.name}=${c.value}`).join("; ");
+      let [cookies, refCookies] = await Promise.all([
+        chrome.cookies.getAll({ url: targetUrl }).catch(() => []),
+        pageReferrer ? chrome.cookies.getAll({ url: pageReferrer }).catch(() => []) : []
+      ]);
+      const cookieMap = new Map();
+      [...cookies, ...(refCookies || [])].forEach(c => {
+        if (c && c.name) {
+          cookieMap.set(c.name, c.value);
+        }
+      });
+      return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
     }
   } catch (e) {
     console.warn("[Rapid] Failed to get cookies:", e);
@@ -146,7 +157,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "RAPID_INTERCEPT_LINK") {
     (async () => {
       let isGoogle = isGoogleDriveUrl(msg.url);
-      let cookies = await extractCookiesForUrl(msg.url, isGoogle);
+      let ref = msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : "");
+      let cookies = await extractCookiesForUrl(msg.url, isGoogle, ref);
       let success = await sendToRapidApp({
         url: msg.url,
         referrer: msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : ""),
@@ -199,8 +211,14 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   (async () => {
     try {
       let isGoogle = isGoogleDriveUrl(targetUrl);
-      let cookies = await extractCookiesForUrl(targetUrl, isGoogle);
       let ref = downloadItem.referrer || (isGoogle ? "https://drive.google.com/" : "");
+      if (!ref) {
+        let tabs = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+        if (tabs && tabs[0] && tabs[0].url) {
+          ref = tabs[0].url;
+        }
+      }
+      let cookies = await extractCookiesForUrl(targetUrl, isGoogle, ref);
       let rawFilename = (downloadItem.filename || "").trim();
       let resolvedFilename = "";
       let lowerFn = rawFilename.toLowerCase();

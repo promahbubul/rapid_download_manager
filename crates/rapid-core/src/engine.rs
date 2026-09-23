@@ -527,9 +527,35 @@ pub fn is_generic_placeholder(name: &str) -> bool {
     false
 }
 
+pub fn sanitize_filename(name: &str) -> String {
+    let invalid = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+    let cleaned: String = name
+        .chars()
+        .map(|c| if invalid.contains(&c) || c.is_control() { '_' } else { c })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    if trimmed.is_empty() {
+        "download".to_string()
+    } else {
+        if trimmed.len() > 180 {
+            let path = std::path::Path::new(trimmed);
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(trimmed);
+            let max_stem_len = 180usize.saturating_sub(ext.len() + 1);
+            let truncated_stem: String = stem.chars().take(max_stem_len).collect();
+            if ext.is_empty() {
+                truncated_stem
+            } else {
+                format!("{}.{}", truncated_stem, ext)
+            }
+        } else {
+            trimmed.to_string()
+        }
+    }
+}
+
 pub fn resolve_best_filename(custom: Option<&str>, probed: &str) -> String {
-    let custom_cleaned = custom.map(|s| s.trim()).filter(|s| !s.is_empty());
-    match custom_cleaned {
+    let raw = match custom.map(|s| s.trim()).filter(|s| !s.is_empty()) {
         None => probed.to_string(),
         Some(c) => {
             if is_generic_placeholder(c) {
@@ -554,7 +580,8 @@ pub fn resolve_best_filename(custom: Option<&str>, probed: &str) -> String {
                 }
             }
         }
-    }
+    };
+    sanitize_filename(&raw)
 }
 
 

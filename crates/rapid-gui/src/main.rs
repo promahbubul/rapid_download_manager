@@ -595,40 +595,47 @@ impl RapidApp {
         let default_download_dir = dirs_or_fallback();
 
         let mut initial_tasks = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&default_download_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("rapid") {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(mut state) = serde_json::from_str::<rapid_core::DownloadTaskState>(&content) {
-                            let downloaded_bytes: u64 = state.segments.iter().map(|s| s.downloaded_bytes).sum();
-                            let total = state.total_bytes.unwrap_or(0);
-                            let progress_percent = if total > 0 { (downloaded_bytes as f32 / total as f32) * 100.0 } else { 0.0 };
-                            
-                            if state.status == rapid_core::DownloadStatus::Downloading {
-                                state.status = rapid_core::DownloadStatus::Paused;
+        let mut dirs_to_scan = vec![default_download_dir.clone()];
+        for cat in &["Programs", "Compressed", "Videos", "Music", "Documents", "Images"] {
+            dirs_to_scan.push(default_download_dir.join(cat));
+        }
+
+        for scan_dir in dirs_to_scan {
+            if let Ok(entries) = std::fs::read_dir(&scan_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("rapid") {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            if let Ok(mut state) = serde_json::from_str::<rapid_core::DownloadTaskState>(&content) {
+                                let downloaded_bytes: u64 = state.segments.iter().map(|s| s.downloaded_bytes).sum();
+                                let total = state.total_bytes.unwrap_or(0);
+                                let progress_percent = if total > 0 { (downloaded_bytes as f32 / total as f32) * 100.0 } else { 0.0 };
+                                
+                                if state.status == rapid_core::DownloadStatus::Downloading {
+                                    state.status = rapid_core::DownloadStatus::Paused;
+                                }
+                                
+                                let ui = ActiveTaskUI {
+                                    id: state.id,
+                                    filename: state.target_file.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                                    url: state.url,
+                                    target_file: state.target_file,
+                                    total_bytes: state.total_bytes,
+                                    downloaded_bytes,
+                                    progress_percent,
+                                    speed_bps: 0,
+                                    eta_seconds: None,
+                                    status: state.status,
+                                    num_segments: state.segments.len(),
+                                    segments: state.segments,
+                                    task_handle: None,
+                                    is_resuming: false,
+                                    cookies: state.cookies,
+                                    referrer: state.referrer,
+                                    user_agent: state.user_agent,
+                                };
+                                initial_tasks.push(ui);
                             }
-                            
-                            let ui = ActiveTaskUI {
-                                id: state.id,
-                                filename: state.target_file.file_name().unwrap_or_default().to_string_lossy().into_owned(),
-                                url: state.url,
-                                target_file: state.target_file,
-                                total_bytes: state.total_bytes,
-                                downloaded_bytes,
-                                progress_percent,
-                                speed_bps: 0,
-                                eta_seconds: None,
-                                status: state.status,
-                                num_segments: state.segments.len(),
-                                segments: state.segments,
-                                task_handle: None,
-                                is_resuming: false,
-                                cookies: state.cookies,
-                                referrer: state.referrer,
-                                user_agent: state.user_agent,
-                            };
-                            initial_tasks.push(ui);
                         }
                     }
                 }
@@ -645,9 +652,10 @@ impl RapidApp {
         let dest_for_server = default_download_dir.clone();
         let ctx_for_server = cc.egui_ctx.clone();
         let tx_for_server = filename_resolver_tx.clone();
+        let tasks_for_server = Arc::clone(&tasks_arc);
 
         rt.spawn(async move {
-            run_extension_server(pending_for_server, dest_for_server, ctx_for_server, tx_for_server).await;
+            run_extension_server(pending_for_server, dest_for_server, ctx_for_server, tx_for_server, tasks_for_server).await;
         });
 
         #[cfg(windows)]
@@ -790,16 +798,22 @@ impl RapidApp {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
 
+        let is_gd = url.contains("drive.google.com")
+            || url.contains("googleusercontent.com")
+            || url.contains("usercontent.google.com")
+            || url.contains("docs.google.com")
+            || url.contains("takeout-download-drive");
+
         rt.spawn(async move {
             let config = DownloadConfig {
                 url: url.clone(),
                 output_dir: dest_dir,
                 custom_filename: Some(filename.clone()),
-                num_segments: segments_count,
+                num_segments: if is_gd { 1 } else { segments_count },
                 cookies,
                 referrer,
                 user_agent,
-                ..Default::default()
+                is_gdrive: is_gd,
             };
 
             match DownloadTask::create(task_id.clone(), config).await {
@@ -835,6 +849,7 @@ impl RapidApp {
 
                     let res = task_arc.run().await;
                     if let Err(e) = res {
+                        eprintln!("[Rapid] Resume failed for '{}': {}", filename, e);
                         let mut list = tasks_arc.lock().await;
                         if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
                             if item.status == DownloadStatus::Downloading {
@@ -846,6 +861,7 @@ impl RapidApp {
                     }
                 }
                 Err(e) => {
+                    eprintln!("[Rapid] Failed to create task for resume '{}': {}", filename, e);
                     let mut list = tasks_arc.lock().await;
                     if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
                         item.status = DownloadStatus::Failed(e.to_string());
@@ -861,7 +877,7 @@ impl RapidApp {
         let rt = Arc::clone(&self.tokio_rt);
         let tasks_arc = Arc::clone(&self.tasks);
 
-        let (task_id, url, target_file, filename, segments_count) = {
+        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent) = {
             let Ok(mut list) = self.tasks.try_lock() else { return; };
             if task_index >= list.len() { return; }
             let task = &mut list[task_index];
@@ -883,6 +899,9 @@ impl RapidApp {
                 task.target_file.clone(),
                 task.filename.clone(),
                 task.num_segments,
+                task.cookies.clone(),
+                task.referrer.clone(),
+                task.user_agent.clone(),
             )
         };
 
@@ -890,6 +909,12 @@ impl RapidApp {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
+
+        let is_gd = url.contains("drive.google.com")
+            || url.contains("googleusercontent.com")
+            || url.contains("usercontent.google.com")
+            || url.contains("docs.google.com")
+            || url.contains("takeout-download-drive");
 
         rt.spawn(async move {
             let _ = tokio::fs::remove_file(&target_file).await;
@@ -900,8 +925,11 @@ impl RapidApp {
                 url: url.clone(),
                 output_dir: dest_dir,
                 custom_filename: Some(filename.clone()),
-                num_segments: segments_count,
-                ..Default::default()
+                num_segments: if is_gd { 1 } else { segments_count },
+                cookies,
+                referrer,
+                user_agent,
+                is_gdrive: is_gd,
             };
 
             match DownloadTask::create(task_id.clone(), config).await {
@@ -939,6 +967,7 @@ impl RapidApp {
 
                     let res = task_arc.run().await;
                     if let Err(e) = res {
+                        eprintln!("[Rapid] Redownload failed for '{}': {}", filename, e);
                         let mut list = tasks_arc.lock().await;
                         if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
                             if item.status == DownloadStatus::Downloading {
@@ -950,6 +979,7 @@ impl RapidApp {
                     }
                 }
                 Err(e) => {
+                    eprintln!("[Rapid] Failed to recreate task for redownload '{}': {}", filename, e);
                     let mut list = tasks_arc.lock().await;
                     if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
                         item.status = DownloadStatus::Failed(e.to_string());
@@ -1739,6 +1769,19 @@ impl eframe::App for RapidApp {
                         );
                     }
 
+                    if queued_count > 0 {
+                        render_custom_chip_with_icon(
+                            ui,
+                            ModernIcon::Play,
+                            "Queued:",
+                            &queued_count.to_string(),
+                            Color32::from_rgb(32, 20, 54),
+                            GLASS_PRIMARY,
+                            Color32::from_rgb(216, 180, 254),
+                            "Downloads waiting in queue",
+                        );
+                    }
+
                     // 5. Finished Tasks Chip
                     render_custom_chip_with_icon(
                         ui,
@@ -1878,7 +1921,7 @@ impl eframe::App for RapidApp {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new(format!("⚠ Error: {}", err)).color(STATUS_FAILED).strong());
                                                 if ui.button(RichText::new("🔄 Retry Now").strong()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                    action_resume = Some(idx);
+                                                    action_redownload = Some(idx);
                                                 }
                                             });
                                         });
@@ -1977,7 +2020,7 @@ impl eframe::App for RapidApp {
                         // Category filter
                         let cat_ok = match self.selected_filter {
                             FilterCategory::All => true,
-                            FilterCategory::Active => task.status == DownloadStatus::Downloading,
+                            FilterCategory::Active => matches!(task.status, DownloadStatus::Downloading | DownloadStatus::Queued),
                             FilterCategory::Paused => matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_)),
                             FilterCategory::Completed => task.status == DownloadStatus::Completed,
                         };
@@ -2244,9 +2287,9 @@ impl eframe::App for RapidApp {
                                                     DownloadStatus::Failed(err) => (STATUS_FAILED, "Failed".to_string(), Some(format!("Failure reason: {}\nClick Resume/Retry to retry.", err))),
                                                     _ => (PINK_MUTED, "Queued".to_string(), None),
                                                 };
-                                                let label = ui.add(egui::Label::new(RichText::new(text).color(color).strong()).sense(egui::Sense::click()));
+                                                let mut label = ui.add(egui::Label::new(RichText::new(text).color(color).strong()).sense(egui::Sense::click()));
                                                 if let Some(tip) = tooltip {
-                                                    label.clone().on_hover_text(tip);
+                                                    label = label.on_hover_text(tip);
                                                 }
                                                 if label.clicked() {
                                                     selected = Some(i);
@@ -3367,6 +3410,7 @@ async fn run_extension_server(
     dest_dir: PathBuf,
     ctx: egui::Context,
     resolver_tx: std::sync::mpsc::Sender<(String, String)>,
+    tasks_arc: Arc<tokio::sync::Mutex<Vec<ActiveTaskUI>>>,
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -3394,6 +3438,7 @@ async fn run_extension_server(
         let dest_clone = dest_dir.clone();
         let ctx_clone = ctx.clone();
         let resolver_tx_clone = resolver_tx.clone();
+        let tasks_clone = Arc::clone(&tasks_arc);
 
         tokio::spawn(async move {
             let mut buffer = Vec::new();
@@ -3463,6 +3508,38 @@ async fn run_extension_server(
 
             // Handle health check and wake
             if req_str.starts_with("GET") {
+                if req_str.contains("/tasks") {
+                    let list = tasks_clone.lock().await;
+                    let summary: Vec<serde_json::Value> = list.iter().map(|t| {
+                        let status_str = match &t.status {
+                            DownloadStatus::Downloading => "Downloading".to_string(),
+                            DownloadStatus::Completed => "Completed".to_string(),
+                            DownloadStatus::Paused => "Paused".to_string(),
+                            DownloadStatus::Queued => "Queued".to_string(),
+                            DownloadStatus::Probing => "Probing".to_string(),
+                            DownloadStatus::Cancelled => "Cancelled".to_string(),
+                            DownloadStatus::Failed(e) => format!("Failed: {}", e),
+                        };
+                        serde_json::json!({
+                            "id": t.id,
+                            "filename": t.filename,
+                            "url": t.url,
+                            "status": status_str,
+                            "target_file": t.target_file.to_string_lossy(),
+                            "downloaded_bytes": t.downloaded_bytes,
+                            "total_bytes": t.total_bytes,
+                            "progress_percent": t.progress_percent,
+                        })
+                    }).collect();
+                    let resp_body = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "[]".to_string());
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                        resp_body.len(),
+                        resp_body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    return;
+                }
                 if req_str.contains("/wake") {
                     ctx_clone.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx_clone.send_viewport_cmd(egui::ViewportCommand::Minimized(false));

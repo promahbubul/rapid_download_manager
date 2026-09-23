@@ -51,6 +51,11 @@ impl DownloadWorker {
 
             attempts += 1;
 
+            // Ensure destination folder exists
+            if let Some(parent) = target_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+
             // Open target file for random-access writing at current offset
             let file_res = OpenOptions::new()
                 .write(true)
@@ -61,6 +66,7 @@ impl DownloadWorker {
             let mut file = match file_res {
                 Ok(f) => f,
                 Err(e) => {
+                    eprintln!("[Rapid Worker] Failed to open target file {:?}: {}", target_path, e);
                     last_error = Some(RapidError::Io(e));
                     sleep(Duration::from_millis(500 * attempts as u64)).await;
                     continue;
@@ -103,11 +109,31 @@ impl DownloadWorker {
 
             let status = resp.status();
             if use_range && status != reqwest::StatusCode::PARTIAL_CONTENT && status != reqwest::StatusCode::OK {
-                last_error = Some(RapidError::HttpStatus(status));
+                eprintln!("[Rapid Worker] Range request status {}: {}", status, url);
+                let err_msg = if status == reqwest::StatusCode::FORBIDDEN {
+                    "HTTP 403 Forbidden: Link expired or access restricted (session cookies needed)".to_string()
+                } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                    "HTTP 401 Unauthorized: Authentication required".to_string()
+                } else if status == reqwest::StatusCode::NOT_FOUND {
+                    "HTTP 404 Not Found: File not found on server".to_string()
+                } else {
+                    format!("HTTP status {}", status)
+                };
+                last_error = Some(RapidError::Other(err_msg));
                 sleep(Duration::from_millis(500 * attempts as u64)).await;
                 continue;
             } else if !use_range && !status.is_success() {
-                last_error = Some(RapidError::HttpStatus(status));
+                eprintln!("[Rapid Worker] Request error status {}: {}", status, url);
+                let err_msg = if status == reqwest::StatusCode::FORBIDDEN {
+                    "HTTP 403 Forbidden: Link expired or access restricted (session cookies needed)".to_string()
+                } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                    "HTTP 401 Unauthorized: Authentication required".to_string()
+                } else if status == reqwest::StatusCode::NOT_FOUND {
+                    "HTTP 404 Not Found: File not found on server".to_string()
+                } else {
+                    format!("HTTP status {}", status)
+                };
+                last_error = Some(RapidError::Other(err_msg));
                 sleep(Duration::from_millis(500 * attempts as u64)).await;
                 continue;
             }
