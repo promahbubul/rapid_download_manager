@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 // #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Console enabled for diagnostics
 
 use chrono::Utc;
@@ -6,6 +7,7 @@ use rapid_core::{DownloadConfig, DownloadStatus, DownloadTask};
 use std::path::PathBuf;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
@@ -372,6 +374,65 @@ fn render_file_type_badge(ui: &mut egui::Ui, ext: &str) {
         });
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HistoryRecord {
+    pub id: String,
+    pub filename: String,
+    pub url: String,
+    pub target_file: PathBuf,
+    pub total_bytes: Option<u64>,
+    pub completed_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn get_history_file_path() -> PathBuf {
+    dirs_or_fallback().join(".rapid_history.json")
+}
+
+fn load_history() -> Vec<HistoryRecord> {
+    let path = get_history_file_path();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(records) = serde_json::from_str::<Vec<HistoryRecord>>(&content) {
+            return records;
+        }
+    }
+    Vec::new()
+}
+
+fn save_task_to_history(item: &ActiveTaskUI) {
+    let path = get_history_file_path();
+    let mut records = load_history();
+    if let Some(existing) = records.iter_mut().find(|r| r.id == item.id || r.target_file == item.target_file) {
+        existing.total_bytes = item.total_bytes;
+        existing.completed_at = chrono::Utc::now();
+    } else {
+        records.push(HistoryRecord {
+            id: item.id.clone(),
+            filename: item.filename.clone(),
+            url: item.url.clone(),
+            target_file: item.target_file.clone(),
+            total_bytes: item.total_bytes,
+            completed_at: chrono::Utc::now(),
+        });
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&records) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+fn remove_from_history(id: &str) {
+    let path = get_history_file_path();
+    let mut records = load_history();
+    records.retain(|r| r.id != id);
+    if let Ok(json) = serde_json::to_string_pretty(&records) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+fn clear_all_history() {
+    let path = get_history_file_path();
+    let _ = std::fs::remove_file(&path);
+}
+
 struct ActiveTaskUI {
     id: String,
     filename: String,
@@ -483,6 +544,8 @@ struct RapidApp {
     show_delete_modal: bool,
     tasks_to_delete: HashSet<String>,
     has_requested_initial_focus: bool,
+    pub speed_limit_bps: Arc<AtomicU64>,
+    pub selected_speed_limit_idx: usize,
 
     // Browser Extension Incoming Downloads
     pending_browser_queue: Arc<std::sync::Mutex<VecDeque<PendingBrowserDownload>>>,
@@ -642,6 +705,32 @@ impl RapidApp {
             }
         }
         
+        // Load persistent history records before wrapping initial_tasks in Mutex
+        let history_records = load_history();
+        for record in history_records {
+            if !initial_tasks.iter().any(|t| t.id == record.id || t.target_file == record.target_file) {
+                initial_tasks.push(ActiveTaskUI {
+                    id: record.id,
+                    filename: record.filename,
+                    url: record.url,
+                    target_file: record.target_file,
+                    total_bytes: record.total_bytes,
+                    downloaded_bytes: record.total_bytes.unwrap_or(0),
+                    progress_percent: 100.0,
+                    speed_bps: 0,
+                    eta_seconds: None,
+                    status: DownloadStatus::Completed,
+                    segments: Vec::new(),
+                    task_handle: None,
+                    num_segments: 1,
+                    is_resuming: false,
+                    cookies: None,
+                    referrer: None,
+                    user_agent: None,
+                });
+            }
+        }
+
         let tasks_arc = Arc::new(tokio::sync::Mutex::new(initial_tasks));
 
         let pending_browser_queue = Arc::new(std::sync::Mutex::new(VecDeque::new()));
@@ -682,6 +771,8 @@ impl RapidApp {
             show_delete_modal: false,
             tasks_to_delete: HashSet::new(),
             has_requested_initial_focus: false,
+            speed_limit_bps: Arc::new(AtomicU64::new(0)),
+            selected_speed_limit_idx: 0,
             pending_browser_queue,
             current_browser_prompt: None,
             filename_resolver_rx,
@@ -743,6 +834,7 @@ impl RapidApp {
                             None,
                             None,
                             true,
+                            None,
                             Arc::clone(&rt_inner),
                             Arc::clone(&tasks_crawl),
                         );
@@ -760,7 +852,7 @@ impl RapidApp {
         self.is_probing = true;
         self.add_error = None;
 
-        spawn_download_task(url, dest_dir, segments, custom_filename, None, None, None, false, rt, tasks_arc);
+        spawn_download_task(url, dest_dir, segments, custom_filename, None, None, None, false, Some(Arc::clone(&self.speed_limit_bps)), rt, tasks_arc);
 
         self.is_probing = false;
         self.show_add_dialog = false;
@@ -804,6 +896,7 @@ impl RapidApp {
             || url.contains("docs.google.com")
             || url.contains("takeout-download-drive");
 
+        let speed_limit_arc = Arc::clone(&self.speed_limit_bps);
         rt.spawn(async move {
             let config = DownloadConfig {
                 url: url.clone(),
@@ -814,6 +907,7 @@ impl RapidApp {
                 referrer,
                 user_agent,
                 is_gdrive: is_gd,
+                speed_limit: Some(speed_limit_arc),
             };
 
             match DownloadTask::create(task_id.clone(), config).await {
@@ -916,6 +1010,7 @@ impl RapidApp {
             || url.contains("docs.google.com")
             || url.contains("takeout-download-drive");
 
+        let speed_limit_arc = Arc::clone(&self.speed_limit_bps);
         rt.spawn(async move {
             let _ = tokio::fs::remove_file(&target_file).await;
             let manifest = rapid_core::DownloadTaskState::manifest_path(&target_file);
@@ -930,6 +1025,7 @@ impl RapidApp {
                 referrer,
                 user_agent,
                 is_gdrive: is_gd,
+                speed_limit: Some(speed_limit_arc),
             };
 
             match DownloadTask::create(task_id.clone(), config).await {
@@ -1592,6 +1688,47 @@ impl eframe::App for RapidApp {
                         // Minimize to System Tray
                         if modern_icon_button(ui, ModernIcon::MinimizeTray, Vec2::new(32.0, 30.0), GLASS_MUTED, GLASS_SECONDARY, "Minimize to Windows System Tray") {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        }
+
+                        ui.add_space(8.0);
+
+                        // Bandwidth Speed Limiter Dropdown
+                        let speed_options = [
+                            ("⚡ Unlimited", 0u64),
+                            ("🐢 512 KB/s", 512 * 1024),
+                            ("🚀 1 MB/s", 1024 * 1024),
+                            ("🏎️ 2 MB/s", 2 * 1024 * 1024),
+                            ("⚡ 5 MB/s", 5 * 1024 * 1024),
+                            ("⚡ 10 MB/s", 10 * 1024 * 1024),
+                        ];
+
+                        let current_limit_label = speed_options[self.selected_speed_limit_idx.min(speed_options.len() - 1)].0;
+                        egui::ComboBox::from_id_source("toolbar_speed_limiter")
+                            .selected_text(RichText::new(current_limit_label).size(11.5).color(GLASS_SECONDARY).strong())
+                            .height(180.0)
+                            .width(105.0)
+                            .show_ui(ui, |ui| {
+                                for (idx, (label, val)) in speed_options.iter().enumerate() {
+                                    let is_sel = self.selected_speed_limit_idx == idx;
+                                    if ui.selectable_label(is_sel, RichText::new(*label).size(11.5)).clicked() {
+                                        self.selected_speed_limit_idx = idx;
+                                        self.speed_limit_bps.store(*val, Ordering::Relaxed);
+                                    }
+                                }
+                            });
+
+                        if self.selected_filter == FilterCategory::Completed {
+                            ui.add_space(6.0);
+                            let clear_btn = egui::Button::new(RichText::new("🗑 Clear History").size(11.5).color(Color32::from_rgb(255, 120, 120)))
+                                .fill(Color32::from_rgba_unmultiplied(45, 18, 24, 180))
+                                .stroke(Stroke::new(1.0_f32, STATUS_FAILED))
+                                .rounding(egui::Rounding::same(5.0));
+                            if ui.add(clear_btn).on_hover_text("Remove all completed downloads from history").clicked() {
+                                clear_all_history();
+                                if let Ok(mut list) = self.tasks.try_lock() {
+                                    list.retain(|t| t.status != DownloadStatus::Completed);
+                                }
+                            }
                         }
                     });
                 });
@@ -3116,6 +3253,7 @@ fn render_parallel_connections_combobox(
                         ua,
                         referrer,
                         is_gd,
+                        Some(Arc::clone(&self.speed_limit_bps)),
                         Arc::clone(&self.tokio_rt),
                         Arc::clone(&self.tasks),
                     );
@@ -3249,6 +3387,7 @@ fn render_parallel_connections_combobox(
                             }
                             let rapid_file = rapid_core::DownloadTaskState::manifest_path(&task.target_file);
                             let _ = std::fs::remove_file(&rapid_file);
+                            remove_from_history(&task.id);
                             if do_permanent_delete {
                                 let _ = std::fs::remove_file(&task.target_file);
                             }
@@ -3292,10 +3431,110 @@ fn spawn_download_task(
     user_agent: Option<String>,
     referrer: Option<String>,
     is_gdrive: bool,
+    speed_limit: Option<Arc<AtomicU64>>,
     rt: Arc<Runtime>,
     tasks_arc: Arc<Mutex<Vec<ActiveTaskUI>>>,
 ) {
     let task_id = format!("task-{}", Utc::now().timestamp_millis());
+
+    let is_hls = rapid_core::hls::HlsDownloader::is_hls(&url)
+        || custom_filename.as_deref().map(|f| f.to_lowercase().ends_with(".m3u8")).unwrap_or(false);
+
+    if is_hls {
+        let speed_limit_for_hls = speed_limit.clone();
+        rt.spawn(async move {
+            let resolved_fn = if let Some(ref cf) = custom_filename {
+                if cf.to_lowercase().ends_with(".m3u8") {
+                    format!("{}.mp4", &cf[..cf.len() - 5])
+                } else {
+                    cf.clone()
+                }
+            } else {
+                "HLS_Stream.mp4".to_string()
+            };
+
+            let target_file = dest_dir.join(&resolved_fn);
+            let cancel_token = tokio_util::sync::CancellationToken::new();
+            let (progress_tx, mut rx) = tokio::sync::broadcast::channel::<rapid_core::DownloadProgress>(100);
+
+            let downloader = rapid_core::hls::HlsDownloader::new(
+                task_id.clone(),
+                url.clone(),
+                resolved_fn.clone(),
+                target_file.clone(),
+                cookies.clone(),
+                referrer.clone(),
+                user_agent.clone(),
+                speed_limit_for_hls,
+                cancel_token,
+            );
+
+            let ui_entry = ActiveTaskUI {
+                id: task_id.clone(),
+                filename: resolved_fn.clone(),
+                url: url.clone(),
+                target_file: target_file.clone(),
+                total_bytes: None,
+                downloaded_bytes: 0,
+                progress_percent: 0.0,
+                speed_bps: 0,
+                eta_seconds: None,
+                status: DownloadStatus::Downloading,
+                segments: Vec::new(),
+                task_handle: None,
+                num_segments: 1,
+                is_resuming: false,
+                cookies: cookies.clone(),
+                referrer: referrer.clone(),
+                user_agent: user_agent.clone(),
+            };
+
+            {
+                let mut list = tasks_arc.lock().await;
+                list.push(ui_entry);
+            }
+
+            let tasks_for_progress = Arc::clone(&tasks_arc);
+            let task_id_for_progress = task_id.clone();
+
+            tokio::spawn(async move {
+                while let Ok(prog) = rx.recv().await {
+                    let mut list = tasks_for_progress.lock().await;
+                    if let Some(item) = list.iter_mut().find(|t| t.id == task_id_for_progress) {
+                        item.downloaded_bytes = prog.downloaded_bytes;
+                        item.progress_percent = prog.progress_percent;
+                        item.speed_bps = prog.speed_bps;
+                        item.eta_seconds = prog.eta_seconds;
+                        item.status = prog.status.clone();
+                        item.segments = prog.segments;
+                        if let Some(tot) = prog.total_bytes {
+                            item.total_bytes = Some(tot);
+                        }
+                    }
+                }
+            });
+
+            let res = downloader.run(progress_tx).await;
+            let mut list = tasks_arc.lock().await;
+            if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
+                match res {
+                    Ok(_) => {
+                        item.status = DownloadStatus::Completed;
+                        item.progress_percent = 100.0;
+                        item.speed_bps = 0;
+                        item.eta_seconds = None;
+                        save_task_to_history(item);
+                    }
+                    Err(e) => {
+                        item.status = DownloadStatus::Failed(e.to_string());
+                        item.speed_bps = 0;
+                        item.eta_seconds = None;
+                    }
+                }
+            }
+        });
+        return;
+    }
 
     rt.spawn(async move {
         let gdrive = is_gdrive
@@ -3313,6 +3552,7 @@ fn spawn_download_task(
             user_agent: user_agent.clone(),
             referrer: referrer.clone(),
             is_gdrive: gdrive,
+            speed_limit: speed_limit.clone(),
         };
 
         match DownloadTask::create(task_id.clone(), config).await {
@@ -3386,13 +3626,22 @@ fn spawn_download_task(
                 });
 
                 let res = task_arc.run().await;
-                if let Err(e) = res {
-                    let mut list = tasks_arc.lock().await;
-                    if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
-                        if item.status == DownloadStatus::Downloading {
-                            item.status = DownloadStatus::Failed(e.to_string());
+                let mut list = tasks_arc.lock().await;
+                if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
+                    match res {
+                        Ok(_) => {
+                            item.status = DownloadStatus::Completed;
+                            item.progress_percent = 100.0;
                             item.speed_bps = 0;
                             item.eta_seconds = None;
+                            save_task_to_history(item);
+                        }
+                        Err(e) => {
+                            if item.status == DownloadStatus::Downloading {
+                                item.status = DownloadStatus::Failed(e.to_string());
+                                item.speed_bps = 0;
+                                item.eta_seconds = None;
+                            }
                         }
                     }
                 }

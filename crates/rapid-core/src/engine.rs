@@ -10,6 +10,7 @@ use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, USER_AGENT, REFERER};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 use tokio::fs::{self, OpenOptions};
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -23,6 +24,7 @@ pub struct DownloadTask {
     pub accept_ranges: bool,
     pub segments: Vec<Arc<Mutex<Segment>>>,
     pub status: Arc<Mutex<DownloadStatus>>,
+    pub speed_limit: Option<Arc<AtomicU64>>,
     cancel_token: CancellationToken,
     progress_tx: broadcast::Sender<DownloadProgress>,
     created_at: DateTime<Utc>,
@@ -125,6 +127,7 @@ impl DownloadTask {
 
         let task = Self {
             id,
+            speed_limit: config.speed_limit.clone(),
             config,
             target_file,
             total_bytes,
@@ -186,9 +189,10 @@ impl DownloadTask {
                 let use_range = self.accept_ranges;
                 let worker_cookies = self.config.cookies.clone();
                 let worker_referrer = self.config.referrer.clone();
+                let worker_speed_limit = self.speed_limit.clone();
 
                 let handle = tokio::spawn(async move {
-                    DownloadWorker::run(worker_client, url, path, seg, tx, token, use_range, worker_cookies, worker_referrer).await
+                    DownloadWorker::run(worker_client, url, path, seg, tx, token, use_range, worker_cookies, worker_referrer, worker_speed_limit).await
                 });
                 worker_handles.push(handle);
             }

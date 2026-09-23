@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -133,6 +135,7 @@ pub struct DownloadConfig {
     pub referrer: Option<String>,
     pub cookies: Option<String>,
     pub is_gdrive: bool,
+    pub speed_limit: Option<Arc<AtomicU64>>,
 }
 
 impl Default for DownloadConfig {
@@ -146,6 +149,7 @@ impl Default for DownloadConfig {
             referrer: None,
             cookies: None,
             is_gdrive: false,
+            speed_limit: None,
         }
     }
 }

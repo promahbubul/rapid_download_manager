@@ -6,6 +6,7 @@ use reqwest::Client;
 use std::io::SeekFrom;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -27,6 +28,7 @@ impl DownloadWorker {
         use_range: bool,
         cookies: Option<String>,
         referrer: Option<String>,
+        speed_limit: Option<Arc<AtomicU64>>,
     ) -> Result<()> {
         let (seg_index, start_byte, end_byte, mut downloaded) = {
             let s = segment.lock().await;
@@ -196,6 +198,17 @@ impl DownloadWorker {
                     last_error = Some(RapidError::Io(e));
                     stream_interrupted = true;
                     break;
+                }
+
+                // Bandwidth rate limiter
+                if let Some(ref limiter) = speed_limit {
+                    let limit_bps = limiter.load(Ordering::Relaxed);
+                    if limit_bps > 0 {
+                        let delay_ms = (len * 1000) / limit_bps;
+                        if delay_ms > 0 {
+                            sleep(Duration::from_millis(delay_ms.min(500))).await;
+                        }
+                    }
                 }
 
                 downloaded += len;
