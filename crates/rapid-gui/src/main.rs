@@ -966,6 +966,7 @@ impl RapidApp {
                             None,
                             None,
                             true,
+                            false,
                             None,
                             None,
                             Arc::clone(&rt_inner),
@@ -986,6 +987,7 @@ impl RapidApp {
         self.is_probing = true;
         self.add_error = None;
 
+        let is_vp = rapid_core::youtube::YoutubeDownloader::is_extractable_platform(&url);
         spawn_download_task(
             url,
             dest_dir,
@@ -995,6 +997,7 @@ impl RapidApp {
             None,
             None,
             false,
+            is_vp,
             Some(Arc::clone(&self.speed_limit_bps)),
             quality,
             rt,
@@ -4044,6 +4047,7 @@ fn render_parallel_connections_combobox(
                         q.retain(|item| item.url != prompt_url);
                     }
 
+                    let is_vp = prompt.is_youtube;
                     spawn_download_task(
                         url,
                         dest,
@@ -4053,6 +4057,7 @@ fn render_parallel_connections_combobox(
                         ua,
                         referrer,
                         is_gd,
+                        is_vp,
                         Some(Arc::clone(&self.speed_limit_bps)),
                         Some(quality),
                         Arc::clone(&self.tokio_rt),
@@ -4406,6 +4411,7 @@ fn spawn_download_task(
     user_agent: Option<String>,
     referrer: Option<String>,
     is_gdrive: bool,
+    is_video_platform: bool,
     speed_limit: Option<Arc<AtomicU64>>,
     quality: Option<rapid_core::youtube::DownloadQuality>,
     rt: Arc<Runtime>,
@@ -4515,7 +4521,8 @@ fn spawn_download_task(
         return;
     }
 
-    let is_yt = rapid_core::youtube::YoutubeDownloader::is_extractable_platform(&url)
+    let is_yt = is_video_platform
+        || rapid_core::youtube::YoutubeDownloader::is_extractable_platform(&url)
         || referrer.as_deref().map(|r| rapid_core::youtube::YoutubeDownloader::is_extractable_platform(r)).unwrap_or(false);
 
     if is_yt {

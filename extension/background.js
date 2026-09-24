@@ -186,59 +186,61 @@ function isGoogleDriveUrl(urlStr) {
 // Helper: Extract cookies for target URL + originating referrer page
 async function extractCookiesForUrl(targetUrl, isGoogle, pageReferrer) {
   try {
-    let isYT = targetUrl.includes("googlevideo.com") || 
-               targetUrl.includes("youtube.com") || 
-               (pageReferrer && pageReferrer.includes("youtube.com"));
+    let checkStr = (targetUrl + " " + (pageReferrer || "")).toLowerCase();
+    let isYT = checkStr.includes("googlevideo.com") || checkStr.includes("youtube.com") || checkStr.includes("youtu.be");
+    let isFB = checkStr.includes("facebook.com") || checkStr.includes("fb.watch") || checkStr.includes("fbcdn.net");
+    let isIG = checkStr.includes("instagram.com") || checkStr.includes("cdninstagram.com");
+    let isTW = checkStr.includes("twitter.com") || checkStr.includes("x.com") || checkStr.includes("twimg.com");
+    let isLI = checkStr.includes("linkedin.com") || checkStr.includes("licdn.com");
+    let isTT = checkStr.includes("tiktok.com") || checkStr.includes("tiktokcdn.com");
+    let isRD = checkStr.includes("reddit.com") || checkStr.includes("redd.it");
 
+    let domainsToQuery = [];
     if (isGoogle || isYT) {
-      const [driveCookies, googleCookies, rootGoogleCookies, ytCookies, rootYtCookies, contentCookies, dotContentCookies, userContentCookies, dotUserContentCookies, accountsCookies, urlCookies, refCookies] = await Promise.all([
-        chrome.cookies.getAll({ domain: "drive.google.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: ".google.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: "google.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: ".youtube.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: "youtube.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: "googleusercontent.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: ".googleusercontent.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: "usercontent.google.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: ".usercontent.google.com" }).catch(() => []),
-        chrome.cookies.getAll({ domain: "accounts.google.com" }).catch(() => []),
-        chrome.cookies.getAll({ url: targetUrl }).catch(() => []),
-        pageReferrer ? chrome.cookies.getAll({ url: pageReferrer }).catch(() => []) : []
-      ]);
-
-      const cookieMap = new Map();
-      [
-        ...googleCookies,
-        ...rootGoogleCookies,
-        ...driveCookies,
-        ...ytCookies,
-        ...rootYtCookies,
-        ...contentCookies,
-        ...dotContentCookies,
-        ...userContentCookies,
-        ...dotUserContentCookies,
-        ...accountsCookies,
-        ...urlCookies,
-        ...(refCookies || [])
-      ].forEach(c => {
-        if (c && c.name) {
-          cookieMap.set(c.name, c.value);
-        }
-      });
-      return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
-    } else {
-      let [cookies, refCookies] = await Promise.all([
-        chrome.cookies.getAll({ url: targetUrl }).catch(() => []),
-        pageReferrer ? chrome.cookies.getAll({ url: pageReferrer }).catch(() => []) : []
-      ]);
-      const cookieMap = new Map();
-      [...cookies, ...(refCookies || [])].forEach(c => {
-        if (c && c.name) {
-          cookieMap.set(c.name, c.value);
-        }
-      });
-      return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
+      domainsToQuery.push(
+        "drive.google.com", ".google.com", "google.com",
+        ".youtube.com", "youtube.com",
+        "googleusercontent.com", ".googleusercontent.com",
+        "usercontent.google.com", ".usercontent.google.com",
+        "accounts.google.com"
+      );
     }
+    if (isFB) {
+      domainsToQuery.push(".facebook.com", "facebook.com", ".fbcdn.net");
+    }
+    if (isIG) {
+      domainsToQuery.push(".instagram.com", "instagram.com");
+    }
+    if (isTW) {
+      domainsToQuery.push(".twitter.com", "twitter.com", ".x.com", "x.com");
+    }
+    if (isLI) {
+      domainsToQuery.push(".linkedin.com", "linkedin.com");
+    }
+    if (isTT) {
+      domainsToQuery.push(".tiktok.com", "tiktok.com");
+    }
+    if (isRD) {
+      domainsToQuery.push(".reddit.com", "reddit.com");
+    }
+
+    let cookiePromises = domainsToQuery.map(d => chrome.cookies.getAll({ domain: d }).catch(() => []));
+    if (targetUrl && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))) {
+      cookiePromises.push(chrome.cookies.getAll({ url: targetUrl }).catch(() => []));
+    }
+    if (pageReferrer && (pageReferrer.startsWith("http://") || pageReferrer.startsWith("https://"))) {
+      cookiePromises.push(chrome.cookies.getAll({ url: pageReferrer }).catch(() => []));
+    }
+
+    const results = await Promise.all(cookiePromises);
+    const cookieMap = new Map();
+    results.flat().forEach(c => {
+      if (c && c.name) {
+        cookieMap.set(c.name, c.value);
+      }
+    });
+
+    return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
   } catch (e) {
     console.warn("[Rapid] Failed to get cookies:", e);
     return "";
@@ -295,6 +297,12 @@ function showNotification(title, message) {
 // ---------------------------------------------------------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+
+  if (msg.type === "RAPID_NOTIFY") {
+    showNotification(msg.title || "⚡ Rapid Download Manager", msg.message || "");
+    sendResponse({ success: true });
+    return true;
+  }
 
   // Query captured streams for current tab
   if (msg.type === "RAPID_GET_TAB_STREAM") {
@@ -391,7 +399,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       // 3. Fallback for video platforms (LinkedIn, Twitter, Facebook, TikTok, etc.)
-      const PLATFORMS = ["linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com", "reddit.com", "vimeo.com"];
+      const PLATFORMS = [
+        "linkedin.com", "licdn.com", "facebook.com", "fb.watch", "fb.com", "fbcdn.net",
+        "instagram.com", "cdninstagram.com", "threads.net", "twitter.com", "x.com", 
+        "twimg.com", "t.co", "tiktok.com", "tiktokcdn.com", "reddit.com", "redd.it", 
+        "v.redd.it", "vimeo.com", "dailymotion.com", "twitch.tv", "pinterest.com", 
+        "pin.it", "bilibili.com", "rumble.com", "streamable.com", "vk.com", "ok.ru"
+      ];
       let isPlatform = PLATFORMS.some(d => pageUrl.includes(d) || targetUrl.includes(d));
 
       if ((!targetUrl || targetUrl.startsWith("blob:")) && isPlatform) {

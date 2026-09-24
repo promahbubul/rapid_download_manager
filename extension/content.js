@@ -93,6 +93,53 @@ function sanitizeTitleString(str) {
 }
 
 function resolveMediaTitle(el, type) {
+  // Special handling for WhatsApp Web
+  if (window.location.hostname.includes("whatsapp.com")) {
+    let now = new Date();
+    let pad = (n) => String(n).padStart(2, '0');
+    let dateStr = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
+    let timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    return `WhatsApp_Video_${dateStr}_${timeStr}`;
+  }
+
+  // Special handling for Facebook
+  if (window.location.hostname.includes("facebook.com") || window.location.hostname.includes("fb.watch")) {
+    let post = el.closest("[role='article'], .userContentWrapper, div[data-ad-preview='message']");
+    let textNode = post ? post.querySelector("div[dir='auto'], h3, span[dir='auto']") : null;
+    let text = textNode ? textNode.textContent.trim().slice(0, 50) : "";
+    return sanitizeTitleString(text ? "Facebook_" + text : "Facebook_Video_" + Date.now());
+  }
+
+  // Special handling for Instagram
+  if (window.location.hostname.includes("instagram.com")) {
+    let post = el.closest("article, main");
+    let userNode = post ? post.querySelector("header a, a[role='link'] span") : null;
+    let user = userNode ? userNode.textContent.trim() : "";
+    return sanitizeTitleString(user ? "Instagram_" + user + "_" + Date.now() : "Instagram_Reel_" + Date.now());
+  }
+
+  // Special handling for Twitter / X
+  if (window.location.hostname.includes("twitter.com") || window.location.hostname.includes("x.com")) {
+    let tweet = el.closest("article[data-testid='tweet']");
+    let tweetText = tweet ? tweet.querySelector("[data-testid='tweetText']") : null;
+    let text = tweetText ? tweetText.textContent.trim().slice(0, 50) : "";
+    return sanitizeTitleString(text ? "Twitter_" + text : "Twitter_Video_" + Date.now());
+  }
+
+  // Special handling for TikTok
+  if (window.location.hostname.includes("tiktok.com")) {
+    let author = document.querySelector("[data-e2e='browse-username'], [data-e2e='user-title']");
+    let user = author ? author.textContent.trim() : "";
+    return sanitizeTitleString(user ? "TikTok_" + user + "_" + Date.now() : "TikTok_Video_" + Date.now());
+  }
+
+  // Special handling for Reddit
+  if (window.location.hostname.includes("reddit.com")) {
+    let heading = document.querySelector("h1, shreddit-title, [data-test-id='post-content'] h1");
+    let text = heading ? heading.textContent.trim().slice(0, 60) : "";
+    return sanitizeTitleString(text ? "Reddit_" + text : "Reddit_Video_" + Date.now());
+  }
+
   // Special handling for YouTube (Watch & Shorts)
   if (window.location.hostname.includes("youtube.com")) {
     const ytSelectors = [
@@ -440,6 +487,62 @@ function attachFloatingWidget(mediaEl, type) {
       title += "." + ext;
     }
 
+    // 1. WhatsApp Web and In-Browser Decrypted Blob Video extraction
+    let isWhatsApp = window.location.hostname.includes("whatsapp.com") || window.location.hostname.includes("web.whatsapp.com");
+    let currentSrc = mediaEl.currentSrc || mediaEl.src || "";
+    let isBlob = currentSrc.startsWith("blob:");
+
+    if (isWhatsApp || (isBlob && !window.location.hostname.includes("youtube.com"))) {
+      let blobUrl = isBlob ? currentSrc : "";
+      if (!blobUrl) {
+        let sources = mediaEl.querySelectorAll("source");
+        for (let s of sources) {
+          let sSrc = s.src || s.getAttribute("src") || "";
+          if (sSrc.startsWith("blob:")) {
+            blobUrl = sSrc;
+            break;
+          }
+        }
+      }
+
+      if (blobUrl) {
+        btnText.textContent = "Extracting video...";
+        dlButton.classList.add("sniffing");
+        try {
+          const resp = await fetch(blobUrl);
+          const blob = await resp.blob();
+
+          if (blob && blob.size > 0) {
+            const objectUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = objectUrl;
+            a.download = title;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 20000);
+
+            btnText.textContent = "✓ Downloaded!";
+            dlButton.classList.remove("sniffing");
+            dlButton.classList.add("success");
+            chrome.runtime.sendMessage({
+              type: "RAPID_NOTIFY",
+              title: "⚡ Rapid Download Manager",
+              message: `Saved: ${title}`
+            }).catch(() => {});
+            setTimeout(() => {
+              btnText.textContent = type === "audio" ? "Download Audio" : "Download Video";
+              dlButton.classList.remove("success");
+            }, 2500);
+            return;
+          }
+        } catch (fetchErr) {
+          console.warn("[Rapid] In-memory blob fetch fallback:", fetchErr);
+        }
+        dlButton.classList.remove("sniffing");
+      }
+    }
+
     let isYouTube = window.location.hostname.includes("youtube.com") || window.location.hostname.includes("youtu.be");
     if (isYouTube) {
       chrome.runtime.sendMessage({
@@ -490,11 +593,18 @@ function attachFloatingWidget(mediaEl, type) {
     }
 
     if (!mediaSrc) {
-      const PLATFORMS = ["linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com", "reddit.com", "vimeo.com"];
+      const PLATFORMS = [
+        "linkedin.com", "licdn.com", "facebook.com", "fb.watch", "fb.com", "fbcdn.net",
+        "instagram.com", "cdninstagram.com", "threads.net", "twitter.com", "x.com", 
+        "twimg.com", "t.co", "tiktok.com", "tiktokcdn.com", "reddit.com", "redd.it", 
+        "v.redd.it", "vimeo.com", "dailymotion.com", "twitch.tv", "pinterest.com", 
+        "pin.it", "bilibili.com", "rumble.com", "streamable.com", "vk.com", "ok.ru"
+      ];
       let isPlatformPage = PLATFORMS.some(d => window.location.hostname.includes(d));
       if (isPlatformPage) {
         let postUrl = window.location.href;
-        let postLink = mediaEl.closest("article, .feed-shared-update-v2, [data-urn]")?.querySelector("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/status/']");
+        let postLink = mediaEl.closest("article, .feed-shared-update-v2, [data-urn], [data-testid='tweet'], shreddit-post, div[role='article']")
+          ?.querySelector("a[href*='/reel/'], a[href*='/watch'], a[href*='/videos/'], a[href*='/posts/'], a[href*='/status/'], a[href*='/p/'], a[href*='/video/'], a[href*='/comments/']");
         if (postLink && postLink.href) {
           postUrl = postLink.href;
         }
