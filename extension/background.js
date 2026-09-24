@@ -10,17 +10,19 @@ const processedDownloadIds = new Set();
 const tabMediaStreams = new Map();
 
 // ---------------------------------------------------------
-// 0. Live Network Stream Sniffer (YouTube, GoogleVideo, HLS)
+// 0. Live Network Stream Sniffer (YouTube, GoogleVideo, HLS, LinkedIn, Direct Media)
 // ---------------------------------------------------------
+const MEDIA_EXT_REGEX = /\.(mp4|webm|m4v|m4s|m3u8|mpd|flv|mov|mkv|ts|mp3|m4a|aac|ogg|wav|opus)(\?.*)?$/i;
+
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (!details.url || details.tabId < 0) return;
     try {
       let u = new URL(details.url);
+      let tabData = tabMediaStreams.get(details.tabId) || { video: null, audio: null, m3u8: null };
 
       // 1. YouTube & Google Video Streams
       if (u.hostname.includes("googlevideo.com") && u.pathname.includes("videoplayback")) {
-        // Strip byte range and chunking params to get full unsegmented stream
         u.searchParams.delete("range");
         u.searchParams.delete("rn");
         u.searchParams.delete("rbuf");
@@ -28,8 +30,6 @@ chrome.webRequest.onBeforeRequest.addListener(
 
         let mime = (u.searchParams.get("mime") || "").toLowerCase();
         let itag = u.searchParams.get("itag") || "";
-
-        let tabData = tabMediaStreams.get(details.tabId) || { video: null, audio: null, m3u8: null };
 
         if (mime.startsWith("video") || itag === "18" || itag === "22") {
           tabData.video = {
@@ -47,26 +47,72 @@ chrome.webRequest.onBeforeRequest.addListener(
           };
         }
         tabMediaStreams.set(details.tabId, tabData);
+        return;
       }
 
       // 2. HLS (.m3u8) Streams
       if (u.pathname.includes(".m3u8") || details.url.includes(".m3u8")) {
-        let tabData = tabMediaStreams.get(details.tabId) || { video: null, audio: null, m3u8: null };
         tabData.m3u8 = {
           url: details.url,
           timestamp: Date.now()
         };
         tabMediaStreams.set(details.tabId, tabData);
+        return;
+      }
+
+      // 3. LinkedIn & Generic Media Streams
+      let isMediaReq = details.type === "media" 
+        || MEDIA_EXT_REGEX.test(u.pathname) 
+        || u.hostname.includes("licdn.com") 
+        || details.url.includes("mime=video")
+        || details.url.includes("mime=audio");
+
+      if (isMediaReq) {
+        let isAudio = /\.(mp3|m4a|aac|ogg|wav|opus)(\?.*)?$/i.test(u.pathname) || details.url.includes("mime=audio");
+        let item = {
+          url: details.url,
+          mime: isAudio ? "audio" : "video",
+          timestamp: Date.now()
+        };
+        if (isAudio) {
+          tabData.audio = item;
+        } else {
+          tabData.video = item;
+        }
+        tabMediaStreams.set(details.tabId, tabData);
       }
     } catch (e) {}
   },
   {
-    urls: [
-      "*://*.googlevideo.com/videoplayback*",
-      "*://*/*.m3u8*",
-      "*://*/*.m3u8"
-    ]
+    urls: ["<all_urls>"]
   }
+);
+
+// Sniff media responses via response headers
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    if (!details.url || details.tabId < 0 || !details.responseHeaders) return;
+    try {
+      let ctHeader = details.responseHeaders.find(h => h.name && h.name.toLowerCase() === "content-type");
+      if (!ctHeader || !ctHeader.value) return;
+      let ct = ctHeader.value.toLowerCase();
+      let tabData = tabMediaStreams.get(details.tabId) || { video: null, audio: null, m3u8: null };
+
+      if (ct.startsWith("video/") || ct.includes("application/vnd.apple.mpegurl") || ct.includes("application/x-mpegurl") || ct.includes("application/dash+xml")) {
+        if (ct.includes("mpegurl") || details.url.includes(".m3u8")) {
+          tabData.m3u8 = { url: details.url, timestamp: Date.now() };
+        } else {
+          tabData.video = { url: details.url, mime: ct, timestamp: Date.now() };
+        }
+        tabMediaStreams.set(details.tabId, tabData);
+      } else if (ct.startsWith("audio/")) {
+        tabData.audio = { url: details.url, mime: ct, timestamp: Date.now() };
+        tabMediaStreams.set(details.tabId, tabData);
+      }
+    } catch (e) {}
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders"]
 );
 
 // Clean up memory when tab is closed
@@ -287,11 +333,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       let targetUrl = msg.url || "";
       let tabId = sender.tab ? sender.tab.id : null;
       let tabStreams = tabId ? tabMediaStreams.get(tabId) : null;
-      let pageUrl = (sender.tab && sender.tab.url) ? sender.tab.url : (msg.referrer || "");
-      let isYT = msg.is_youtube || pageUrl.includes("youtube.com") || pageUrl.includes("youtu.be") || targetUrl.includes("googlevideo.com");
+      let pageUrl = (msg.referrer || (sender.tab && sender.tab.url) || "");
+
+      // 1. YouTube & Shorts
+      let isYT = msg.is_youtube 
+        || targetUrl.includes("youtube.com") 
+        || targetUrl.includes("youtu.be") 
+        || targetUrl.includes("googlevideo.com")
+        || pageUrl.includes("youtube.com") 
+        || pageUrl.includes("youtu.be");
 
       if (isYT) {
-        let ytUrl = (pageUrl.includes("youtube.com") || pageUrl.includes("youtu.be")) ? pageUrl : targetUrl;
+        let isYtVid = (u) => u && (u.includes("/watch") || u.includes("/shorts/") || u.includes("youtu.be/") || u.includes("/live/") || u.includes("/embed/"));
+        let ytUrl = "";
+        if (isYtVid(targetUrl)) {
+          ytUrl = targetUrl;
+        } else if (isYtVid(msg.referrer)) {
+          ytUrl = msg.referrer;
+        } else if (isYtVid(pageUrl)) {
+          ytUrl = pageUrl;
+        } else {
+          ytUrl = targetUrl || pageUrl;
+        }
+
         let cookies = await extractCookiesForUrl(ytUrl, false, pageUrl);
         let fn = msg.filename || (sender.tab && sender.tab.title ? sender.tab.title.replace(/\s*-\s*YouTube$/i, "") : "") || "YouTube_Video.mp4";
         let success = await sendToRapidApp({
@@ -313,7 +377,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
-      // If incoming URL is a blob or missing, resolve from sniffed tab streams
+      // 2. Resolve blob or missing stream from background sniffer
       if (!targetUrl || targetUrl.startsWith("blob:") || msg.is_blob) {
         if (tabStreams) {
           if (msg.mediaType === "audio" && tabStreams.audio) {
@@ -326,7 +390,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
 
-      // If still unresolved blob, notify user to trigger stream
+      // 3. Fallback for video platforms (LinkedIn, Twitter, Facebook, TikTok, etc.)
+      const PLATFORMS = ["linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com", "reddit.com", "vimeo.com"];
+      let isPlatform = PLATFORMS.some(d => pageUrl.includes(d) || targetUrl.includes(d));
+
+      if ((!targetUrl || targetUrl.startsWith("blob:")) && isPlatform) {
+        targetUrl = pageUrl;
+      }
+
+      // If still unresolved blob, notify user
       if (!targetUrl || targetUrl.startsWith("blob:")) {
         showNotification(
           "Rapid Media Capture",
@@ -337,7 +409,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       let isGoogle = isGoogleDriveUrl(targetUrl);
-      let ref = msg.referrer || (sender.tab && sender.tab.url ? sender.tab.url : "");
+      let ref = pageUrl || targetUrl;
       let cookies = await extractCookiesForUrl(targetUrl, isGoogle, ref);
       let success = await sendToRapidApp({
         url: targetUrl,
@@ -345,13 +417,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         filename: msg.filename || "",
         cookies: cookies,
         user_agent: navigator.userAgent,
-        is_gdrive: isGoogle
+        is_gdrive: isGoogle,
+        is_video_platform: isPlatform,
+        media_type: msg.mediaType || "video"
       });
       if (success) {
-        showNotification("⚡ Rapid Media Capture", `Captured: ${msg.filename || "Media stream"}`);
+        showNotification("Rapid Media Capture", `Captured: ${msg.filename || "Media stream"}`);
         sendResponse({ success: true });
       } else {
-        showNotification("⚡ Rapid Download Manager Offline", "Please start rapid-gui.exe to accelerate this media.");
+        showNotification("Rapid Download Manager Offline", "Please start rapid-gui.exe to accelerate this media.");
         sendResponse({ success: false });
       }
     })();

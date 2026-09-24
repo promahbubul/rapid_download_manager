@@ -250,33 +250,54 @@ fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect,
             );
         }
         ModernIcon::WinMinimize => {
-            let len = 6.0_f32;
+            let stroke = Stroke::new(1.2_f32, color);
             painter.line_segment(
-                [egui::pos2(center.x - len, center.y), egui::pos2(center.x + len, center.y)],
-                Stroke::new(1.8_f32, color),
+                [egui::pos2(center.x - 5.0, center.y + 0.5), egui::pos2(center.x + 5.0, center.y + 0.5)],
+                stroke,
             );
         }
         ModernIcon::WinMaximize => {
-            let s = 5.5_f32;
-            let box_rect = egui::Rect::from_center_size(center, Vec2::new(s * 2.0, s * 2.0));
-            painter.rect_stroke(box_rect, 1.0, Stroke::new(1.8_f32, color));
+            let box_rect = egui::Rect::from_center_size(center, Vec2::new(10.0, 10.0));
+            painter.rect_stroke(box_rect, 0.0, Stroke::new(1.2_f32, color));
         }
         ModernIcon::WinRestore => {
-            let s = 4.5_f32;
-            let b1 = egui::Rect::from_center_size(egui::pos2(center.x + 2.2, center.y - 2.2), Vec2::new(s * 2.0, s * 2.0));
-            painter.rect_stroke(b1, 1.0, Stroke::new(1.4_f32, color));
-            let b2 = egui::Rect::from_center_size(egui::pos2(center.x - 2.2, center.y + 2.2), Vec2::new(s * 2.0, s * 2.0));
-            painter.rect_stroke(b2, 1.0, Stroke::new(1.8_f32, color));
+            let stroke = Stroke::new(1.2_f32, color);
+            // Back window (top-right): upper and right borders
+            painter.line_segment(
+                [egui::pos2(center.x - 2.0, center.y - 5.0), egui::pos2(center.x + 5.0, center.y - 5.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::pos2(center.x + 5.0, center.y - 5.0), egui::pos2(center.x + 5.0, center.y + 2.0)],
+                stroke,
+            );
+            // Back window small bottom and left snippets
+            painter.line_segment(
+                [egui::pos2(center.x + 2.0, center.y + 2.0), egui::pos2(center.x + 5.0, center.y + 2.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::pos2(center.x - 2.0, center.y - 5.0), egui::pos2(center.x - 2.0, center.y - 2.0)],
+                stroke,
+            );
+            // Front window (bottom-left)
+            let front_rect = egui::Rect::from_min_max(
+                egui::pos2(center.x - 5.0, center.y - 2.0),
+                egui::pos2(center.x + 2.0, center.y + 5.0),
+            );
+            painter.rect_filled(front_rect, 0.0, GLASS_BG);
+            painter.rect_stroke(front_rect, 0.0, stroke);
         }
         ModernIcon::WinClose => {
-            let d = 5.5_f32;
+            let d = 4.5_f32;
+            let stroke = Stroke::new(1.3_f32, color);
             painter.line_segment(
                 [egui::pos2(center.x - d, center.y - d), egui::pos2(center.x + d, center.y + d)],
-                Stroke::new(1.8_f32, color),
+                stroke,
             );
             painter.line_segment(
                 [egui::pos2(center.x + d, center.y - d), egui::pos2(center.x - d, center.y + d)],
-                Stroke::new(1.8_f32, color),
+                stroke,
             );
         }
     }
@@ -295,7 +316,7 @@ fn window_caption_button(
     let is_hovered = response.hovered();
 
     if is_hovered {
-        ui.painter().rect_filled(rect, 4.0, hover_bg_color);
+        ui.painter().rect_filled(rect, 0.0, hover_bg_color);
     }
 
     let icon_color = if is_hovered {
@@ -1433,91 +1454,98 @@ impl RapidApp {
 
     // Render Custom Frameless Window Title Bar
     fn render_custom_title_bar(&self, ctx: &egui::Context) {
+        let titlebar_h = 46.0_f32;
         egui::TopBottomPanel::top("custom_window_title_bar")
             .frame(
                 egui::Frame::none()
                     .fill(GLASS_BG)
                     .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                    .inner_margin(Margin::symmetric(16.0, 8.0)),
+                    .inner_margin(Margin {
+                        left: 14.0,
+                        right: 0.0,
+                        top: 0.0,
+                        bottom: 0.0,
+                    }),
             )
             .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+                ui.set_height(titlebar_h);
 
-                    // 1. App Full Brand Logo (Left Side) - prominently enlarged with boosted readable slug
-                    let logo_h: f32 = 46.0;
-                    let logo_w: f32 = (logo_h * 5.0167_f32).round();
-                    let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
-                    ui.painter().image(
-                        self.titlebar_logo.id(),
-                        logo_rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                // Right to left layout for Window Caption Buttons (Flush at top-right: x=width, y=0)
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let btn_size = Vec2::new(48.0, titlebar_h);
+                    let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+
+                    // 1. Close Button (Rightmost: touches top-right 0, 0 exactly)
+                    if window_caption_button(
+                        ui,
+                        ModernIcon::WinClose,
+                        btn_size,
+                        GLASS_MUTED,
                         Color32::WHITE,
-                    );
-
-                    // 2. Drag & Move Region (takes up flexible remaining width)
-                    let remaining_w = (ui.available_width() - 160.0).max(20.0);
-                    let (_drag_rect, drag_resp) = ui.allocate_exact_size(
-                        Vec2::new(remaining_w, 46.0),
-                        egui::Sense::click_and_drag(),
-                    );
-                    let drag_resp = drag_resp.on_hover_cursor(egui::CursorIcon::Grab);
-
-                    if drag_resp.drag_started_by(egui::PointerButton::Primary) {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                    }
-                    if drag_resp.double_clicked() {
-                        let is_max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
+                        Color32::from_rgb(232, 17, 35),
+                        "Close (Minimizes to System Tray)",
+                    ) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                     }
 
-                    // 3. Window Caption Buttons (Right-to-Left: Close, Maximize/Restore, Minimize)
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                    // 2. Maximize / Restore Button
+                    let (max_icon, max_tip) = if is_maximized {
+                        (ModernIcon::WinRestore, "Restore Window")
+                    } else {
+                        (ModernIcon::WinMaximize, "Maximize Window")
+                    };
 
-                        // Close Button (✕) -> Minimizes to System Tray (IDM style)
-                        if window_caption_button(
-                            ui,
-                            ModernIcon::WinClose,
-                            Vec2::new(48.0, 42.0),
-                            GLASS_MUTED,
+                    if window_caption_button(
+                        ui,
+                        max_icon,
+                        btn_size,
+                        GLASS_MUTED,
+                        GLASS_SECONDARY,
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 25),
+                        max_tip,
+                    ) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                    }
+
+                    // 3. Minimize Button
+                    if window_caption_button(
+                        ui,
+                        ModernIcon::WinMinimize,
+                        btn_size,
+                        GLASS_MUTED,
+                        GLASS_SECONDARY,
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 25),
+                        "Minimize to Taskbar",
+                    ) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+
+                    // Left-to-right section for Logo and draggable area
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let logo_h: f32 = 38.0;
+                        let logo_w: f32 = (logo_h * 5.0167_f32).round();
+                        let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
+                        ui.painter().image(
+                            self.titlebar_logo.id(),
+                            logo_rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                             Color32::WHITE,
-                            Color32::from_rgb(239, 68, 68),
-                            "Close (Minimizes to System Tray)",
-                        ) {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        );
+
+                        let rem_w = ui.available_width().max(10.0);
+                        let (_drag_rect, drag_resp) = ui.allocate_exact_size(
+                            Vec2::new(rem_w, titlebar_h),
+                            egui::Sense::click_and_drag(),
+                        );
+                        let drag_resp = drag_resp.on_hover_cursor(egui::CursorIcon::Grab);
+
+                        if drag_resp.drag_started_by(egui::PointerButton::Primary) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                         }
-
-                        // Maximize / Restore Button (▢ / ❐)
-                        let (max_icon, max_tip) = if is_maximized {
-                            (ModernIcon::WinRestore, "Restore Window")
-                        } else {
-                            (ModernIcon::WinMaximize, "Maximize Window")
-                        };
-
-                        if window_caption_button(
-                            ui,
-                            max_icon,
-                            Vec2::new(48.0, 42.0),
-                            GLASS_MUTED,
-                            GLASS_SECONDARY,
-                            Color32::from_rgb(26, 36, 62),
-                            max_tip,
-                        ) {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
-                        }
-
-                        // Minimize Button (—)
-                        if window_caption_button(
-                            ui,
-                            ModernIcon::WinMinimize,
-                            Vec2::new(48.0, 42.0),
-                            GLASS_MUTED,
-                            GLASS_SECONDARY,
-                            Color32::from_rgb(26, 36, 62),
-                            "Minimize to Taskbar",
-                        ) {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        if drag_resp.double_clicked() {
+                            let is_max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
                         }
                     });
                 });
@@ -1692,6 +1720,7 @@ impl eframe::App for RapidApp {
                         let ua_clone = item.user_agent.clone();
                         let ref_clone = item.referrer.clone();
                         let is_gd = item.is_gdrive;
+                        let is_yt_item = item.is_youtube;
                         let ctx_clone = ctx.clone();
 
                         self.tokio_rt.spawn(async move {
@@ -1718,6 +1747,7 @@ impl eframe::App for RapidApp {
                             cb = cb.default_headers(headers);
 
                             if let Ok(client) = cb.build() {
+                                let is_media_vid = is_yt_item || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&url_clone);
                                 let detected_name = if is_gd {
                                     let res_type = rapid_core::gdrive::GDriveResolver::parse_resource_type(&url_clone);
                                     if let rapid_core::gdrive::GDriveResourceType::File(file_id) = res_type {
@@ -1728,6 +1758,11 @@ impl eframe::App for RapidApp {
                                     } else {
                                         None
                                     }
+                                } else if is_media_vid {
+                                    rapid_core::youtube::YoutubeResolver::resolve_metadata(&url_clone)
+                                        .await
+                                        .ok()
+                                        .map(|m| m.clean_filename)
                                 } else {
                                     rapid_core::Probe::inspect(&client, &url_clone)
                                         .await
@@ -4241,14 +4276,22 @@ fn spawn_download_task(
         return;
     }
 
-    let is_yt = rapid_core::youtube::YoutubeDownloader::is_youtube(&url)
-        || referrer.as_deref().map(|r| rapid_core::youtube::YoutubeDownloader::is_youtube(r)).unwrap_or(false);
+    let is_yt = rapid_core::youtube::YoutubeDownloader::is_extractable_platform(&url)
+        || referrer.as_deref().map(|r| rapid_core::youtube::YoutubeDownloader::is_extractable_platform(r)).unwrap_or(false);
 
     if is_yt {
         let speed_limit_for_yt = speed_limit.clone();
-        let canonical_url = rapid_core::youtube::YoutubeResolver::canonicalize_url(&url, referrer.as_deref());
+        let canonical_url = if rapid_core::youtube::YoutubeResolver::is_youtube(&url) || referrer.as_deref().map(|r| rapid_core::youtube::YoutubeResolver::is_youtube(r)).unwrap_or(false) {
+            rapid_core::youtube::YoutubeResolver::canonicalize_url(&url, referrer.as_deref())
+        } else {
+            url.clone()
+        };
         let selected_quality = quality.unwrap_or(rapid_core::youtube::DownloadQuality::Best);
         let target_ext = selected_quality.target_extension();
+
+        let yt_cookies = cookies.clone();
+        let yt_ua = user_agent.clone();
+        let yt_ref = referrer.clone();
 
         rt.spawn(async move {
             let (resolved_fn, resolved_url) = if let Some(ref cf) = custom_filename {
@@ -4273,7 +4316,7 @@ fn spawn_download_task(
                         };
                         (format!("{}.{}", stem, target_ext), canonical_url)
                     }
-                    Err(_) => (format!("YouTube_Media.{}", target_ext), canonical_url),
+                    Err(_) => (format!("Media_Download.{}", target_ext), canonical_url),
                 }
             };
 
@@ -4289,6 +4332,9 @@ fn spawn_download_task(
                 selected_quality,
                 speed_limit_for_yt,
                 cancel_token,
+                yt_cookies,
+                yt_ua,
+                yt_ref,
             );
 
             let ui_entry = ActiveTaskUI {
@@ -4689,10 +4735,11 @@ async fn run_extension_server(
                                 || url_str.contains("takeout-download-drive");
 
                             let is_youtube = val.get("is_youtube").and_then(|y| y.as_bool()).unwrap_or(false)
-                                || rapid_core::youtube::YoutubeResolver::is_youtube(&url_str)
-                                || referrer_str.as_deref().map(|r| rapid_core::youtube::YoutubeResolver::is_youtube(r)).unwrap_or(false);
+                                || val.get("is_video_platform").and_then(|p| p.as_bool()).unwrap_or(false)
+                                || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&url_str)
+                                || referrer_str.as_deref().map(|r| rapid_core::youtube::YoutubeResolver::is_extractable_platform(r)).unwrap_or(false);
 
-                            let url_str = if is_youtube {
+                            let url_str = if is_youtube && (rapid_core::youtube::YoutubeResolver::is_youtube(&url_str) || referrer_str.as_deref().map(|r| rapid_core::youtube::YoutubeResolver::is_youtube(r)).unwrap_or(false)) {
                                 rapid_core::youtube::YoutubeResolver::canonicalize_url(&url_str, referrer_str.as_deref())
                             } else {
                                 url_str

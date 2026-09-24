@@ -75,30 +75,65 @@ impl YoutubeResolver {
             || (lower.contains("googlevideo.com") && lower.contains("videoplayback"))
     }
 
-    /// Extract or canonicalize a YouTube page URL
+    /// Detect if a URL corresponds to any platform extractable via yt-dlp
+    pub fn is_extractable_platform(url_or_ref: &str) -> bool {
+        let lower = url_or_ref.to_lowercase();
+        lower.contains("youtube.com")
+            || lower.contains("youtu.be")
+            || lower.contains("googlevideo.com")
+            || lower.contains("linkedin.com")
+            || lower.contains("facebook.com")
+            || lower.contains("fb.watch")
+            || lower.contains("instagram.com")
+            || lower.contains("twitter.com")
+            || lower.contains("x.com")
+            || lower.contains("tiktok.com")
+            || lower.contains("reddit.com")
+            || lower.contains("vimeo.com")
+            || lower.contains("dailymotion.com")
+            || lower.contains("twitch.tv")
+            || lower.contains("pinterest.com")
+    }
+
+    /// Extract or canonicalize a YouTube page URL (including Shorts & youtu.be)
     pub fn canonicalize_url(url: &str, referrer: Option<&str>) -> String {
-        if let Some(ref_url) = referrer {
-            if Self::is_youtube(ref_url) && !ref_url.contains("googlevideo.com") {
-                return ref_url.to_string();
+        let is_specific_video = |u: &str| {
+            u.contains("/watch")
+                || u.contains("/shorts/")
+                || u.contains("youtu.be/")
+                || u.contains("/live/")
+                || u.contains("/embed/")
+        };
+
+        let target = if is_specific_video(url) {
+            url
+        } else if let Some(r) = referrer {
+            if is_specific_video(r) {
+                r
+            } else {
+                url
             }
-        }
-        if url.contains("youtu.be/") {
-            if let Some(id) = url.split("youtu.be/").nth(1) {
-                let clean_id = id.split('?').next().unwrap_or(id).trim_matches('/');
+        } else {
+            url
+        };
+
+        if target.contains("youtu.be/") {
+            if let Some(id) = target.split("youtu.be/").nth(1) {
+                let clean_id = id.split("?").next().unwrap_or(id).split("&").next().unwrap_or(id).trim_matches('/');
                 if !clean_id.is_empty() {
                     return format!("https://www.youtube.com/watch?v={}", clean_id);
                 }
             }
         }
-        if url.contains("/shorts/") {
-            if let Some(id) = url.split("/shorts/").nth(1) {
-                let clean_id = id.split('?').next().unwrap_or(id).trim_matches('/');
+        if target.contains("/shorts/") {
+            if let Some(id) = target.split("/shorts/").nth(1) {
+                let clean_id = id.split("?").next().unwrap_or(id).split("&").next().unwrap_or(id).trim_matches('/');
                 if !clean_id.is_empty() {
                     return format!("https://www.youtube.com/watch?v={}", clean_id);
                 }
             }
         }
-        url.to_string()
+        target.to_string()
     }
 
     /// Resolve YouTube video title and metadata using yt-dlp
@@ -233,6 +268,9 @@ pub struct YoutubeDownloader {
     pub quality: DownloadQuality,
     pub speed_limit: Option<Arc<AtomicU64>>,
     pub cancel_token: CancellationToken,
+    pub cookies: Option<String>,
+    pub user_agent: Option<String>,
+    pub referrer: Option<String>,
 }
 
 impl YoutubeDownloader {
@@ -244,6 +282,9 @@ impl YoutubeDownloader {
         quality: DownloadQuality,
         speed_limit: Option<Arc<AtomicU64>>,
         cancel_token: CancellationToken,
+        cookies: Option<String>,
+        user_agent: Option<String>,
+        referrer: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -253,11 +294,18 @@ impl YoutubeDownloader {
             quality,
             speed_limit,
             cancel_token,
+            cookies,
+            user_agent,
+            referrer,
         }
     }
 
     pub fn is_youtube(url: &str) -> bool {
         YoutubeResolver::is_youtube(url)
+    }
+
+    pub fn is_extractable_platform(url: &str) -> bool {
+        YoutubeResolver::is_extractable_platform(url)
     }
 
     pub async fn run(&self, progress_tx: broadcast::Sender<DownloadProgress>) -> Result<()> {
@@ -282,6 +330,24 @@ impl YoutubeDownloader {
             "download:%(progress.downloaded_bytes)s/%(progress.total_bytes)s/%(progress.speed)s/%(progress.eta)s",
             "--no-playlist",
         ]);
+        if let Some(ref c) = self.cookies {
+            let trimmed = c.trim();
+            if !trimmed.is_empty() {
+                cmd.args(&["--add-header", &format!("Cookie: {}", trimmed)]);
+            }
+        }
+        if let Some(ref ua) = self.user_agent {
+            let trimmed = ua.trim();
+            if !trimmed.is_empty() {
+                cmd.args(&["--user-agent", trimmed]);
+            }
+        }
+        if let Some(ref r) = self.referrer {
+            let trimmed = r.trim();
+            if !trimmed.is_empty() {
+                cmd.args(&["--referer", trimmed]);
+            }
+        }
 
         match self.quality {
             DownloadQuality::Best => {
@@ -373,6 +439,23 @@ impl YoutubeDownloader {
             RapidError::Other("Failed to capture yt-dlp stdout".to_string())
         })?;
 
+        let stderr = child.stderr.take().ok_or_else(|| {
+            RapidError::Other("Failed to capture yt-dlp stderr".to_string())
+        })?;
+
+        let err_buffer = Arc::new(tokio::sync::Mutex::new(String::new()));
+        let err_buffer_clone = Arc::clone(&err_buffer);
+
+        tokio::spawn(async move {
+            let mut err_reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = err_reader.next_line().await {
+                let mut buf = err_buffer_clone.lock().await;
+                if buf.len() < 4096 {
+                    buf.push_str(&line);
+                    buf.push('\n');
+                }
+            }
+        });
         let mut reader = BufReader::new(stdout).lines();
         let mut last_downloaded = 0u64;
         let mut total_bytes_known: Option<u64> = None;
@@ -456,10 +539,13 @@ impl YoutubeDownloader {
         })?;
 
         if !status.success() {
-            return Err(RapidError::Other(format!(
-                "YouTube download failed with exit code: {:?}",
-                status.code()
-            )));
+            let raw_err = err_buffer.lock().await.clone();
+            let err_msg = if !raw_err.trim().is_empty() {
+                raw_err.trim().to_string()
+            } else {
+                format!("Video download failed with exit code: {:?}", status.code())
+            };
+            return Err(RapidError::Other(err_msg));
         }
 
         let final_size = fs::metadata(&self.target_file).await.ok().map(|m| m.len()).unwrap_or(last_downloaded);

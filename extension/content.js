@@ -93,19 +93,39 @@ function sanitizeTitleString(str) {
 }
 
 function resolveMediaTitle(el, type) {
-  // Special handling for YouTube
+  // Special handling for YouTube (Watch & Shorts)
   if (window.location.hostname.includes("youtube.com")) {
     const ytSelectors = [
+      "ytd-reel-video-renderer[is-active] h2.title",
+      "ytd-reel-player-header-renderer .title",
+      "#overlay h2.title",
+      "h2.title yt-formatted-string",
       "h1.ytd-watch-metadata yt-formatted-string",
       "#title h1 yt-formatted-string",
       "h1.title yt-formatted-string",
       "h1.title",
-      "#video-title"
+      "#video-title",
+      "meta[property='og:title']"
     ];
     for (let sel of ytSelectors) {
       let node = document.querySelector(sel);
-      if (node && node.textContent && node.textContent.trim()) {
-        return sanitizeTitleString(node.textContent.trim());
+      if (node) {
+        let val = node.content || node.textContent;
+        if (val && val.trim()) {
+          return sanitizeTitleString(val.trim());
+        }
+      }
+    }
+  }
+
+  // Special handling for LinkedIn
+  if (window.location.hostname.includes("linkedin.com")) {
+    let liContainer = el.closest(".feed-shared-update-v2, .feed-shared-update, [data-urn], article");
+    if (liContainer) {
+      let textEl = liContainer.querySelector(".feed-shared-update-v2__description, .update-components-text, .break-words, h1, h2");
+      if (textEl && textEl.textContent && textEl.textContent.trim()) {
+        let shortText = textEl.textContent.trim().split("\n")[0].substring(0, 60);
+        return sanitizeTitleString("LinkedIn_" + shortText);
       }
     }
   }
@@ -466,6 +486,19 @@ function attachFloatingWidget(mediaEl, type) {
 
       if (captured) {
         mediaSrc = captured;
+      }
+    }
+
+    if (!mediaSrc) {
+      const PLATFORMS = ["linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com", "reddit.com", "vimeo.com"];
+      let isPlatformPage = PLATFORMS.some(d => window.location.hostname.includes(d));
+      if (isPlatformPage) {
+        let postUrl = window.location.href;
+        let postLink = mediaEl.closest("article, .feed-shared-update-v2, [data-urn]")?.querySelector("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/status/']");
+        if (postLink && postLink.href) {
+          postUrl = postLink.href;
+        }
+        mediaSrc = postUrl;
       }
     }
 
