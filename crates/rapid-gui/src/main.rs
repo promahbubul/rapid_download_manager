@@ -2464,6 +2464,8 @@ impl eframe::App for RapidApp {
 
                     // Right-aligned actions
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+
                         render_custom_chip_plain(
                             ui,
                             "Tray:",
@@ -4431,15 +4433,17 @@ fn render_parallel_connections_combobox(
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(560.0, 420.0))
+                .default_width(580.0)
+                .min_width(580.0)
+                .max_width(580.0)
                 .frame(modal_frame)
                 .show(ctx, |ui| {
-                    let top_bar_h = 36.0_f32;
+                    let top_bar_h = 40.0_f32;
                     let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
-                    let close_w = 42.0_f32;
+                    let close_w = 40.0_f32;
                     let close_rect = egui::Rect::from_min_max(
                         egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
-                        egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + top_bar_h),
+                        egui::pos2(top_bar_rect.max.x, top_bar_rect.max.y),
                     );
 
                     let close_resp = ui.allocate_rect(close_rect, egui::Sense::click());
@@ -4448,13 +4452,13 @@ fn render_parallel_connections_combobox(
                     ui.painter().rect_filled(
                         top_bar_rect,
                         egui::Rounding { nw: 12.0, ne: 12.0, sw: 0.0, se: 0.0 },
-                        Color32::from_rgba_unmultiplied(15, 23, 42, 230),
+                        Color32::from_rgba_unmultiplied(15, 23, 42, 245),
                     );
 
                     ui.painter().text(
-                        egui::pos2(top_bar_rect.min.x + 16.0, top_bar_rect.center().y),
+                        egui::pos2(top_bar_rect.min.x + 18.0, top_bar_rect.center().y),
                         egui::Align2::LEFT_CENTER,
-                        "⚡ Browser Integration & Auto-Hook",
+                        "Browser Integration & Auto-Hook",
                         egui::FontId::proportional(14.0),
                         Color32::WHITE,
                     );
@@ -4466,18 +4470,18 @@ fn render_parallel_connections_combobox(
                             Color32::from_rgb(239, 68, 68),
                         );
                     }
-                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(10.0)), if close_hov { Color32::WHITE } else { GLASS_MUTED });
+                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(11.0)), if close_hov { Color32::WHITE } else { GLASS_MUTED });
                     if close_resp.clicked() {
                         close_modal = true;
                     }
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(16.0);
+                        ui.add_space(18.0);
                         ui.label(RichText::new("Auto-detect and register Rapid Extension across all installed browsers like IDM").size(11.5).color(GLASS_MUTED));
                     });
 
-                    ui.add_space(6.0);
+                    ui.add_space(10.0);
 
                     let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
                     let prog_files = std::env::var("ProgramFiles").unwrap_or_default();
@@ -4526,33 +4530,63 @@ fn render_parallel_connections_combobox(
                         ("Vivaldi", "vivaldi://extensions", is_vivaldi),
                     ];
 
-                    ui.vertical(|ui| {
-                        ui.add_space(4.0);
-                        egui::Grid::new("browser_grid").num_columns(2).spacing(Vec2::new(12.0, 8.0)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        egui::Grid::new("browser_grid").num_columns(2).spacing(Vec2::new(14.0, 10.0)).show(ui, |ui| {
                             for (idx, (name, ext_url, is_detected)) in browser_items.iter().enumerate() {
                                 egui::Frame::none()
                                     .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, if *is_detected { GLASS_BORDER } else { Color32::from_rgb(30, 41, 59) }))
+                                    .stroke(Stroke::new(1.0_f32, if *is_detected { Color32::from_rgb(30, 58, 86) } else { Color32::from_rgb(30, 41, 59) }))
                                     .rounding(egui::Rounding::same(8.0))
-                                    .inner_margin(Margin::symmetric(12.0, 8.0))
+                                    .inner_margin(Margin::symmetric(14.0, 10.0))
                                     .show(ui, |ui| {
-                                        ui.set_width(245.0);
+                                        ui.set_width(252.0);
+                                        // Top Row: Browser Name + Status Badge
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new(*name).size(12.5).strong().color(if *is_detected { Color32::WHITE } else { GLASS_MUTED }));
+                                            ui.label(RichText::new(*name).size(13.0).strong().color(if *is_detected { Color32::WHITE } else { GLASS_MUTED }));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 if *is_detected {
-                                                    ui.label(RichText::new("✓ Detected").size(10.5).color(Color32::from_rgb(16, 185, 129)).strong());
+                                                    egui::Frame::none()
+                                                        .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 30))
+                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
+                                                        .rounding(egui::Rounding::same(4.0))
+                                                        .inner_margin(Margin::symmetric(6.0, 2.0))
+                                                        .show(ui, |ui| {
+                                                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                                let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
+                                                                draw_modern_icon(ui.painter(), ModernIcon::Check, icon_r, Color32::from_rgb(16, 185, 129));
+                                                                ui.add_space(3.0);
+                                                                ui.label(RichText::new("Detected").size(10.5).color(Color32::from_rgb(52, 211, 153)).strong());
+                                                            });
+                                                        });
                                                 } else {
-                                                    ui.label(RichText::new("Not Installed").size(10.0).color(GLASS_MUTED));
+                                                    egui::Frame::none()
+                                                        .fill(Color32::from_rgba_unmultiplied(71, 85, 105, 30))
+                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
+                                                        .rounding(egui::Rounding::same(4.0))
+                                                        .inner_margin(Margin::symmetric(6.0, 2.0))
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new("Not Installed").size(10.0).color(GLASS_MUTED));
+                                                        });
                                                 }
                                             });
                                         });
+
+                                        ui.add_space(6.0);
+
+                                        // Bottom Row: Registry Hook Badge + Action Button
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Registry Hook:").size(10.0).color(GLASS_MUTED));
-                                            ui.label(RichText::new("Active (HKCU)").size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("Registry Hook:").size(10.5).color(GLASS_MUTED));
+                                            ui.label(RichText::new("Active (HKCU)").size(10.5).color(Color32::from_rgb(56, 189, 248)).strong());
+
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 if *is_detected {
-                                                    if ui.small_button("Open").clicked() {
+                                                    let open_btn = egui::Button::new(RichText::new("Open").size(10.5).color(Color32::WHITE))
+                                                        .fill(Color32::from_rgb(30, 41, 59))
+                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)))
+                                                        .rounding(egui::Rounding::same(4.0))
+                                                        .min_size(Vec2::new(48.0, 20.0));
+                                                    if ui.add(open_btn).on_hover_text("Open browser extensions page").clicked() {
                                                         launch_browser_url = Some(ext_url.to_string());
                                                     }
                                                 }
@@ -4570,23 +4604,32 @@ fn render_parallel_connections_combobox(
                     ui.add_space(10.0);
 
                     if let Some((ref msg, is_success)) = self.browser_integration_msg {
-                        egui::Frame::none()
-                            .fill(if is_success { Color32::from_rgba_unmultiplied(16, 185, 129, 35) } else { Color32::from_rgba_unmultiplied(239, 68, 68, 35) })
-                            .stroke(Stroke::new(1.0_f32, if is_success { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) }))
-                            .rounding(egui::Rounding::same(6.0))
-                            .inner_margin(Margin::symmetric(12.0, 6.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(msg).size(11.5).color(if is_success { Color32::from_rgb(110, 231, 183) } else { Color32::from_rgb(252, 165, 165) }));
+                        ui.horizontal(|ui| {
+                            ui.add_space(16.0);
+                            egui::Frame::none()
+                                .fill(if is_success { Color32::from_rgba_unmultiplied(16, 185, 129, 30) } else { Color32::from_rgba_unmultiplied(239, 68, 68, 30) })
+                                .stroke(Stroke::new(1.0_f32, if is_success { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) }))
+                                .rounding(egui::Rounding::same(6.0))
+                                .inner_margin(Margin::symmetric(14.0, 8.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(520.0);
+                                    ui.horizontal(|ui| {
+                                        let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
+                                        draw_modern_icon(ui.painter(), if is_success { ModernIcon::Check } else { ModernIcon::Close }, icon_r, if is_success { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) });
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new(msg).size(11.5).color(if is_success { Color32::from_rgb(167, 243, 208) } else { Color32::from_rgb(254, 202, 202) }).strong());
+                                    });
                                 });
-                            });
-                        ui.add_space(6.0);
+                        });
+                        ui.add_space(8.0);
                     }
 
                     ui.horizontal(|ui| {
-                        ui.add_space(10.0);
+                        ui.add_space(16.0);
+                        ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
+
                         let auto_btn = egui::Button::new(
-                            RichText::new("⚡ Auto-Integrate All Browsers")
+                            RichText::new("Auto-Integrate All Browsers")
                                 .size(12.0)
                                 .color(Color32::WHITE)
                                 .strong(),
@@ -4594,27 +4637,37 @@ fn render_parallel_connections_combobox(
                         .fill(Color32::from_rgb(14, 116, 144))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
                         .rounding(egui::Rounding::same(6.0))
-                        .min_size(Vec2::new(240.0, 32.0));
+                        .min_size(Vec2::new(230.0, 32.0));
 
                         if ui.add(auto_btn).clicked() {
                             run_auto_integrate = true;
                         }
 
                         let export_btn = egui::Button::new(
-                            RichText::new("📦 Export Webstore Zip")
+                            RichText::new("Export Webstore Zip")
                                 .size(11.5)
                                 .color(Color32::from_rgb(226, 232, 240)),
                         )
                         .fill(GLASS_CARD)
                         .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                         .rounding(egui::Rounding::same(6.0))
-                        .min_size(Vec2::new(170.0, 32.0));
+                        .min_size(Vec2::new(165.0, 32.0));
 
                         if ui.add(export_btn).clicked() {
                             export_zip = true;
                         }
 
-                        if ui.button("Close").clicked() {
+                        let close_btn = egui::Button::new(
+                            RichText::new("Close")
+                                .size(11.5)
+                                .color(Color32::from_rgb(203, 213, 225)),
+                        )
+                        .fill(Color32::from_rgb(30, 41, 59))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
+                        .rounding(egui::Rounding::same(6.0))
+                        .min_size(Vec2::new(85.0, 32.0));
+
+                        if ui.add(close_btn).clicked() {
                             close_modal = true;
                         }
                     });
@@ -4633,7 +4686,7 @@ fn render_parallel_connections_combobox(
                     std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
                     match cmd.output() {
                         Ok(out) if out.status.success() => {
-                            self.browser_integration_msg = Some(("✅ Registry keys registered for all browsers! Restart browser to activate.".to_string(), true));
+                            self.browser_integration_msg = Some(("Registry keys registered for all browsers! Restart browser to activate.".to_string(), true));
                         }
                         Ok(out) => {
                             let err = String::from_utf8_lossy(&out.stderr);
@@ -5456,11 +5509,13 @@ fn render_custom_chip_plain(
         .inner_margin(Margin::symmetric(7.0, 3.5));
 
     frame.show(ui, |ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
-        if !label.is_empty() {
-            ui.label(RichText::new(label).size(10.5).color(GLASS_MUTED));
-        }
-        ui.label(RichText::new(value).size(11.0).color(text_color).strong());
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+            if !label.is_empty() {
+                ui.label(RichText::new(label).size(10.5).color(GLASS_MUTED));
+            }
+            ui.label(RichText::new(value).size(11.0).color(text_color).strong());
+        });
     }).response.on_hover_text(tooltip);
 }
 
@@ -5470,7 +5525,10 @@ fn render_custom_btn_chip_modern(
     text: &str,
     tooltip: &str,
 ) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(98.0, 22.0), egui::Sense::click());
+    let font_id = egui::FontId::proportional(10.5);
+    let text_w = ui.fonts(|f| f.layout_no_wrap(text.to_string(), font_id.clone(), Color32::WHITE).size().x);
+    let total_w = (text_w + 34.0).max(92.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(total_w, 22.0), egui::Sense::click());
     let is_h = resp.hovered();
 
     let bg = if is_h { Color32::from_rgb(28, 20, 58) } else { GLASS_CARD };
@@ -5481,10 +5539,10 @@ fn render_custom_btn_chip_modern(
     let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.min.x + 12.0, rect.center().y), Vec2::new(10.0, 10.0));
     draw_modern_icon(ui.painter(), icon, icon_rect, text_col);
     ui.painter().text(
-        egui::pos2(rect.min.x + 22.0, rect.center().y),
+        egui::pos2(rect.min.x + 23.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         text,
-        egui::FontId::proportional(10.5),
+        font_id,
         text_col,
     );
 

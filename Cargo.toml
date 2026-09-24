@@ -1,7 +1,14 @@
-[workspace]
+﻿[workspace]
 members = [
     "crates/rapid-core",
     "crates/rapid-cli",
     "crates/rapid-gui",
 ]
 resolver = "2"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
