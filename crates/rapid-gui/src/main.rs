@@ -523,6 +523,9 @@ struct ActiveTaskUI {
     cookies: Option<String>,
     referrer: Option<String>,
     user_agent: Option<String>,
+    is_youtube: bool,
+    quality: Option<rapid_core::youtube::DownloadQuality>,
+    yt_cancel_token: Option<tokio_util::sync::CancellationToken>,
 }
 
 #[derive(Clone, Debug)]
@@ -764,6 +767,7 @@ impl RapidApp {
                                     state.status = rapid_core::DownloadStatus::Paused;
                                 }
                                 
+                                let is_yt = rapid_core::youtube::YoutubeResolver::is_extractable_platform(&state.url);
                                 let ui = ActiveTaskUI {
                                     id: state.id,
                                     filename: state.target_file.file_name().unwrap_or_default().to_string_lossy().into_owned(),
@@ -782,6 +786,9 @@ impl RapidApp {
                                     cookies: state.cookies,
                                     referrer: state.referrer,
                                     user_agent: state.user_agent,
+                                    is_youtube: is_yt,
+                                    quality: None,
+                                    yt_cancel_token: None,
                                 };
                                 initial_tasks.push(ui);
                             }
@@ -795,6 +802,7 @@ impl RapidApp {
         let history_records = load_history();
         for record in history_records {
             if !initial_tasks.iter().any(|t| t.id == record.id || t.target_file == record.target_file) {
+                let is_yt = rapid_core::youtube::YoutubeResolver::is_extractable_platform(&record.url);
                 initial_tasks.push(ActiveTaskUI {
                     id: record.id,
                     filename: record.filename,
@@ -813,6 +821,9 @@ impl RapidApp {
                     cookies: None,
                     referrer: None,
                     user_agent: None,
+                    is_youtube: is_yt,
+                    quality: None,
+                    yt_cancel_token: None,
                 });
             }
         }
@@ -1001,7 +1012,7 @@ impl RapidApp {
         let rt = Arc::clone(&self.tokio_rt);
         let tasks_arc = Arc::clone(&self.tasks);
 
-        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent) = {
+        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent, is_yt, quality) = {
             let Ok(mut list) = self.tasks.try_lock() else { return; };
             if task_index >= list.len() { return; }
             let task = &mut list[task_index];
@@ -1019,8 +1030,92 @@ impl RapidApp {
                 task.cookies.clone(),
                 task.referrer.clone(),
                 task.user_agent.clone(),
+                task.is_youtube || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&task.url),
+                task.quality,
             )
         };
+
+        if is_yt {
+            let speed_limit_for_yt = Arc::clone(&self.speed_limit_bps);
+            rt.spawn(async move {
+                let cancel_token = tokio_util::sync::CancellationToken::new();
+                {
+                    let mut list = tasks_arc.lock().await;
+                    if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
+                        item.status = DownloadStatus::Downloading;
+                        item.yt_cancel_token = Some(cancel_token.clone());
+                    }
+                }
+
+                let selected_quality = quality.unwrap_or_else(|| {
+                    if filename.ends_with(".mp3") {
+                        rapid_core::youtube::DownloadQuality::AudioMp3
+                    } else if filename.ends_with(".m4a") {
+                        rapid_core::youtube::DownloadQuality::AudioM4a
+                    } else {
+                        rapid_core::youtube::DownloadQuality::Best
+                    }
+                });
+
+                let (progress_tx, mut rx) = tokio::sync::broadcast::channel::<rapid_core::DownloadProgress>(100);
+
+                let downloader = rapid_core::youtube::YoutubeDownloader::new(
+                    task_id.clone(),
+                    url.clone(),
+                    filename.clone(),
+                    target_file.clone(),
+                    selected_quality,
+                    Some(speed_limit_for_yt),
+                    cancel_token,
+                    cookies,
+                    user_agent,
+                    referrer,
+                );
+
+                let tasks_for_progress = Arc::clone(&tasks_arc);
+                let task_id_for_progress = task_id.clone();
+
+                tokio::spawn(async move {
+                    while let Ok(prog) = rx.recv().await {
+                        let mut list = tasks_for_progress.lock().await;
+                        if let Some(item) = list.iter_mut().find(|t| t.id == task_id_for_progress) {
+                            item.downloaded_bytes = prog.downloaded_bytes;
+                            item.progress_percent = prog.progress_percent;
+                            item.speed_bps = prog.speed_bps;
+                            item.eta_seconds = prog.eta_seconds;
+                            item.status = prog.status.clone();
+                            item.segments = prog.segments;
+                            if let Some(tot) = prog.total_bytes {
+                                item.total_bytes = Some(tot);
+                            }
+                        }
+                    }
+                });
+
+                let res = downloader.run(progress_tx).await;
+                let mut list = tasks_arc.lock().await;
+                if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
+                    match res {
+                        Ok(_) => {
+                            item.status = DownloadStatus::Completed;
+                            item.progress_percent = 100.0;
+                            item.speed_bps = 0;
+                            item.eta_seconds = None;
+                            save_task_to_history(item);
+                        }
+                        Err(e) => {
+                            if !matches!(e, rapid_core::RapidError::Cancelled) {
+                                eprintln!("[Rapid] Resume YouTube failed for '{}': {}", filename, e);
+                                item.status = DownloadStatus::Failed(e.to_string());
+                            }
+                            item.speed_bps = 0;
+                            item.eta_seconds = None;
+                        }
+                    }
+                }
+            });
+            return;
+        }
 
         let dest_dir = target_file
             .parent()
@@ -1108,13 +1203,16 @@ impl RapidApp {
         let rt = Arc::clone(&self.tokio_rt);
         let tasks_arc = Arc::clone(&self.tasks);
 
-        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent) = {
+        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent, is_yt, quality) = {
             let Ok(mut list) = self.tasks.try_lock() else { return; };
             if task_index >= list.len() { return; }
             let task = &mut list[task_index];
 
             if let Some(ref handle) = task.task_handle {
                 handle.pause();
+            }
+            if let Some(ref cancel) = task.yt_cancel_token {
+                cancel.cancel();
             }
 
             task.downloaded_bytes = 0;
@@ -1133,8 +1231,112 @@ impl RapidApp {
                 task.cookies.clone(),
                 task.referrer.clone(),
                 task.user_agent.clone(),
+                task.is_youtube || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&task.url),
+                task.quality,
             )
         };
+
+        if is_yt {
+            let speed_limit_for_yt = Arc::clone(&self.speed_limit_bps);
+            rt.spawn(async move {
+                let _ = tokio::fs::remove_file(&target_file).await;
+                if let Some(stem) = target_file.file_stem().and_then(|s| s.to_str()) {
+                    if let Some(parent) = target_file.parent() {
+                        if let Ok(mut entries) = tokio::fs::read_dir(parent).await {
+                            while let Ok(Some(entry)) = entries.next_entry().await {
+                                let path = entry.path();
+                                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                    if name.starts_with(stem) && (name.ends_with(".part") || name.ends_with(".ytdl") || name.contains(".f")) {
+                                        let _ = tokio::fs::remove_file(&path).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let cancel_token = tokio_util::sync::CancellationToken::new();
+                {
+                    let mut list = tasks_arc.lock().await;
+                    if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
+                        item.status = DownloadStatus::Downloading;
+                        item.downloaded_bytes = 0;
+                        item.progress_percent = 0.0;
+                        item.speed_bps = 0;
+                        item.eta_seconds = None;
+                        item.yt_cancel_token = Some(cancel_token.clone());
+                    }
+                }
+
+                let selected_quality = quality.unwrap_or_else(|| {
+                    if filename.ends_with(".mp3") {
+                        rapid_core::youtube::DownloadQuality::AudioMp3
+                    } else if filename.ends_with(".m4a") {
+                        rapid_core::youtube::DownloadQuality::AudioM4a
+                    } else {
+                        rapid_core::youtube::DownloadQuality::Best
+                    }
+                });
+
+                let (progress_tx, mut rx) = tokio::sync::broadcast::channel::<rapid_core::DownloadProgress>(100);
+
+                let downloader = rapid_core::youtube::YoutubeDownloader::new(
+                    task_id.clone(),
+                    url.clone(),
+                    filename.clone(),
+                    target_file.clone(),
+                    selected_quality,
+                    Some(speed_limit_for_yt),
+                    cancel_token,
+                    cookies,
+                    user_agent,
+                    referrer,
+                );
+
+                let tasks_for_progress = Arc::clone(&tasks_arc);
+                let task_id_for_progress = task_id.clone();
+
+                tokio::spawn(async move {
+                    while let Ok(prog) = rx.recv().await {
+                        let mut list = tasks_for_progress.lock().await;
+                        if let Some(item) = list.iter_mut().find(|t| t.id == task_id_for_progress) {
+                            item.downloaded_bytes = prog.downloaded_bytes;
+                            item.progress_percent = prog.progress_percent;
+                            item.speed_bps = prog.speed_bps;
+                            item.eta_seconds = prog.eta_seconds;
+                            item.status = prog.status.clone();
+                            item.segments = prog.segments;
+                            if let Some(tot) = prog.total_bytes {
+                                item.total_bytes = Some(tot);
+                            }
+                        }
+                    }
+                });
+
+                let res = downloader.run(progress_tx).await;
+                let mut list = tasks_arc.lock().await;
+                if let Some(item) = list.iter_mut().find(|t| t.id == task_id) {
+                    match res {
+                        Ok(_) => {
+                            item.status = DownloadStatus::Completed;
+                            item.progress_percent = 100.0;
+                            item.speed_bps = 0;
+                            item.eta_seconds = None;
+                            save_task_to_history(item);
+                        }
+                        Err(e) => {
+                            if !matches!(e, rapid_core::RapidError::Cancelled) {
+                                eprintln!("[Rapid] Redownload YouTube failed for '{}': {}", filename, e);
+                                item.status = DownloadStatus::Failed(e.to_string());
+                            }
+                            item.speed_bps = 0;
+                            item.eta_seconds = None;
+                        }
+                    }
+                }
+            });
+            return;
+        }
 
         let dest_dir = target_file
             .parent()
@@ -1223,13 +1425,15 @@ impl RapidApp {
             }
         });
     }
-
     fn pause_download(&mut self, task_index: usize) {
         if let Ok(mut list) = self.tasks.try_lock() {
             if let Some(task) = list.get_mut(task_index) {
                 if task.status == DownloadStatus::Downloading {
                     if let Some(ref handle) = task.task_handle {
                         handle.pause();
+                    }
+                    if let Some(ref cancel) = task.yt_cancel_token {
+                        cancel.cancel();
                     }
                     task.status = DownloadStatus::Paused;
                     task.speed_bps = 0;
@@ -4259,6 +4463,9 @@ fn spawn_download_task(
                 cookies: cookies.clone(),
                 referrer: referrer.clone(),
                 user_agent: user_agent.clone(),
+                is_youtube: false,
+                quality: None,
+                yt_cancel_token: None,
             };
 
             {
@@ -4363,7 +4570,7 @@ fn spawn_download_task(
                 target_file.clone(),
                 selected_quality,
                 speed_limit_for_yt,
-                cancel_token,
+                cancel_token.clone(),
                 yt_cookies,
                 yt_ua,
                 yt_ref,
@@ -4387,6 +4594,9 @@ fn spawn_download_task(
                 cookies: cookies.clone(),
                 referrer: referrer.clone(),
                 user_agent: user_agent.clone(),
+                is_youtube: true,
+                quality: Some(selected_quality),
+                yt_cancel_token: Some(cancel_token),
             };
 
             {
@@ -4497,6 +4707,9 @@ fn spawn_download_task(
                     cookies: cookies.clone(),
                     referrer: referrer.clone(),
                     user_agent: user_agent.clone(),
+                    is_youtube: false,
+                    quality: None,
+                    yt_cancel_token: None,
                 };
 
                 {
@@ -4572,6 +4785,9 @@ fn spawn_download_task(
                     cookies: cookies.clone(),
                     referrer: referrer.clone(),
                     user_agent: user_agent.clone(),
+                    is_youtube: false,
+                    quality: None,
+                    yt_cancel_token: None,
                 };
                 let mut list = tasks_arc.lock().await;
                 list.push(ui_entry);

@@ -326,6 +326,7 @@ impl YoutubeDownloader {
             "-N",
             "8",
             "--newline",
+            "--force-overwrites",
             "--progress-template",
             "download:RAPIDPROG:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s/%(progress.speed)s/%(progress.eta)s",
             "--no-playlist",
