@@ -1527,9 +1527,6 @@ impl RapidApp {
 
 impl eframe::App for RapidApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Render custom frameless title bar at the top of the window
-        self.render_custom_title_bar(ctx);
-
         if !self.has_requested_initial_focus {
             self.has_requested_initial_focus = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -1537,13 +1534,16 @@ impl eframe::App for RapidApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
 
-        // Handle animated splash screen on startup
+        // Handle animated splash screen on startup (No title bar during splash, full center-center window)
         let elapsed = self.splash_start.elapsed();
         if elapsed < self.splash_duration {
             ctx.request_repaint();
             self.render_splash_screen(ctx, elapsed);
             return;
         }
+
+        // Render custom frameless title bar at the top of the main window
+        self.render_custom_title_bar(ctx);
 
         // 1. Time-based Download Scheduler Tick (Section 32)
         if self.scheduler.enabled {
