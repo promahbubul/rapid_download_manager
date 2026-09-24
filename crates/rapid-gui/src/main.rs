@@ -2839,7 +2839,19 @@ impl eframe::App for RapidApp {
 
         // Modern Cyber-Obsidian Add Download Modal Dialog
 
-fn render_quality_selector_grid(
+fn get_quality_display(q: rapid_core::youtube::DownloadQuality) -> (&'static str, &'static str, &'static str) {
+    match q {
+        rapid_core::youtube::DownloadQuality::Best => ("Best Available (1080p+ • MP4)", "Highest resolution video + audio • Max Quality", "✨"),
+        rapid_core::youtube::DownloadQuality::P1080 => ("1080p Full HD (MP4)", "High definition 1920×1080 • Crystal clear MP4", "🎬"),
+        rapid_core::youtube::DownloadQuality::P720 => ("720p HD (MP4)", "Standard HD 1280×720 • Fast download", "📺"),
+        rapid_core::youtube::DownloadQuality::P480 => ("480p SD (MP4)", "Medium resolution 854×480 • Low data", "📹"),
+        rapid_core::youtube::DownloadQuality::P360 => ("360p (MP4)", "Low resolution 640×360 • Ultra light", "📱"),
+        rapid_core::youtube::DownloadQuality::AudioMp3 => ("Audio Only (MP3 • High Quality)", "320kbps Universal Audio • Music, Podcast & Voice", "🎵"),
+        rapid_core::youtube::DownloadQuality::AudioM4a => ("Audio Only (M4A / AAC)", "Original AAC Container • Untouched Lossless Audio", "🎧"),
+    }
+}
+
+fn render_quality_selector_combobox(
     ui: &mut egui::Ui,
     id_source: &str,
     quality: &mut rapid_core::youtube::DownloadQuality,
@@ -2847,160 +2859,140 @@ fn render_quality_selector_grid(
     dest_dir: &mut String,
     base_download_dir: &PathBuf,
 ) {
-    let video_options = [
-        (rapid_core::youtube::DownloadQuality::Best, "Best (1080p+)", "MP4 • Max Quality", "✨"),
-        (rapid_core::youtube::DownloadQuality::P1080, "1080p FHD", "MP4 • 1920×1080", "🎬"),
-        (rapid_core::youtube::DownloadQuality::P720, "720p HD", "MP4 • 1280×720 Fast", "📺"),
-        (rapid_core::youtube::DownloadQuality::P480, "480p SD", "MP4 • 854×480", "📹"),
-        (rapid_core::youtube::DownloadQuality::P360, "360p", "MP4 • 640×360 Light", "📱"),
-    ];
+    let (current_title, _current_desc, current_icon) = get_quality_display(*quality);
 
-    let audio_options = [
-        (rapid_core::youtube::DownloadQuality::AudioMp3, "Audio MP3 (High Quality)", "320kbps Universal Audio • Music, Voice", "🎵"),
-        (rapid_core::youtube::DownloadQuality::AudioM4a, "Audio M4A (Original AAC)", "Original Audio Container • Lossless", "🎧"),
+    let all_options = [
+        rapid_core::youtube::DownloadQuality::Best,
+        rapid_core::youtube::DownloadQuality::P1080,
+        rapid_core::youtube::DownloadQuality::P720,
+        rapid_core::youtube::DownloadQuality::P480,
+        rapid_core::youtube::DownloadQuality::P360,
+        rapid_core::youtube::DownloadQuality::AudioMp3,
+        rapid_core::youtube::DownloadQuality::AudioM4a,
     ];
-
-    let mut changed_quality: Option<rapid_core::youtube::DownloadQuality> = None;
 
     ui.scope(|ui| {
-        // Section 1: Video Resolutions (5 distinct multi-option cards in a sleek row)
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("📹 Video Qualities (MP4)").size(12.0).color(Color32::from_rgb(148, 163, 184)).strong());
-            ui.label(RichText::new("• Multiple video resolutions available").size(10.5).color(Color32::from_rgb(100, 116, 139)));
-        });
-        ui.add_space(3.0);
+        ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::from_rgb(18, 24, 44);
+        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0_f32, GLASS_BORDER);
+        ui.visuals_mut().widgets.inactive.rounding = egui::Rounding::same(8.0);
+        ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
 
-        let total_avail_w = ui.available_width();
-        let vid_gap = 6.0_f32;
-        let vid_card_w = ((total_avail_w - (video_options.len() as f32 - 1.0) * vid_gap) / (video_options.len() as f32)).max(80.0);
-        let vid_card_h = 46.0_f32;
+        ui.visuals_mut().widgets.hovered.weak_bg_fill = Color32::from_rgb(26, 34, 60);
+        ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::new(1.2_f32, GLASS_PRIMARY);
+        ui.visuals_mut().widgets.hovered.rounding = egui::Rounding::same(8.0);
+        ui.visuals_mut().widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
 
-        ui.horizontal(|ui| {
-            for (opt, title, subtitle, icon) in &video_options {
-                let is_selected = *quality == *opt;
-                let bg = if is_selected {
-                    Color32::from_rgb(44, 28, 88)
+        ui.visuals_mut().widgets.open.weak_bg_fill = Color32::from_rgb(32, 40, 72);
+        ui.visuals_mut().widgets.open.bg_stroke = Stroke::new(1.5_f32, GLASS_PRIMARY);
+        ui.visuals_mut().widgets.open.rounding = egui::Rounding::same(8.0);
+        ui.visuals_mut().widgets.open.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
+
+        ui.spacing_mut().button_padding = Vec2::new(12.0, 9.0);
+        // Generous dropdown popup height so 5+ options are clearly visible at once
+        ui.spacing_mut().combo_height = 290.0;
+
+        ui.visuals_mut().window_fill = Color32::from_rgb(15, 20, 36);
+        ui.visuals_mut().window_stroke = Stroke::new(1.2_f32, Color32::from_rgb(55, 70, 105));
+        ui.visuals_mut().window_rounding = egui::Rounding::same(10.0);
+        ui.visuals_mut().popup_shadow = egui::epaint::Shadow {
+            offset: [0.0, 12.0].into(),
+            blur: 32.0,
+            spread: 3.0,
+            color: Color32::from_black_alpha(245),
+        };
+        ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
+        ui.spacing_mut().window_margin = Margin::same(8.0);
+
+        let selected_text = format!("{}  {}", current_icon, current_title);
+
+        let combo = egui::ComboBox::from_id_source(id_source)
+            .selected_text(RichText::new(selected_text).size(13.0).color(Color32::WHITE).strong())
+            .width(ui.available_width() - 4.0)
+            .height(38.0)
+            .icon(|ui, rect, visuals, _is_open, _above_or_below| {
+                let center = rect.center();
+                let stroke = Stroke::new(1.8_f32, visuals.fg_stroke.color);
+                ui.painter().line_segment(
+                    [egui::pos2(center.x - 4.5, center.y - 2.5), egui::pos2(center.x, center.y + 2.5)],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [egui::pos2(center.x, center.y + 2.5), egui::pos2(center.x + 4.5, center.y - 2.5)],
+                    stroke,
+                );
+            });
+
+        let mut changed_quality: Option<rapid_core::youtube::DownloadQuality> = None;
+
+        combo.show_ui(ui, |ui| {
+            ui.set_min_width(ui.available_width().max(520.0));
+            ui.set_min_height(280.0); // Ensures tall popup displaying at least 4-5 options simultaneously
+
+            for opt in all_options {
+                let (title, desc, icon) = get_quality_display(opt);
+                let is_selected = *quality == opt;
+
+                let (bg, border, text_col, stroke_w) = if is_selected {
+                    (
+                        Color32::from_rgb(46, 32, 92),
+                        Color32::from_rgb(168, 85, 247),
+                        Color32::WHITE,
+                        1.5_f32,
+                    )
                 } else {
-                    Color32::from_rgba_unmultiplied(16, 22, 38, 220)
+                    (
+                        Color32::from_rgba_unmultiplied(20, 26, 44, 200),
+                        Color32::from_rgb(40, 50, 75),
+                        GLASS_TEXT,
+                        1.0_f32,
+                    )
                 };
-                let border_col = if is_selected {
-                    Color32::from_rgb(168, 85, 247)
-                } else {
-                    GLASS_BORDER
-                };
-                let stroke_w = if is_selected { 1.5_f32 } else { 1.0_f32 };
 
-                let frame = egui::Frame::none()
+                let item_frame = egui::Frame::none()
                     .fill(bg)
-                    .stroke(Stroke::new(stroke_w, border_col))
-                    .rounding(egui::Rounding::same(7.0))
-                    .inner_margin(Margin::symmetric(6.0, 5.0));
+                    .stroke(Stroke::new(stroke_w, border))
+                    .rounding(egui::Rounding::same(8.0))
+                    .inner_margin(Margin::symmetric(12.0, 7.5));
 
-                let item_resp = frame.show(ui, |ui| {
-                    ui.set_width(vid_card_w);
-                    ui.set_height(vid_card_h);
-                    ui.vertical_centered(|ui| {
-                        ui.horizontal(|ui| {
-                            if is_selected {
-                                ui.label(RichText::new("✓").size(11.0).color(Color32::from_rgb(56, 189, 248)).strong());
-                            }
-                            ui.label(RichText::new(*icon).size(11.0));
-                            ui.label(
-                                RichText::new(*title)
-                                    .size(11.0)
-                                    .color(if is_selected { Color32::WHITE } else { GLASS_TEXT })
-                                    .strong(),
-                            );
-                        });
-                        ui.add_space(1.0);
-                        ui.label(
-                            RichText::new(*subtitle)
-                                .size(9.0)
-                                .color(if is_selected { Color32::from_rgb(216, 180, 254) } else { Color32::from_rgb(110, 125, 145) }),
-                        );
-                    });
-                }).response;
-
-                let click_resp = ui.interact(item_resp.rect, ui.make_persistent_id(format!("{}_{:?}", id_source, opt)), egui::Sense::click());
-                if click_resp.hovered() {
-                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
-                }
-                if click_resp.clicked() {
-                    changed_quality = Some(*opt);
-                }
-
-                ui.add_space(vid_gap);
-            }
-        });
-
-        ui.add_space(8.0);
-
-        // Section 2: Audio Only Formats (2 cards)
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("🎵 Audio Only Formats").size(12.0).color(Color32::from_rgb(148, 163, 184)).strong());
-            ui.label(RichText::new("• Direct audio extraction without video stream").size(10.5).color(Color32::from_rgb(100, 116, 139)));
-        });
-        ui.add_space(3.0);
-
-        let aud_gap = 8.0_f32;
-        let aud_card_w = ((total_avail_w - (audio_options.len() as f32 - 1.0) * aud_gap) / (audio_options.len() as f32)).max(120.0);
-        let aud_card_h = 44.0_f32;
-
-        ui.horizontal(|ui| {
-            for (opt, title, subtitle, icon) in &audio_options {
-                let is_selected = *quality == *opt;
-                let bg = if is_selected {
-                    Color32::from_rgb(44, 28, 88)
-                } else {
-                    Color32::from_rgba_unmultiplied(16, 22, 38, 220)
-                };
-                let border_col = if is_selected {
-                    Color32::from_rgb(168, 85, 247)
-                } else {
-                    GLASS_BORDER
-                };
-                let stroke_w = if is_selected { 1.5_f32 } else { 1.0_f32 };
-
-                let frame = egui::Frame::none()
-                    .fill(bg)
-                    .stroke(Stroke::new(stroke_w, border_col))
-                    .rounding(egui::Rounding::same(7.0))
-                    .inner_margin(Margin::symmetric(10.0, 5.0));
-
-                let item_resp = frame.show(ui, |ui| {
-                    ui.set_width(aud_card_w);
-                    ui.set_height(aud_card_h);
+                let item_resp = item_frame.show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         if is_selected {
-                            ui.label(RichText::new("✓").size(12.0).color(Color32::from_rgb(56, 189, 248)).strong());
+                            ui.label(RichText::new("✓").size(13.0).color(Color32::from_rgb(56, 189, 248)).strong());
+                        } else {
+                            ui.label(RichText::new("○").size(12.0).color(Color32::from_rgb(100, 116, 139)));
                         }
-                        ui.label(RichText::new(*icon).size(13.0));
-                        ui.add_space(2.0);
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(icon).size(14.0));
+                        ui.add_space(6.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new(*title)
-                                    .size(11.5)
-                                    .color(if is_selected { Color32::WHITE } else { GLASS_TEXT })
+                                RichText::new(title)
+                                    .size(12.5)
+                                    .color(text_col)
                                     .strong(),
                             );
                             ui.label(
-                                RichText::new(*subtitle)
-                                    .size(9.5)
-                                    .color(if is_selected { Color32::from_rgb(216, 180, 254) } else { Color32::from_rgb(110, 125, 145) }),
+                                RichText::new(desc)
+                                    .size(10.5)
+                                    .color(if is_selected { Color32::from_rgb(216, 180, 254) } else { Color32::from_rgb(148, 163, 184) }),
                             );
                         });
                     });
                 }).response;
 
-                let click_resp = ui.interact(item_resp.rect, ui.make_persistent_id(format!("{}_{:?}", id_source, opt)), egui::Sense::click());
+                let click_resp = ui.interact(
+                    item_resp.rect,
+                    ui.make_persistent_id(format!("{}_{:?}", id_source, opt)),
+                    egui::Sense::click(),
+                );
                 if click_resp.hovered() {
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
                 }
                 if click_resp.clicked() {
-                    changed_quality = Some(*opt);
+                    changed_quality = Some(opt);
                 }
-
-                ui.add_space(aud_gap);
+                ui.add_space(3.0);
             }
         });
 
@@ -3019,17 +3011,6 @@ fn render_quality_selector_grid(
             }
         }
     });
-}
-
-fn render_quality_selector_combobox(
-    ui: &mut egui::Ui,
-    id_source: &str,
-    quality: &mut rapid_core::youtube::DownloadQuality,
-    filename: &mut String,
-    dest_dir: &mut String,
-    base_download_dir: &PathBuf,
-) {
-    render_quality_selector_grid(ui, id_source, quality, filename, dest_dir, base_download_dir);
 }
 
 fn render_parallel_connections_combobox(
