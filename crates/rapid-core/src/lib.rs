@@ -1,3 +1,4 @@
+pub mod paths;
 pub mod gdrive;
 pub mod hls;
 pub mod youtube;
@@ -16,3 +17,5 @@ pub use probe::Probe;
 pub use segment::SegmentPlanner;
 pub use types::*;
 pub use gdrive::*;
+
+pub use paths::AppPaths;

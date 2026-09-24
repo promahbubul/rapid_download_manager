@@ -426,7 +426,13 @@ impl Default for SchedulerConfig {
 }
 
 fn get_scheduler_file_path() -> PathBuf {
-    dirs_or_fallback().join(".rapid_scheduler.json")
+    let appdata_file = rapid_core::AppPaths::scheduler_file();
+    let old_file = dirs_or_fallback().join(".rapid_scheduler.json");
+    if old_file.exists() && !appdata_file.exists() {
+        let _ = std::fs::copy(&old_file, &appdata_file);
+        let _ = std::fs::remove_file(&old_file);
+    }
+    appdata_file
 }
 
 fn load_scheduler_config() -> SchedulerConfig {
@@ -457,7 +463,13 @@ struct HistoryRecord {
 }
 
 fn get_history_file_path() -> PathBuf {
-    dirs_or_fallback().join(".rapid_history.json")
+    let appdata_file = rapid_core::AppPaths::history_file();
+    let old_file = dirs_or_fallback().join(".rapid_history.json");
+    if old_file.exists() && !appdata_file.exists() {
+        let _ = std::fs::copy(&old_file, &appdata_file);
+        let _ = std::fs::remove_file(&old_file);
+    }
+    appdata_file
 }
 
 fn load_history() -> Vec<HistoryRecord> {
@@ -5596,20 +5608,14 @@ fn format_eta(seconds: u64) -> String {
 }
 
 fn dirs_or_fallback() -> PathBuf {
-    if let Ok(user_profile) = std::env::var("USERPROFILE") {
-        let downloads = PathBuf::from(user_profile).join("Downloads");
-        if downloads.exists() {
-            return downloads;
-        }
-    }
-    PathBuf::from("./downloads")
+    rapid_core::AppPaths::default_downloads_dir()
 }
 
 fn main() -> Result<(), eframe::Error> {
     std::panic::set_hook(Box::new(|info| {
         let backtrace = std::backtrace::Backtrace::capture();
         let msg = format!("PANIC at {}: {:?}\nBacktrace:\n{:?}", chrono::Local::now(), info, backtrace);
-        let _ = std::fs::write("crash.log", msg);
+        let _ = std::fs::write(rapid_core::AppPaths::crash_log_file(), msg);
     }));
 
     let rt = Arc::new(Runtime::new().expect("Failed to initialize Tokio runtime"));
@@ -5649,6 +5655,6 @@ fn main() -> Result<(), eframe::Error> {
             Ok(Box::new(RapidApp::new(cc, rt_clone)))
         }),
     );
-    let _ = std::fs::write("run_native_result.log", format!("run_native returned: {:?}", res));
+    let _ = std::fs::write(rapid_core::AppPaths::logs_dir().join("run_native_result.log"), format!("run_native returned: {:?}", res));
     res
 }

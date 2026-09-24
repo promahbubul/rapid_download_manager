@@ -223,16 +223,16 @@ impl YoutubeResolver {
             }
         }
 
-        // 2. Current working directory
+        // 2. User LocalAppData bin directory (%LOCALAPPDATA%\RapidDownloadManager\bin\yt-dlp.exe)
+        let bin_candidate = crate::paths::AppPaths::bin_dir().join("yt-dlp.exe");
+        if bin_candidate.exists() {
+            return Some(bin_candidate);
+        }
+
+        // 3. Current working directory
         let cwd_candidate = PathBuf::from("yt-dlp.exe");
         if cwd_candidate.exists() {
             return Some(cwd_candidate);
-        }
-
-        // 3. Known project directory
-        let proj_candidate = PathBuf::from("D:\\mahbub\\project\\rapid_download_manager\\yt-dlp.exe");
-        if proj_candidate.exists() {
-            return Some(proj_candidate);
         }
 
         // 4. PATH search
@@ -262,9 +262,9 @@ impl YoutubeResolver {
                 }
             }
         }
-        let proj_candidate = PathBuf::from("D:\\mahbub\\project\\rapid_download_manager\\ffmpeg.exe");
-        if proj_candidate.exists() {
-            return Some(proj_candidate);
+        let bin_candidate = crate::paths::AppPaths::bin_dir().join("ffmpeg.exe");
+        if bin_candidate.exists() {
+            return Some(bin_candidate);
         }
         if let Ok(path_var) = std::env::var("PATH") {
             for dir in std::env::split_paths(&path_var) {
