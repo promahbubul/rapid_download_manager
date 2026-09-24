@@ -1,3 +1,4 @@
+pub mod storage;
 pub mod paths;
 pub mod gdrive;
 pub mod hls;
@@ -19,3 +20,5 @@ pub use types::*;
 pub use gdrive::*;
 
 pub use paths::AppPaths;
+
+pub use storage::StorageManager;

@@ -437,19 +437,12 @@ fn get_scheduler_file_path() -> PathBuf {
 
 fn load_scheduler_config() -> SchedulerConfig {
     let path = get_scheduler_file_path();
-    if let Ok(data) = std::fs::read_to_string(&path) {
-        if let Ok(config) = serde_json::from_str::<SchedulerConfig>(&data) {
-            return config;
-        }
-    }
-    SchedulerConfig::default()
+    rapid_core::StorageManager::load_json_with_backup::<SchedulerConfig>(&path).unwrap_or_default()
 }
 
 fn save_scheduler_config(config: &SchedulerConfig) {
     let path = get_scheduler_file_path();
-    if let Ok(json) = serde_json::to_string_pretty(config) {
-        let _ = std::fs::write(&path, json);
-    }
+    let _ = rapid_core::StorageManager::atomic_write_json(&path, config);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -458,8 +451,12 @@ struct HistoryRecord {
     pub filename: String,
     pub url: String,
     pub target_file: PathBuf,
+    #[serde(default)]
     pub total_bytes: Option<u64>,
+    #[serde(default = "chrono::Utc::now")]
     pub completed_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 fn get_history_file_path() -> PathBuf {
@@ -474,12 +471,7 @@ fn get_history_file_path() -> PathBuf {
 
 fn load_history() -> Vec<HistoryRecord> {
     let path = get_history_file_path();
-    if let Ok(content) = std::fs::read_to_string(&path) {
-        if let Ok(records) = serde_json::from_str::<Vec<HistoryRecord>>(&content) {
-            return records;
-        }
-    }
-    Vec::new()
+    rapid_core::StorageManager::load_json_with_backup::<Vec<HistoryRecord>>(&path).unwrap_or_default()
 }
 
 fn save_task_to_history(item: &ActiveTaskUI) {
@@ -496,20 +488,17 @@ fn save_task_to_history(item: &ActiveTaskUI) {
             target_file: item.target_file.clone(),
             total_bytes: item.total_bytes,
             completed_at: chrono::Utc::now(),
+            category: None,
         });
     }
-    if let Ok(json) = serde_json::to_string_pretty(&records) {
-        let _ = std::fs::write(&path, json);
-    }
+    let _ = rapid_core::StorageManager::atomic_write_json(&path, &records);
 }
 
 fn remove_from_history(id: &str) {
     let path = get_history_file_path();
     let mut records = load_history();
     records.retain(|r| r.id != id);
-    if let Ok(json) = serde_json::to_string_pretty(&records) {
-        let _ = std::fs::write(&path, json);
-    }
+    let _ = rapid_core::StorageManager::atomic_write_json(&path, &records);
 }
 
 fn clear_all_history() {
