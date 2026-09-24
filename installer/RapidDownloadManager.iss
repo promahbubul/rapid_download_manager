@@ -31,6 +31,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "autostart"; Description: "Start Rapid Download Manager when Windows starts"; GroupDescription: "System Startup:"
+Name: "browserintegration"; Description: "Automatically integrate extension into Google Chrome, Microsoft Edge, Brave & Firefox"; GroupDescription: "Browser Integration:"; Flags: checkedonce
 
 [Files]
 Source: "..\dist\RapidDownloadManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -44,5 +45,13 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "RapidDownloadManager"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: autostart
 
+; Browser Extension Auto-Registrations
+Root: HKCU; Subkey: "Software\Google\Chrome\Extensions\rapid_download_manager"; ValueType: string; ValueName: "path"; ValueData: "{app}\extension"; Flags: uninsdeletekey; Tasks: browserintegration
+Root: HKCU; Subkey: "Software\Microsoft\Edge\Extensions\rapid_download_manager"; ValueType: string; ValueName: "path"; ValueData: "{app}\extension"; Flags: uninsdeletekey; Tasks: browserintegration
+Root: HKCU; Subkey: "Software\BraveSoftware\Brave-Browser\Extensions\rapid_download_manager"; ValueType: string; ValueName: "path"; ValueData: "{app}\extension"; Flags: uninsdeletekey; Tasks: browserintegration
+Root: HKCU; Subkey: "Software\Opera Software\Extensions\rapid_download_manager"; ValueType: string; ValueName: "path"; ValueData: "{app}\extension"; Flags: uninsdeletekey; Tasks: browserintegration
+Root: HKCU; Subkey: "Software\Mozilla\Firefox\Extensions"; ValueType: string; ValueName: "rapid-downloader@promahbubul.com"; ValueData: "{app}\extension"; Flags: uninsdeletevalue; Tasks: browserintegration
+
 [Run]
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\auto_integrate_browsers.ps1"" -Silent"; Flags: runhidden; Tasks: browserintegration
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

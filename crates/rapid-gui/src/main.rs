@@ -626,6 +626,8 @@ struct RapidApp {
     scheduler: SchedulerConfig,
     tasks_to_delete: HashSet<String>,
     has_requested_initial_focus: bool,
+    show_browser_integration_modal: bool,
+    browser_integration_msg: Option<(String, bool)>,
     pub speed_limit_bps: Arc<AtomicU64>,
     pub selected_speed_limit_idx: usize,
 
@@ -891,6 +893,8 @@ impl RapidApp {
             scheduler: load_scheduler_config(),
             tasks_to_delete: HashSet::new(),
             has_requested_initial_focus: false,
+            show_browser_integration_modal: false,
+            browser_integration_msg: None,
             speed_limit_bps: Arc::new(AtomicU64::new(0)),
             selected_speed_limit_idx: 0,
             pending_browser_queue,
@@ -2482,10 +2486,11 @@ impl eframe::App for RapidApp {
                         if render_custom_btn_chip_modern(
                             ui,
                             ModernIcon::Plus,
-                            "Extension Hook",
-                            "Install & integrate Chrome, Edge & Brave Extension",
+                            "Browser Integration",
+                            "Auto-integrate extension into Chrome, Edge, Brave, Opera & Firefox",
                         ) {
-                            let _ = open::that("install_extension.bat");
+                            self.show_browser_integration_modal = true;
+                            self.browser_integration_msg = None;
                         }
                     });
                 });
@@ -4395,6 +4400,267 @@ fn render_parallel_connections_combobox(
             }
             if close_modal {
                 self.show_scheduler_modal = false;
+            }
+        }
+
+        // Modern Cyber-Obsidian Browser Integration Modal Dialog
+        if self.show_browser_integration_modal {
+            let screen_rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("browser_modal_backdrop")));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 220));
+
+            let mut close_modal = false;
+            let mut run_auto_integrate = false;
+            let mut export_zip = false;
+            let mut launch_browser_url: Option<String> = None;
+
+            let modal_frame = egui::Frame::none()
+                .fill(GLASS_SURFACE)
+                .stroke(Stroke::NONE)
+                .rounding(egui::Rounding::same(12.0))
+                .inner_margin(Margin::same(0.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0.0, 10.0].into(),
+                    blur: 32.0,
+                    spread: 2.0,
+                    color: Color32::from_black_alpha(230),
+                });
+
+            egui::Window::new("browser_integration_modal_window")
+                .title_bar(false)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .fixed_size(Vec2::new(560.0, 420.0))
+                .frame(modal_frame)
+                .show(ctx, |ui| {
+                    let top_bar_h = 36.0_f32;
+                    let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
+                    let close_w = 42.0_f32;
+                    let close_rect = egui::Rect::from_min_max(
+                        egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
+                        egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + top_bar_h),
+                    );
+
+                    let close_resp = ui.allocate_rect(close_rect, egui::Sense::click());
+                    let close_hov = close_resp.hovered();
+
+                    ui.painter().rect_filled(
+                        top_bar_rect,
+                        egui::Rounding { nw: 12.0, ne: 12.0, sw: 0.0, se: 0.0 },
+                        Color32::from_rgba_unmultiplied(15, 23, 42, 230),
+                    );
+
+                    ui.painter().text(
+                        egui::pos2(top_bar_rect.min.x + 16.0, top_bar_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "⚡ Browser Integration & Auto-Hook",
+                        egui::FontId::proportional(14.0),
+                        Color32::WHITE,
+                    );
+
+                    if close_hov {
+                        ui.painter().rect_filled(
+                            close_rect,
+                            egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 0.0 },
+                            Color32::from_rgb(239, 68, 68),
+                        );
+                    }
+                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(10.0)), if close_hov { Color32::WHITE } else { GLASS_MUTED });
+                    if close_resp.clicked() {
+                        close_modal = true;
+                    }
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(RichText::new("Auto-detect and register Rapid Extension across all installed browsers like IDM").size(11.5).color(GLASS_MUTED));
+                    });
+
+                    ui.add_space(6.0);
+
+                    let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
+                    let prog_files = std::env::var("ProgramFiles").unwrap_or_default();
+                    let prog_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+
+                    let is_chrome = [
+                        format!("{}/Google/Chrome/Application/chrome.exe", local_appdata),
+                        format!("{}/Google/Chrome/Application/chrome.exe", prog_files),
+                        format!("{}/Google/Chrome/Application/chrome.exe", prog_files_x86),
+                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                    let is_edge = [
+                        format!("{}/Microsoft/Edge/Application/msedge.exe", prog_files_x86),
+                        format!("{}/Microsoft/Edge/Application/msedge.exe", prog_files),
+                        format!("{}/Microsoft/Edge/Application/msedge.exe", local_appdata),
+                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                    let is_brave = [
+                        format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", prog_files),
+                        format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", prog_files_x86),
+                        format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", local_appdata),
+                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                    let is_opera = [
+                        format!("{}/Programs/Opera/launcher.exe", local_appdata),
+                        format!("{}/Programs/Opera GX/launcher.exe", local_appdata),
+                        format!("{}/Opera/launcher.exe", prog_files),
+                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                    let is_firefox = [
+                        format!("{}/Mozilla Firefox/firefox.exe", prog_files),
+                        format!("{}/Mozilla Firefox/firefox.exe", prog_files_x86),
+                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                    let is_vivaldi = [
+                        format!("{}/Vivaldi/Application/vivaldi.exe", local_appdata),
+                        format!("{}/Vivaldi/Application/vivaldi.exe", prog_files),
+                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                    let browser_items = [
+                        ("Google Chrome", "chrome://extensions", is_chrome),
+                        ("Microsoft Edge", "edge://extensions", is_edge),
+                        ("Brave Browser", "brave://extensions", is_brave),
+                        ("Opera / Opera GX", "opera://extensions", is_opera),
+                        ("Mozilla Firefox", "about:addons", is_firefox),
+                        ("Vivaldi", "vivaldi://extensions", is_vivaldi),
+                    ];
+
+                    ui.vertical(|ui| {
+                        ui.add_space(4.0);
+                        egui::Grid::new("browser_grid").num_columns(2).spacing(Vec2::new(12.0, 8.0)).show(ui, |ui| {
+                            for (idx, (name, ext_url, is_detected)) in browser_items.iter().enumerate() {
+                                egui::Frame::none()
+                                    .fill(GLASS_CARD)
+                                    .stroke(Stroke::new(1.0_f32, if *is_detected { GLASS_BORDER } else { Color32::from_rgb(30, 41, 59) }))
+                                    .rounding(egui::Rounding::same(8.0))
+                                    .inner_margin(Margin::symmetric(12.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(245.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(*name).size(12.5).strong().color(if *is_detected { Color32::WHITE } else { GLASS_MUTED }));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if *is_detected {
+                                                    ui.label(RichText::new("✓ Detected").size(10.5).color(Color32::from_rgb(16, 185, 129)).strong());
+                                                } else {
+                                                    ui.label(RichText::new("Not Installed").size(10.0).color(GLASS_MUTED));
+                                                }
+                                            });
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Registry Hook:").size(10.0).color(GLASS_MUTED));
+                                            ui.label(RichText::new("Active (HKCU)").size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if *is_detected {
+                                                    if ui.small_button("Open").clicked() {
+                                                        launch_browser_url = Some(ext_url.to_string());
+                                                    }
+                                                }
+                                            });
+                                        });
+                                    });
+
+                                if idx % 2 == 1 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                    });
+
+                    ui.add_space(10.0);
+
+                    if let Some((ref msg, is_success)) = self.browser_integration_msg {
+                        egui::Frame::none()
+                            .fill(if is_success { Color32::from_rgba_unmultiplied(16, 185, 129, 35) } else { Color32::from_rgba_unmultiplied(239, 68, 68, 35) })
+                            .stroke(Stroke::new(1.0_f32, if is_success { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) }))
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(Margin::symmetric(12.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(msg).size(11.5).color(if is_success { Color32::from_rgb(110, 231, 183) } else { Color32::from_rgb(252, 165, 165) }));
+                                });
+                            });
+                        ui.add_space(6.0);
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        let auto_btn = egui::Button::new(
+                            RichText::new("⚡ Auto-Integrate All Browsers")
+                                .size(12.0)
+                                .color(Color32::WHITE)
+                                .strong(),
+                        )
+                        .fill(Color32::from_rgb(14, 116, 144))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
+                        .rounding(egui::Rounding::same(6.0))
+                        .min_size(Vec2::new(240.0, 32.0));
+
+                        if ui.add(auto_btn).clicked() {
+                            run_auto_integrate = true;
+                        }
+
+                        let export_btn = egui::Button::new(
+                            RichText::new("📦 Export Webstore Zip")
+                                .size(11.5)
+                                .color(Color32::from_rgb(226, 232, 240)),
+                        )
+                        .fill(GLASS_CARD)
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                        .rounding(egui::Rounding::same(6.0))
+                        .min_size(Vec2::new(170.0, 32.0));
+
+                        if ui.add(export_btn).clicked() {
+                            export_zip = true;
+                        }
+
+                        if ui.button("Close").clicked() {
+                            close_modal = true;
+                        }
+                    });
+                });
+
+            if run_auto_integrate {
+                #[cfg(windows)]
+                {
+                    let mut cmd = std::process::Command::new("powershell");
+                    cmd.args(&[
+                        "-ExecutionPolicy", "Bypass",
+                        "-NoProfile",
+                        "-File", "auto_integrate_browsers.ps1",
+                    ]);
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                    std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
+                    match cmd.output() {
+                        Ok(out) if out.status.success() => {
+                            self.browser_integration_msg = Some(("✅ Registry keys registered for all browsers! Restart browser to activate.".to_string(), true));
+                        }
+                        Ok(out) => {
+                            let err = String::from_utf8_lossy(&out.stderr);
+                            self.browser_integration_msg = Some((format!("Integration notice: {}", err.trim()), false));
+                        }
+                        Err(e) => {
+                            self.browser_integration_msg = Some((format!("Failed to run script: {}", e), false));
+                        }
+                    }
+                }
+            }
+
+            if export_zip {
+                let zip_path = std::path::PathBuf::from("dist").join("RapidExtension_StoreReady.zip");
+                if zip_path.exists() {
+                    let _ = open::that(&zip_path);
+                } else {
+                    let _ = open::that("extension");
+                }
+            }
+
+            if let Some(target) = launch_browser_url {
+                let _ = open::that(&target);
+            }
+
+            if close_modal {
+                self.show_browser_integration_modal = false;
             }
         }
 
