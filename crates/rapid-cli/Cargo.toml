@@ -1,7 +1,8 @@
 [package]
 name = "rapid-cli"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "CLI frontend for Rapid Download Manager"
 
 [dependencies]

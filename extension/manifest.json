@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Rapid Download Manager Integration",
-  "version": "1.2.0",
+  "version": "1.0.0",
   "description": "Seamlessly intercepts downloads, sniffs videos & media streams, and sends them to Rapid Download Manager for multi-threaded speed.",
   "permissions": [
     "downloads",

@@ -1,7 +1,8 @@
 [package]
 name = "rapid-core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "High-performance multi-segment download engine for Rapid Download Manager"
 
 [dependencies]

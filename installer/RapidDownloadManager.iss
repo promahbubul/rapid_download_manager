@@ -1,6 +1,7 @@
 ; Inno Setup Script for Rapid Download Manager
 #define MyAppName "Rapid Download Manager"
 #define MyAppVersion "1.0.0"
+#define MyAppQuadVersion "1.0.0.0"
 #define MyAppPublisher "Promahbubul"
 #define MyAppURL "https://github.com/promahbubul/rapid_download_manager"
 #define MyAppExeName "rapid-gui.exe"
@@ -9,6 +10,12 @@
 AppId={{D37E84C1-39F2-43C2-A62E-064C63E3F811}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppQuadVersion}
+VersionInfoProductVersion={#MyAppQuadVersion}
+VersionInfoTextVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} Setup
+VersionInfoCopyright=Copyright (C) 2026 {#MyAppPublisher}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
