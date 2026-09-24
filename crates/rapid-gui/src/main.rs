@@ -2839,15 +2839,15 @@ impl eframe::App for RapidApp {
 
         // Modern Cyber-Obsidian Add Download Modal Dialog
 
-fn get_quality_display(q: rapid_core::youtube::DownloadQuality) -> (&'static str, &'static str, &'static str) {
+fn get_quality_display(q: rapid_core::youtube::DownloadQuality) -> (&'static str, &'static str) {
     match q {
-        rapid_core::youtube::DownloadQuality::Best => ("Best Available (1080p+ • MP4)", "Highest resolution video + audio • Max Quality", "✨"),
-        rapid_core::youtube::DownloadQuality::P1080 => ("1080p Full HD (MP4)", "High definition 1920×1080 • Crystal clear MP4", "🎬"),
-        rapid_core::youtube::DownloadQuality::P720 => ("720p HD (MP4)", "Standard HD 1280×720 • Fast download", "📺"),
-        rapid_core::youtube::DownloadQuality::P480 => ("480p SD (MP4)", "Medium resolution 854×480 • Low data", "📹"),
-        rapid_core::youtube::DownloadQuality::P360 => ("360p (MP4)", "Low resolution 640×360 • Ultra light", "📱"),
-        rapid_core::youtube::DownloadQuality::AudioMp3 => ("Audio Only (MP3 • High Quality)", "320kbps Universal Audio • Music, Podcast & Voice", "🎵"),
-        rapid_core::youtube::DownloadQuality::AudioM4a => ("Audio Only (M4A / AAC)", "Original AAC Container • Untouched Lossless Audio", "🎧"),
+        rapid_core::youtube::DownloadQuality::Best => ("Best Available (1080p+)", "✨"),
+        rapid_core::youtube::DownloadQuality::P1080 => ("1080p Full HD", "🎬"),
+        rapid_core::youtube::DownloadQuality::P720 => ("720p HD", "📺"),
+        rapid_core::youtube::DownloadQuality::P480 => ("480p SD", "📹"),
+        rapid_core::youtube::DownloadQuality::P360 => ("360p", "📱"),
+        rapid_core::youtube::DownloadQuality::AudioMp3 => ("Audio MP3", "🎵"),
+        rapid_core::youtube::DownloadQuality::AudioM4a => ("Audio M4A", "🎧"),
     }
 }
 
@@ -2859,7 +2859,7 @@ fn render_quality_selector_combobox(
     dest_dir: &mut String,
     base_download_dir: &PathBuf,
 ) {
-    let (current_title, _current_desc, current_icon) = get_quality_display(*quality);
+    let (current_title, current_icon) = get_quality_display(*quality);
 
     let all_options = [
         rapid_core::youtube::DownloadQuality::Best,
@@ -2887,9 +2887,7 @@ fn render_quality_selector_combobox(
         ui.visuals_mut().widgets.open.rounding = egui::Rounding::same(8.0);
         ui.visuals_mut().widgets.open.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
 
-        ui.spacing_mut().button_padding = Vec2::new(12.0, 9.0);
-        // Generous dropdown popup height so 5+ options are clearly visible at once
-        ui.spacing_mut().combo_height = 290.0;
+        ui.spacing_mut().button_padding = Vec2::new(14.0, 9.0);
 
         ui.visuals_mut().window_fill = Color32::from_rgb(15, 20, 36);
         ui.visuals_mut().window_stroke = Stroke::new(1.2_f32, Color32::from_rgb(55, 70, 105));
@@ -2906,9 +2904,9 @@ fn render_quality_selector_combobox(
         let selected_text = format!("{}  {}", current_icon, current_title);
 
         let combo = egui::ComboBox::from_id_source(id_source)
-            .selected_text(RichText::new(selected_text).size(13.0).color(Color32::WHITE).strong())
+            .selected_text(RichText::new(selected_text).size(14.0).color(Color32::WHITE).strong())
             .width(ui.available_width() - 4.0)
-            .height(38.0)
+            .height(230.0) // Sized large so that 4 to 5 options are visible simultaneously!
             .icon(|ui, rect, visuals, _is_open, _above_or_below| {
                 let center = rect.center();
                 let stroke = Stroke::new(1.8_f32, visuals.fg_stroke.color);
@@ -2925,11 +2923,10 @@ fn render_quality_selector_combobox(
         let mut changed_quality: Option<rapid_core::youtube::DownloadQuality> = None;
 
         combo.show_ui(ui, |ui| {
-            ui.set_min_width(ui.available_width().max(520.0));
-            ui.set_min_height(280.0); // Ensures tall popup displaying at least 4-5 options simultaneously
+            ui.set_min_width(ui.available_width().max(480.0));
 
             for opt in all_options {
-                let (title, desc, icon) = get_quality_display(opt);
+                let (title, icon) = get_quality_display(opt);
                 let is_selected = *quality == opt;
 
                 let (bg, border, text_col, stroke_w) = if is_selected {
@@ -2952,32 +2949,25 @@ fn render_quality_selector_combobox(
                     .fill(bg)
                     .stroke(Stroke::new(stroke_w, border))
                     .rounding(egui::Rounding::same(8.0))
-                    .inner_margin(Margin::symmetric(12.0, 7.5));
+                    .inner_margin(Margin::symmetric(14.0, 9.0));
 
                 let item_resp = item_frame.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         if is_selected {
-                            ui.label(RichText::new("✓").size(13.0).color(Color32::from_rgb(56, 189, 248)).strong());
+                            ui.label(RichText::new("✓").size(14.0).color(Color32::from_rgb(56, 189, 248)).strong());
                         } else {
-                            ui.label(RichText::new("○").size(12.0).color(Color32::from_rgb(100, 116, 139)));
+                            ui.label(RichText::new(" ").size(14.0));
                         }
                         ui.add_space(4.0);
-                        ui.label(RichText::new(icon).size(14.0));
+                        ui.label(RichText::new(icon).size(15.0));
                         ui.add_space(6.0);
-                        ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new(title)
-                                    .size(12.5)
-                                    .color(text_col)
-                                    .strong(),
-                            );
-                            ui.label(
-                                RichText::new(desc)
-                                    .size(10.5)
-                                    .color(if is_selected { Color32::from_rgb(216, 180, 254) } else { Color32::from_rgb(148, 163, 184) }),
-                            );
-                        });
+                        ui.label(
+                            RichText::new(title)
+                                .size(14.0)
+                                .color(text_col)
+                                .strong(),
+                        );
                     });
                 }).response;
 
