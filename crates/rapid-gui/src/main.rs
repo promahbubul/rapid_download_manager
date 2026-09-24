@@ -582,7 +582,8 @@ struct RapidApp {
     // Splash Screen State
     splash_start: Instant,
     splash_duration: Duration,
-    full_logo: egui::TextureHandle,
+    splash_logo: egui::TextureHandle,
+    titlebar_logo: egui::TextureHandle,
 
     // Add Download Dialog State
     show_add_dialog: bool,
@@ -814,11 +815,20 @@ impl RapidApp {
         #[cfg(windows)]
         let tray_handle = Some(tray::TrayHandle::new());
 
-        let full_logo = cc.egui_ctx.load_texture(
-            "rapid_full_logo",
+        let splash_logo = cc.egui_ctx.load_texture(
+            "rapid_splash_logo",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [934, 398],
+                include_bytes!("../assets/master_logo.raw"),
+            ),
+            egui::TextureOptions::LINEAR,
+        );
+
+        let titlebar_logo = cc.egui_ctx.load_texture(
+            "rapid_titlebar_logo",
             egui::ColorImage::from_rgba_unmultiplied(
                 [1204, 240],
-                include_bytes!("../assets/full_logo.raw"),
+                include_bytes!("../assets/titlebar_logo.raw"),
             ),
             egui::TextureOptions::LINEAR,
         );
@@ -830,8 +840,9 @@ impl RapidApp {
             selected_filter: FilterCategory::All,
             search_query: String::new(),
             splash_start: Instant::now(),
-            splash_duration: Duration::from_millis(1800),
-            full_logo,
+            splash_duration: Duration::from_millis(2400),
+            splash_logo,
+            titlebar_logo,
             show_add_dialog: false,
             input_url: String::new(),
             input_filename: String::new(),
@@ -1246,123 +1257,175 @@ impl RapidApp {
     }
 
     // Render Animated Splash Screen on startup (Centered, Smooth Fade & Ambient Backlight)
+    // Render Splash Screen on startup: Pure, clean, minimalist center-center logo
+    // Render Animated Splash Screen on startup: Centered, Animated Logo, Stages & Glowing Progress Bar
+    // Render Animated Splash Screen on startup: Centered, Animated Logo, Stages & Glowing Progress Bar
     fn render_splash_screen(&self, ctx: &egui::Context, elapsed: Duration) {
-        let progress = (elapsed.as_secs_f32() / 1.8).clamp(0.0, 1.0);
         let time = elapsed.as_secs_f32();
+        let total_dur = 2.4_f32;
+        let progress = (time / total_dur).clamp(0.0, 1.0);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(VELVET_BLACK))
             .show(ctx, |ui| {
-                // Perfect Mathematical Vertical & Horizontal Centering
+                // Dimensions of authentic master logo (aspect ratio: 2.3467)
+                let base_w = 440.0_f32;
+                let base_h = (base_w / 2.3467_f32).round();
+
+                // Animated Micro-Scale & Smooth Opacity Entrance
+                let t_entrance = (time / 0.45).clamp(0.0, 1.0);
+                let ease_out = 1.0 - (1.0 - t_entrance).powi(3);
+                let scale = 0.96 + 0.04 * ease_out;
+                let logo_w = base_w * scale;
+                let logo_h = base_h * scale;
+
+                // Total splash block height for absolute Center-Center alignment
+                let total_block_h = 280.0_f32;
                 let avail_h = ui.available_height();
-                let total_content_h = 196.0_f32;
-                let top_space = ((avail_h - total_content_h) * 0.5).max(10.0);
+                let top_space = ((avail_h - total_block_h) * 0.5).max(10.0);
                 ui.add_space(top_space);
 
                 ui.vertical_centered(|ui| {
-                    // Logo Display: Stable, Crisp, and Sized for Elegance
-                    let logo_w: f32 = 460.0;
-                    let logo_h: f32 = (logo_w / 5.0167_f32).round();
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
+                    let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
 
-                    let painter = ui.painter();
+                    // Subtle breathing ambient aura behind logo
+                    let breathe = (time * 2.8).sin() * 0.15 + 0.85;
+                    let glow_alpha = ((24.0 * t_entrance * breathe) as u8).min(255);
+                    let glow_rect = logo_rect.expand(16.0);
 
-                    // Smooth fade-in and subtle breathing ambient backlight matching brand colors
-                    let fade_in = (time / 0.4).clamp(0.0, 1.0);
-                    let breathe = (time * 2.5).sin() * 0.15 + 0.85;
-
-                    // Soft ambient backlight behind the logo (pill shaped, matching logo aspect ratio)
-                    let glow_rect = rect.expand(12.0);
-                    let cyan_glow_alpha = ((28.0 * fade_in * breathe) as u8).min(255);
-                    let violet_glow_alpha = ((22.0 * fade_in * breathe) as u8).min(255);
-
-                    // Left side soft cyan backlight
+                    // Dual ambient backlight (cyan left, purple right)
                     let left_half = egui::Rect::from_min_max(
                         glow_rect.min,
                         egui::pos2(glow_rect.center().x, glow_rect.max.y),
                     );
-                    painter.rect_filled(
+                    ui.painter().rect_filled(
                         left_half,
-                        egui::Rounding { nw: 20.0, sw: 20.0, ne: 0.0, se: 0.0 },
-                        Color32::from_rgba_unmultiplied(0, 210, 255, cyan_glow_alpha),
+                        egui::Rounding { nw: 24.0, sw: 24.0, ne: 0.0, se: 0.0 },
+                        Color32::from_rgba_unmultiplied(0, 210, 255, glow_alpha),
                     );
 
-                    // Right side soft violet backlight
                     let right_half = egui::Rect::from_min_max(
                         egui::pos2(glow_rect.center().x, glow_rect.min.y),
                         glow_rect.max,
                     );
-                    painter.rect_filled(
+                    ui.painter().rect_filled(
                         right_half,
-                        egui::Rounding { nw: 0.0, sw: 0.0, ne: 20.0, se: 20.0 },
-                        Color32::from_rgba_unmultiplied(139, 92, 246, violet_glow_alpha),
+                        egui::Rounding { nw: 0.0, sw: 0.0, ne: 24.0, se: 24.0 },
+                        Color32::from_rgba_unmultiplied(139, 92, 246, ((glow_alpha as f32) * 0.85) as u8),
                     );
 
-                    // Draw the authentic, crisp full brand logo image
-                    let logo_alpha = (fade_in * 255.0) as u8;
-                    painter.image(
-                        self.full_logo.id(),
-                        rect,
+                    // Draw the authentic, crisp master logo image
+                    let logo_alpha = (t_entrance * 255.0) as u8;
+                    ui.painter().image(
+                        self.splash_logo.id(),
+                        logo_rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         Color32::from_rgba_unmultiplied(255, 255, 255, logo_alpha),
                     );
 
-                    ui.add_space(14.0);
+                    ui.add_space(16.0);
 
-                    // Subtitle with smooth fade-in
-                    let sub_alpha = (((time - 0.2).max(0.0) / 0.4).clamp(0.0, 1.0) * 200.0) as u8;
-                    ui.label(
-                        RichText::new("Futuristic • High-Speed Acceleration • Glassmorphism Edition")
-                            .size(12.5)
-                            .color(Color32::from_rgba_unmultiplied(160, 185, 220, sub_alpha)),
+                    // Animated Expanding Cyan/Violet Laser Accent Divider
+                    let laser_t = (time / 0.6).clamp(0.0, 1.0);
+                    let laser_w = 400.0_f32 * (1.0 - (1.0 - laser_t).powi(2));
+                    let (laser_rect, _) = ui.allocate_exact_size(Vec2::new(laser_w, 2.0), egui::Sense::hover());
+                    ui.painter().rect_filled(
+                        laser_rect,
+                        egui::Rounding::same(1.0),
+                        Color32::from_rgba_unmultiplied(0, 210, 255, (t_entrance * 160.0) as u8),
                     );
 
-                    ui.add_space(26.0);
+                    ui.add_space(20.0);
 
-                    // Modern Slim Cyber Progress Bar (340px x 4px)
-                    let bar_w = 340.0_f32;
-                    let bar_h = 4.0_f32;
+                    // Step Info calculation based on time
+                    let (stage_icon, stage_title, stage_detail, stage_col) = if progress < 0.28 {
+                        ("⚡", "STEP 1/4: INITIALIZING ENGINE CORE", "Allocating multi-stream segment matrix & TCP pool...", Color32::from_rgb(0, 210, 255))
+                    } else if progress < 0.58 {
+                        ("🌐", "STEP 2/4: CONNECTING BROWSER BRIDGE", "Binding native extension listener on http://127.0.0.1:9669...", Color32::from_rgb(56, 189, 248))
+                    } else if progress < 0.86 {
+                        ("🎬", "STEP 3/4: VERIFYING MEDIA PIPELINE", "Calibrating yt-dlp sniffer & FFmpeg muxing engine...", Color32::from_rgb(168, 85, 247))
+                    } else {
+                        ("🚀", "STEP 4/4: SYSTEM READY & INTERCEPTING", "Launching Rapid Command Dock interface...", Color32::from_rgb(34, 197, 94))
+                    };
+
+                    let bar_w = 420.0_f32;
+
+                    // Info Header Row (Stage name on left, Percentage on right)
+                    let pct = ((progress * 100.0) as usize).min(100);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(bar_w, 20.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(stage_icon).size(13.0));
+                                ui.add_space(3.0);
+                                ui.label(
+                                    RichText::new(stage_title)
+                                        .size(11.5)
+                                        .strong()
+                                        .color(stage_col),
+                                );
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    RichText::new(format!("{:3}%", pct))
+                                        .size(12.5)
+                                        .strong()
+                                        .monospace()
+                                        .color(Color32::from_rgb(0, 210, 255)),
+                                );
+                            });
+                        },
+                    );
+
+                    ui.add_space(8.0);
+
+                    // High-Tech Glowing Progress Bar (420px x 6px)
+                    let bar_h = 6.0_f32;
                     let (bar_rect, _) = ui.allocate_exact_size(Vec2::new(bar_w, bar_h), egui::Sense::hover());
 
-                    // Track background
+                    // Outer glass track
                     ui.painter().rect_filled(
                         bar_rect,
-                        egui::Rounding::same(2.0),
-                        Color32::from_rgb(18, 24, 38),
+                        egui::Rounding::same(3.0),
+                        Color32::from_rgb(16, 22, 34),
+                    );
+                    ui.painter().rect_stroke(
+                        bar_rect,
+                        egui::Rounding::same(3.0),
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(35, 48, 72, 160)),
                     );
 
-                    // Animated Progress Fill (Cyan with glowing tip)
+                    // Smooth animated progress fill
                     let fill_w = (bar_w * progress).clamp(0.0, bar_w);
                     if fill_w > 0.0 {
                         let fill_rect = egui::Rect::from_min_size(bar_rect.min, Vec2::new(fill_w, bar_h));
                         ui.painter().rect_filled(
                             fill_rect,
-                            egui::Rounding::same(2.0),
+                            egui::Rounding::same(3.0),
                             Color32::from_rgb(0, 210, 255),
                         );
-                        // Glowing leading tip
-                        let tip = egui::pos2(fill_rect.max.x, fill_rect.center().y);
+                        // Glowing leading spark point
+                        let spark_pos = egui::pos2(fill_rect.max.x, fill_rect.center().y);
                         ui.painter().circle_filled(
-                            tip,
-                            3.5,
-                            Color32::from_rgba_unmultiplied(0, 210, 255, 220),
+                            spark_pos,
+                            4.5,
+                            Color32::from_rgba_unmultiplied(0, 210, 255, 240),
+                        );
+                        ui.painter().circle_stroke(
+                            spark_pos,
+                            7.0,
+                            Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(139, 92, 246, 160)),
                         );
                     }
 
-                    ui.add_space(12.0);
+                    ui.add_space(10.0);
 
-                    // Status Text
-                    let status_text = if progress < 0.35 {
-                        "Initializing multi-stream segment matrix..."
-                    } else if progress < 0.75 {
-                        "Connecting browser extension bridge on port 9669..."
-                    } else {
-                        "Engine ready. Launching Command Dock..."
-                    };
+                    // Diagnostic Step Detail Subtext
                     ui.label(
-                        RichText::new(status_text)
+                        RichText::new(stage_detail)
                             .size(11.5)
-                            .color(PINK_MUTED),
+                            .color(Color32::from_rgb(140, 160, 185)),
                     );
                 });
             });
@@ -1386,7 +1449,7 @@ impl RapidApp {
                     let logo_w: f32 = (logo_h * 5.0167_f32).round();
                     let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
                     ui.painter().image(
-                        self.full_logo.id(),
+                        self.titlebar_logo.id(),
                         logo_rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         Color32::WHITE,
