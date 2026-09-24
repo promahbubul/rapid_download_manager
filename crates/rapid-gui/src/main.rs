@@ -1330,14 +1330,14 @@ impl RapidApp {
                 egui::Frame::none()
                     .fill(GLASS_BG)
                     .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                    .inner_margin(Margin::symmetric(14.0, 6.0)),
+                    .inner_margin(Margin::symmetric(16.0, 8.0)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
 
-                    // 1. App Full Brand Logo (Left Side)
-                    let logo_h: f32 = 24.0;
+                    // 1. App Full Brand Logo (Left Side) - prominently enlarged
+                    let logo_h: f32 = 46.0;
                     let logo_w: f32 = (logo_h * 2.347_f32).round();
                     let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
                     ui.painter().image(
@@ -1348,9 +1348,9 @@ impl RapidApp {
                     );
 
                     // 2. Drag & Move Region (takes up flexible remaining width)
-                    let remaining_w = (ui.available_width() - 150.0).max(20.0);
+                    let remaining_w = (ui.available_width() - 160.0).max(20.0);
                     let (_drag_rect, drag_resp) = ui.allocate_exact_size(
-                        Vec2::new(remaining_w, 34.0),
+                        Vec2::new(remaining_w, 46.0),
                         egui::Sense::click_and_drag(),
                     );
                     let drag_resp = drag_resp.on_hover_cursor(egui::CursorIcon::Grab);
@@ -1371,7 +1371,7 @@ impl RapidApp {
                         if window_caption_button(
                             ui,
                             ModernIcon::WinClose,
-                            Vec2::new(46.0, 34.0),
+                            Vec2::new(48.0, 42.0),
                             GLASS_MUTED,
                             Color32::WHITE,
                             Color32::from_rgb(239, 68, 68),
@@ -1390,7 +1390,7 @@ impl RapidApp {
                         if window_caption_button(
                             ui,
                             max_icon,
-                            Vec2::new(46.0, 34.0),
+                            Vec2::new(48.0, 42.0),
                             GLASS_MUTED,
                             GLASS_SECONDARY,
                             Color32::from_rgb(26, 36, 62),
@@ -1403,7 +1403,7 @@ impl RapidApp {
                         if window_caption_button(
                             ui,
                             ModernIcon::WinMinimize,
-                            Vec2::new(46.0, 34.0),
+                            Vec2::new(48.0, 42.0),
                             GLASS_MUTED,
                             GLASS_SECONDARY,
                             Color32::from_rgb(26, 36, 62),
