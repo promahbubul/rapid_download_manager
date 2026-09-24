@@ -21,6 +21,7 @@ OutputBaseFilename=RapidDownloadManager_Setup_v1.0.0
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
