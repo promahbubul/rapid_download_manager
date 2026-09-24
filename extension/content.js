@@ -246,7 +246,17 @@ function attachFloatingWidget(mediaEl, type) {
 
   const iconSpan = document.createElement("span");
   iconSpan.className = "icon";
-  iconSpan.textContent = type === "audio" ? "🎵" : "⚡";
+  if (type === "audio") {
+    iconSpan.textContent = "🎵";
+  } else {
+    const iconImg = document.createElement("img");
+    iconImg.src = chrome.runtime.getURL("icon16.png");
+    iconImg.style.width = "14px";
+    iconImg.style.height = "14px";
+    iconImg.style.verticalAlign = "-2px";
+    iconImg.style.marginRight = "4px";
+    iconSpan.appendChild(iconImg);
+  }
 
   const btnText = document.createElement("span");
   btnText.textContent = type === "audio" ? "Download Audio" : "Download Video";

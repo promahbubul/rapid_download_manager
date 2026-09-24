@@ -582,6 +582,7 @@ struct RapidApp {
     // Splash Screen State
     splash_start: Instant,
     splash_duration: Duration,
+    brand_logo: egui::TextureHandle,
 
     // Add Download Dialog State
     show_add_dialog: bool,
@@ -813,6 +814,15 @@ impl RapidApp {
         #[cfg(windows)]
         let tray_handle = Some(tray::TrayHandle::new());
 
+        let brand_logo = cc.egui_ctx.load_texture(
+            "rapid_brand_logo",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [128, 128],
+                include_bytes!("../assets/icon_128.raw"),
+            ),
+            egui::TextureOptions::LINEAR,
+        );
+
         Self {
             tokio_rt: rt,
             tasks: tasks_arc,
@@ -821,6 +831,7 @@ impl RapidApp {
             search_query: String::new(),
             splash_start: Instant::now(),
             splash_duration: Duration::from_millis(1800),
+            brand_logo,
             show_add_dialog: false,
             input_url: String::new(),
             input_filename: String::new(),
@@ -1275,13 +1286,12 @@ impl RapidApp {
                         Stroke::new(2.5_f32, GLASS_PRIMARY),
                     );
 
-                    // Centered Lightning Bolt icon
-                    painter.text(
-                        center,
-                        egui::Align2::CENTER_CENTER,
-                        "⚡",
-                        egui::FontId::proportional(44.0 * pulse_scale),
-                        GLASS_PRIMARY,
+                    // Centered Brand Logo Emblem
+                    painter.image(
+                        self.brand_logo.id(),
+                        egui::Rect::from_center_size(center, Vec2::splat(68.0 * pulse_scale)),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        Color32::WHITE,
                     );
 
                     ui.add_space(26.0);
@@ -1336,23 +1346,15 @@ impl RapidApp {
                     ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
 
                     // 1. App Icon & Brand Title (Left Side)
-                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), egui::Sense::hover());
-                    let center = icon_rect.center();
-                    ui.painter().circle(
-                        center,
-                        13.5,
-                        Color32::from_rgb(28, 20, 58),
-                        Stroke::new(1.2_f32, GLASS_PRIMARY),
-                    );
-                    ui.painter().text(
-                        center,
-                        egui::Align2::CENTER_CENTER,
-                        "⚡",
-                        egui::FontId::proportional(14.0),
-                        GLASS_PRIMARY_HOVER,
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), egui::Sense::hover());
+                    ui.painter().image(
+                        self.brand_logo.id(),
+                        icon_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        Color32::WHITE,
                     );
 
-                    ui.add_space(3.0);
+                    ui.add_space(6.0);
                     ui.label(
                         RichText::new("Rapid Download Manager")
                             .size(13.5)
@@ -4896,6 +4898,13 @@ fn main() -> Result<(), eframe::Error> {
     let win_w = 1100.0_f32;
     let win_h = 680.0_f32;
 
+    let raw_icon_128 = include_bytes!("../assets/icon_128.raw");
+    let icon_data = egui::IconData {
+        rgba: raw_icon_128.to_vec(),
+        width: 128,
+        height: 128,
+    };
+
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([win_w, win_h])
         .with_min_inner_size([650.0, 380.0])
@@ -4903,6 +4912,7 @@ fn main() -> Result<(), eframe::Error> {
         .with_taskbar(true)
         .with_resizable(true)
         .with_title("Rapid Download Manager")
+        .with_icon(icon_data)
         .with_visible(true)
         .with_active(true);
 

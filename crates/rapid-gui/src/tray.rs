@@ -113,6 +113,15 @@ extern "system" {
     fn TranslateMessage(lpMsg: *const MSG) -> i32;
     fn DispatchMessageW(lpMsg: *const MSG) -> isize;
     fn LoadIconW(hInstance: isize, lpIconName: *const u16) -> isize;
+    fn CreateIconFromResourceEx(
+        pbIconBits: *const u8,
+        cbIconBits: u32,
+        fIcon: i32,
+        dwVersion: u32,
+        cxDesired: i32,
+        cyDesired: i32,
+        uFlags: u32,
+    ) -> isize;
     fn CreatePopupMenu() -> isize;
     fn AppendMenuW(hMenu: isize, uFlags: u32, uIDNewItem: usize, lpNewItem: *const u16) -> i32;
     fn TrackPopupMenu(
@@ -252,7 +261,21 @@ impl TrayHandle {
         thread::spawn(move || unsafe {
             let class_name: Vec<u16> = "RapidDownloadManagerTrayClass\0".encode_utf16().collect();
             let h_inst = GetModuleHandleW(std::ptr::null());
-            let icon = LoadIconW(0, IDI_APPLICATION as *const u16);
+            let png_bytes = include_bytes!("../assets/icon.png");
+            let custom_icon = CreateIconFromResourceEx(
+                png_bytes.as_ptr(),
+                png_bytes.len() as u32,
+                1,
+                0x00030000,
+                32,
+                32,
+                0,
+            );
+            let icon = if custom_icon != 0 {
+                custom_icon
+            } else {
+                LoadIconW(0, IDI_APPLICATION as *const u16)
+            };
 
             let wnd_class = WNDCLASSEXW {
                 cb_size: std::mem::size_of::<WNDCLASSEXW>() as u32,

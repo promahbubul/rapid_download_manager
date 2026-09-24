@@ -34,3 +34,6 @@ dev_watch.*
 
 /ffmpeg.exe
 *.png
+!extension/*.png
+!assets/*.png
+!crates/rapid-gui/assets/*
