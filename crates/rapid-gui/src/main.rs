@@ -817,7 +817,7 @@ impl RapidApp {
         let full_logo = cc.egui_ctx.load_texture(
             "rapid_full_logo",
             egui::ColorImage::from_rgba_unmultiplied(
-                [934, 398],
+                [1204, 240],
                 include_bytes!("../assets/full_logo.raw"),
             ),
             egui::TextureOptions::LINEAR,
@@ -1259,8 +1259,8 @@ impl RapidApp {
 
                     // Animated Pulsating Full Brand Logo
                     let pulse_scale = (time * 4.0).sin() * 0.04 + 1.0;
-                    let logo_w: f32 = 340.0 * pulse_scale;
-                    let logo_h: f32 = (logo_w / 2.347_f32).round();
+                    let logo_w: f32 = 440.0 * pulse_scale;
+                    let logo_h: f32 = (logo_w / 5.0167_f32).round();
                     let (rect, _response) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
                     let center = rect.center();
 
@@ -1279,7 +1279,7 @@ impl RapidApp {
                     // Inner soft halo in Electric Violet (#8B5CF6)
                     painter.circle_filled(
                         center,
-                        logo_h * 0.65,
+                        logo_h * 0.75,
                         Color32::from_rgba_unmultiplied(139, 92, 246, 25),
                     );
 
@@ -1336,9 +1336,9 @@ impl RapidApp {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
 
-                    // 1. App Full Brand Logo (Left Side) - prominently enlarged
+                    // 1. App Full Brand Logo (Left Side) - prominently enlarged with boosted readable slug
                     let logo_h: f32 = 46.0;
-                    let logo_w: f32 = (logo_h * 2.347_f32).round();
+                    let logo_w: f32 = (logo_h * 5.0167_f32).round();
                     let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
                     ui.painter().image(
                         self.full_logo.id(),
