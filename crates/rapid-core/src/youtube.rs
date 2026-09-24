@@ -327,7 +327,7 @@ impl YoutubeDownloader {
             "8",
             "--newline",
             "--progress-template",
-            "download:%(progress.downloaded_bytes)s/%(progress.total_bytes)s/%(progress.speed)s/%(progress.eta)s",
+            "download:RAPIDPROG:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s/%(progress.speed)s/%(progress.eta)s",
             "--no-playlist",
         ]);
         if let Some(ref c) = self.cookies {
@@ -459,6 +459,10 @@ impl YoutubeDownloader {
         let mut reader = BufReader::new(stdout).lines();
         let mut last_downloaded = 0u64;
         let mut total_bytes_known: Option<u64> = None;
+        let mut prev_completed_bytes = 0u64;
+        let mut prev_completed_total = 0u64;
+        let mut cur_stream_downloaded = 0u64;
+        let mut cur_stream_total = 0u64;
 
         let mut ui_segments: Vec<Segment> = (0..8)
             .map(|i| Segment::new(i, i as u64, (i + 1) as u64))
@@ -484,23 +488,40 @@ impl YoutubeDownloader {
                 line_res = reader.next_line() => {
                     match line_res {
                         Ok(Some(line)) => {
-                            if line.starts_with("download:") {
-                                let payload = &line["download:".len()..];
+                            let trimmed_line = line.trim();
+                            if let Some(idx) = trimmed_line.find("RAPIDPROG:") {
+                                let payload = &trimmed_line[idx + "RAPIDPROG:".len()..];
                                 let parts: Vec<&str> = payload.split('/').collect();
                                 if parts.len() >= 4 {
-                                    let downloaded = parts[0].trim().parse::<u64>().unwrap_or(last_downloaded);
-                                    let total = parts[1].trim().parse::<u64>().ok();
+                                    let stream_dl = parts[0].trim().parse::<u64>().unwrap_or(cur_stream_downloaded);
+                                    let stream_tot = parts[1].trim().parse::<u64>().ok().unwrap_or(0);
                                     let speed = parts[2].trim().parse::<f64>().ok().map(|s| s as u64).unwrap_or(0);
                                     let eta = parts[3].trim().parse::<f64>().ok().map(|e| e as u64);
 
-                                    last_downloaded = downloaded;
-                                    if total.is_some() {
-                                        total_bytes_known = total;
+                                    // Detect transition between streams (e.g. video completed, audio stream started)
+                                    if (stream_dl < cur_stream_downloaded && cur_stream_downloaded > 0)
+                                        || (stream_tot > 0 && cur_stream_total > 0 && stream_tot != cur_stream_total && stream_dl < cur_stream_downloaded) {
+                                        prev_completed_bytes += cur_stream_total.max(cur_stream_downloaded);
+                                        prev_completed_total += cur_stream_total;
+                                        cur_stream_downloaded = stream_dl;
+                                        cur_stream_total = stream_tot;
+                                    } else {
+                                        cur_stream_downloaded = stream_dl;
+                                        if stream_tot > 0 {
+                                            cur_stream_total = stream_tot;
+                                        }
+                                    }
+
+                                    let total_downloaded = prev_completed_bytes + cur_stream_downloaded;
+                                    last_downloaded = total_downloaded;
+
+                                    if prev_completed_total + cur_stream_total > 0 {
+                                        total_bytes_known = Some(prev_completed_total + cur_stream_total);
                                     }
 
                                     let pct = if let Some(tot) = total_bytes_known {
                                         if tot > 0 {
-                                            ((downloaded as f64 / tot as f64) * 100.0) as f32
+                                            ((total_downloaded as f64 / tot as f64) * 100.0).clamp(0.0, 99.5) as f32
                                         } else {
                                             0.0
                                         }
@@ -509,7 +530,7 @@ impl YoutubeDownloader {
                                     };
 
                                     for seg in &mut ui_segments {
-                                        seg.downloaded_bytes = downloaded / 8;
+                                        seg.downloaded_bytes = total_downloaded / 8;
                                         seg.is_complete = pct >= 100.0;
                                     }
 
@@ -517,7 +538,7 @@ impl YoutubeDownloader {
                                         id: self.id.clone(),
                                         filename: self.filename.clone(),
                                         status: DownloadStatus::Downloading,
-                                        downloaded_bytes: downloaded,
+                                        downloaded_bytes: total_downloaded,
                                         total_bytes: total_bytes_known,
                                         progress_percent: pct,
                                         speed_bps: speed,
@@ -525,6 +546,18 @@ impl YoutubeDownloader {
                                         segments: ui_segments.clone(),
                                     });
                                 }
+                            } else if trimmed_line.contains("[Merger]") || trimmed_line.contains("Merging formats") {
+                                let _ = progress_tx.send(DownloadProgress {
+                                    id: self.id.clone(),
+                                    filename: self.filename.clone(),
+                                    status: DownloadStatus::Downloading,
+                                    downloaded_bytes: last_downloaded,
+                                    total_bytes: total_bytes_known,
+                                    progress_percent: 99.8,
+                                    speed_bps: 0,
+                                    eta_seconds: Some(1),
+                                    segments: ui_segments.clone(),
+                                });
                             }
                         }
                         Ok(None) => break, // EOF
@@ -587,5 +620,54 @@ fn sanitize_filename(name: &str) -> String {
         "YouTube_Video".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_youtube_progress_event() {
+        let (tx, mut rx) = broadcast::channel(64);
+        let cancel = CancellationToken::new();
+        let target = std::env::temp_dir().join("rapid_test_yt_prog.mp4");
+        let dl = YoutubeDownloader::new(
+            "test_yt_id".to_string(),
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw".to_string(),
+            "rapid_test_yt_prog.mp4".to_string(),
+            target.clone(),
+            DownloadQuality::Best,
+            None,
+            cancel,
+            None,
+            None,
+            None,
+        );
+
+        let handle = tokio::spawn(async move {
+            dl.run(tx).await
+        });
+
+        let mut progress_events = Vec::new();
+        while let Ok(prog) = rx.recv().await {
+            println!(
+                "PROGRESS: pct={:.1}%, dl={} bytes, tot={:?}, speed={} B/s, eta={:?}s, status={:?}",
+                prog.progress_percent, prog.downloaded_bytes, prog.total_bytes, prog.speed_bps, prog.eta_seconds, prog.status
+            );
+            progress_events.push(prog.clone());
+            if prog.status == DownloadStatus::Completed {
+                break;
+            }
+        }
+
+        let res = handle.await.expect("Task join failed");
+        assert!(res.is_ok(), "Download task failed: {:?}", res);
+        assert!(!progress_events.is_empty(), "No progress events received!");
+        assert!(progress_events.len() >= 2, "Expected multiple progress events, got {}", progress_events.len());
+        let _ = tokio::fs::remove_file(target).await;
+        println!("TEST PASSED: Received {} progress events successfully!", progress_events.len());
     }
 }
