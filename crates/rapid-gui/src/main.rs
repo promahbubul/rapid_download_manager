@@ -582,7 +582,7 @@ struct RapidApp {
     // Splash Screen State
     splash_start: Instant,
     splash_duration: Duration,
-    brand_logo: egui::TextureHandle,
+    full_logo: egui::TextureHandle,
 
     // Add Download Dialog State
     show_add_dialog: bool,
@@ -814,11 +814,11 @@ impl RapidApp {
         #[cfg(windows)]
         let tray_handle = Some(tray::TrayHandle::new());
 
-        let brand_logo = cc.egui_ctx.load_texture(
-            "rapid_brand_logo",
+        let full_logo = cc.egui_ctx.load_texture(
+            "rapid_full_logo",
             egui::ColorImage::from_rgba_unmultiplied(
-                [128, 128],
-                include_bytes!("../assets/icon_128.raw"),
+                [934, 398],
+                include_bytes!("../assets/full_logo.raw"),
             ),
             egui::TextureOptions::LINEAR,
         );
@@ -831,7 +831,7 @@ impl RapidApp {
             search_query: String::new(),
             splash_start: Instant::now(),
             splash_duration: Duration::from_millis(1800),
-            brand_logo,
+            full_logo,
             show_add_dialog: false,
             input_url: String::new(),
             input_filename: String::new(),
@@ -1257,50 +1257,41 @@ impl RapidApp {
                     let avail_h = ui.available_height();
                     ui.add_space((avail_h * 0.2).max(40.0));
 
-                    // Animated Pulsating Lightning Symbol with concentric glow rings
-                    let pulse_scale = (time * 4.0).sin() * 0.08 + 1.0;
-                    let (rect, _response) = ui.allocate_exact_size(Vec2::new(120.0, 120.0), egui::Sense::hover());
+                    // Animated Pulsating Full Brand Logo
+                    let pulse_scale = (time * 4.0).sin() * 0.04 + 1.0;
+                    let logo_w: f32 = 340.0 * pulse_scale;
+                    let logo_h: f32 = (logo_w / 2.347_f32).round();
+                    let (rect, _response) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
                     let center = rect.center();
 
                     let painter = ui.painter();
 
                     // Expanding outer glow ripple in Neon Cyan (#06B6D4)
                     let ripple_phase = (time * 1.6) % 1.0;
-                    let ripple_radius = 40.0 + ripple_phase * 35.0;
-                    let ripple_alpha = ((1.0 - ripple_phase) * 140.0) as u8;
+                    let ripple_radius = (logo_w * 0.35) + ripple_phase * 30.0;
+                    let ripple_alpha = ((1.0 - ripple_phase) * 90.0) as u8;
                     painter.circle_stroke(
                         center,
                         ripple_radius,
-                        Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(6, 182, 212, ripple_alpha)),
+                        Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(6, 182, 212, ripple_alpha)),
                     );
 
-                    // Inner pulsing halo in Electric Violet (#8B5CF6)
+                    // Inner soft halo in Electric Violet (#8B5CF6)
                     painter.circle_filled(
                         center,
-                        38.0 * pulse_scale,
-                        Color32::from_rgba_unmultiplied(139, 92, 246, 35),
-                    );
-                    painter.circle_stroke(
-                        center,
-                        40.0 * pulse_scale,
-                        Stroke::new(2.5_f32, GLASS_PRIMARY),
+                        logo_h * 0.65,
+                        Color32::from_rgba_unmultiplied(139, 92, 246, 25),
                     );
 
-                    // Centered Brand Logo Emblem
+                    // Draw the authentic full brand logo image
                     painter.image(
-                        self.brand_logo.id(),
-                        egui::Rect::from_center_size(center, Vec2::splat(68.0 * pulse_scale)),
+                        self.full_logo.id(),
+                        rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         Color32::WHITE,
                     );
 
-                    ui.add_space(26.0);
-                    ui.label(
-                        RichText::new("RAPID DOWNLOAD MANAGER")
-                            .size(24.0)
-                            .strong()
-                            .color(GLASS_PRIMARY),
-                    );
+                    ui.add_space(16.0);
 
                     ui.add_space(4.0);
                     ui.label(
@@ -1345,21 +1336,15 @@ impl RapidApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
 
-                    // 1. App Icon & Brand Title (Left Side)
-                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), egui::Sense::hover());
+                    // 1. App Full Brand Logo (Left Side)
+                    let logo_h: f32 = 24.0;
+                    let logo_w: f32 = (logo_h * 2.347_f32).round();
+                    let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
                     ui.painter().image(
-                        self.brand_logo.id(),
-                        icon_rect,
+                        self.full_logo.id(),
+                        logo_rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         Color32::WHITE,
-                    );
-
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Rapid Download Manager")
-                            .size(13.5)
-                            .strong()
-                            .color(GLASS_TEXT),
                     );
 
                     // 2. Drag & Move Region (takes up flexible remaining width)
