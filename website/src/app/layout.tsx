@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Rapid Download Manager — High-Speed 3D Download Accelerator",
+  title: "Rapid Download Manager — High-Speed Download Accelerator",
   description:
     "Turbocharged 16-socket multi-segment download accelerator engineered in memory-safe Rust with automated browser integration for Windows, macOS, and Linux.",
   icons: {

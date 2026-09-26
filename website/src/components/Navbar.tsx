@@ -33,7 +33,7 @@ export default function Navbar() {
 
   const navLinks = [
     { name: "Features", href: "/#features" },
-    { name: "3D Showcase", href: "/#showcase" },
+    { name: "Showcase", href: "/#showcase" },
     { name: "Download", href: "/#download" },
     { name: "Docs", href: "/docs" },
     { name: "Extension", href: "/extension" },
@@ -46,35 +46,27 @@ export default function Navbar() {
     <header
       className="sticky top-0 z-50 w-full backdrop-blur-xl border-b transition-colors duration-200"
       style={{
-        backgroundColor: resolvedTheme === "dark" ? "rgba(11, 15, 25, 0.88)" : "rgba(255, 255, 255, 0.88)",
+        backgroundColor: resolvedTheme === "dark" ? "rgba(11, 15, 23, 0.85)" : "rgba(255, 255, 255, 0.88)",
         borderColor: resolvedTheme === "dark" ? "rgba(30, 41, 59, 0.8)" : "rgba(226, 232, 240, 0.8)",
       }}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand Logo with Official Software App Icon */}
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="relative w-9 h-9 flex items-center justify-center group-hover:scale-108 transition-transform duration-300">
-            <img
-              src="/assets/app_icon.png"
-              alt="Rapid Download Manager Icon"
-              className="w-9 h-9 object-contain drop-shadow-md"
-            />
-          </div>
+          <img
+            src="/assets/app_icon.png"
+            alt="Rapid Download Manager Icon"
+            className="w-8 h-8 sm:w-9 sm:h-9 object-contain drop-shadow transition-transform duration-200 group-hover:scale-105"
+          />
           <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-base sm:text-lg tracking-tight" style={{ color: "var(--text-heading)" }}>
-                Rapid
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-base sm:text-lg tracking-tight" style={{ color: "var(--text-heading)" }}>
+                Rapid Download Manager
               </span>
-              <span className="font-light text-base sm:text-lg tracking-tight" style={{ color: "var(--text-heading)" }}>
-                Download Manager
-              </span>
-              <span className="hidden lg:inline-flex text-[10px] font-semibold px-1.5 py-0.5 rounded-full border border-indigo-500/30 text-indigo-400 bg-indigo-500/10">
+              <span className="hidden sm:inline-flex text-[10px] font-semibold px-2 py-0.5 rounded-full border border-indigo-500/30 text-indigo-400 bg-indigo-500/10">
                 v1.0.0 GA
               </span>
             </div>
-            <span className="hidden sm:inline text-[9px] tracking-wider uppercase font-semibold text-slate-400">
-              Rust Acceleration • Multi-Platform
-            </span>
           </div>
         </Link>
 
@@ -84,7 +76,7 @@ export default function Navbar() {
             <Link
               key={link.name}
               href={link.href}
-              className="px-2.5 py-1.5 rounded-lg text-xs lg:text-sm font-medium transition-colors hover:text-indigo-400"
+              className="px-3 py-1.5 rounded-lg text-xs lg:text-sm font-medium transition-colors hover:text-indigo-400"
               style={{ color: "var(--text-muted)" }}
             >
               {link.name}
@@ -99,13 +91,13 @@ export default function Navbar() {
             href="https://github.com/promahbubul/rapid_download_manager"
             target="_blank"
             rel="noopener noreferrer"
-            className="p-2 rounded-xl border transition-all hover:scale-105 hidden sm:flex items-center justify-center"
+            className="p-2 rounded-xl border transition-colors hover:bg-slate-500/10 hidden sm:flex items-center justify-center"
             style={{
               borderColor: "var(--border-subtle)",
               backgroundColor: "var(--bg-card)",
               color: "var(--text-heading)",
             }}
-            title="View on GitHub"
+            title="View Source on GitHub"
           >
             <GithubIcon className="w-4 h-4" />
           </a>
@@ -114,14 +106,13 @@ export default function Navbar() {
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="p-2 rounded-xl border flex items-center gap-1 text-xs font-medium transition-all hover:scale-105 cursor-pointer"
+              className="p-2 rounded-xl border flex items-center gap-1.5 text-xs font-medium transition-colors hover:bg-slate-500/10 cursor-pointer"
               style={{
                 borderColor: "var(--border-subtle)",
                 backgroundColor: "var(--bg-card)",
                 color: "var(--text-heading)",
               }}
-              title="Toggle Theme (Light, Dark, System)"
-              aria-label="Theme menu"
+              title="Theme Selector"
             >
               {resolvedTheme === "dark" ? (
                 <Moon className="w-4 h-4 text-indigo-400" />
@@ -187,10 +178,10 @@ export default function Navbar() {
             )}
           </div>
 
-          {/* Direct CTA */}
+          {/* Direct Download Button */}
           <a
             href="#download"
-            className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-xs font-semibold shadow-md shadow-indigo-500/20 hover:scale-104 transition-all duration-200"
+            className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Download</span>
@@ -216,7 +207,7 @@ export default function Navbar() {
         <div
           className="md:hidden border-b px-4 py-4 space-y-2 backdrop-blur-xl"
           style={{
-            backgroundColor: resolvedTheme === "dark" ? "#0b0f19" : "#FFFFFF",
+            backgroundColor: resolvedTheme === "dark" ? "#0b0f17" : "#FFFFFF",
             borderColor: "var(--border-subtle)",
           }}
         >

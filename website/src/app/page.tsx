@@ -7,14 +7,10 @@ import Comparison from "@/components/Comparison";
 import CrossPlatformDownload from "@/components/CrossPlatformDownload";
 import QuickStart from "@/components/QuickStart";
 import Footer from "@/components/Footer";
-import Background3DCanvas from "@/components/Background3DCanvas";
 
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col relative">
-      {/* Interactive 3D Three.js Particle Background */}
-      <Background3DCanvas />
-
+    <div className="min-h-screen flex flex-col bg-grid-pattern">
       <Navbar />
       <main className="flex-1">
         <Hero />
