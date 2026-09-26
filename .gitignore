@@ -49,3 +49,4 @@ dev_watch.*
 *.crt
 *.cer
 *.credentials
+msix/tools/
