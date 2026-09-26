@@ -7,7 +7,9 @@ Use these exact fields when submitting to [Microsoft Partner Center](https://par
 ## 1. Product Identification
 * **Product Name:** Rapid Download Manager
 * **Package Identity:** Promahbubul.RapidDownloadManager
-* **Publisher Display Name:** Promahbubul
+* **Publisher Display Name:** promahbubul
+* **Seller ID:** 96219170
+* **Developer Name:** Mahbubul Alam
 * **Quad Version:** 1.0.0.0 (SemVer: 1.0.0)
 * **Category:** Utilities & tools
 * **Subcategory:** File managers / Productivity
@@ -94,7 +96,8 @@ KEY CAPABILITIES:
 
 ## 6. Support & Publisher Information
 * **Publisher Name:** Promahbubul
-* **Support Email / URL:** https://github.com/promahbubul/rapid_download_manager/issues
+* **Support Email:** mahbublalam500@gmail.com
+* **Support URL:** https://github.com/promahbubul/rapid_download_manager/issues
 * **Website:** https://github.com/promahbubul/rapid_download_manager
 * **Privacy Policy URL:** https://github.com/promahbubul/rapid_download_manager/blob/main/store_listing/PRIVACY_POLICY.md
 * **Copyright:** Copyright © 2026 Promahbubul. All rights reserved.

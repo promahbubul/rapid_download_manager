@@ -8,13 +8,13 @@
 
   <Identity
     Name="Promahbubul.RapidDownloadManager"
-    Publisher="CN=Promahbubul"
+    Publisher="CN=promahbubul"
     Version="1.0.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>Rapid Download Manager</DisplayName>
-    <PublisherDisplayName>Promahbubul</PublisherDisplayName>
+    <PublisherDisplayName>promahbubul</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <Description>High-performance multi-segment download accelerator with automated browser integration for Windows.</Description>
   </Properties>
