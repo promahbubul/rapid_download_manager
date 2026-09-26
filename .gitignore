@@ -38,6 +38,7 @@ dev_watch.*
 !extension/*.png
 !assets/*.png
 !crates/rapid-gui/assets/*
+!store_listing/assets/*
 # Environment & Secrets (Security Audit Safeguards)
 .env
 .env.*
