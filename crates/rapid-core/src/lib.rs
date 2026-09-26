@@ -1,3 +1,4 @@
+pub mod logger;
 pub mod storage;
 pub mod paths;
 pub mod gdrive;
@@ -20,5 +21,5 @@ pub use types::*;
 pub use gdrive::*;
 
 pub use paths::AppPaths;
-
 pub use storage::StorageManager;
+pub use logger::{RapidLogger, init_production_logging, write_crash_report};

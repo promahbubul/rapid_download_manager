@@ -6,6 +6,8 @@ authors.workspace = true
 description = "High-performance multi-segment download engine for Rapid Download Manager"
 
 [dependencies]
+log = "0.4"
+regex = "1.11"
 tokio = { version = "1.38", features = ["full"] }
 tokio-util = "0.7"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls", "cookies"] }

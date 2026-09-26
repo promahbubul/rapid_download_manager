@@ -5601,11 +5601,8 @@ fn dirs_or_fallback() -> PathBuf {
 }
 
 fn main() -> Result<(), eframe::Error> {
-    std::panic::set_hook(Box::new(|info| {
-        let backtrace = std::backtrace::Backtrace::capture();
-        let msg = format!("PANIC at {}: {:?}\nBacktrace:\n{:?}", chrono::Local::now(), info, backtrace);
-        let _ = std::fs::write(rapid_core::AppPaths::crash_log_file(), msg);
-    }));
+    let _ = rapid_core::init_production_logging();
+    log::info!("Rapid Download Manager v1.0.0 initializing...");
 
     let rt = Arc::new(Runtime::new().expect("Failed to initialize Tokio runtime"));
 

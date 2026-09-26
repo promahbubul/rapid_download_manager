@@ -6,6 +6,7 @@ authors.workspace = true
 description = "Modern lightweight GUI for Rapid Download Manager"
 
 [dependencies]
+log = "0.4"
 rapid-core = { path = "../rapid-core" }
 tokio = { version = "1.38", features = ["full"] }
 tokio-util = "0.7"
