@@ -1,4 +1,4 @@
-﻿# Rust build output
+# Rust build output
 /target/
 **/*.rs.bk
 *.pdb
@@ -37,3 +37,13 @@ dev_watch.*
 !extension/*.png
 !assets/*.png
 !crates/rapid-gui/assets/*
+# Environment & Secrets (Security Audit Safeguards)
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+*.credentials
