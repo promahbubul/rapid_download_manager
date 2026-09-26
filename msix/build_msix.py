@@ -1,6 +1,9 @@
 import os
 import shutil
 import subprocess
+import urllib.request
+import zipfile
+import io
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST_APP = os.path.join(PROJECT_ROOT, "dist", "RapidDownloadManager")
@@ -31,16 +34,32 @@ shutil.copytree(os.path.join(MSIX_SRC, "Assets"), dst_assets)
 
 print("   Staged application binaries, manifest, and visual assets.")
 
-makeappx_exe = None
-if os.path.exists(LOCAL_MAKEAPPX):
-    makeappx_exe = LOCAL_MAKEAPPX
-else:
+def ensure_makeappx():
+    if os.path.exists(LOCAL_MAKEAPPX):
+        return LOCAL_MAKEAPPX
+    
     res = subprocess.run(["where.exe", "makeappx.exe"], capture_output=True, text=True)
     if res.returncode == 0:
-        makeappx_exe = res.stdout.strip().split("\n")[0].strip()
+        return res.stdout.strip().split("\n")[0].strip()
+        
+    print("   MakeAppx not found locally or in PATH. Fetching official Microsoft BuildTools...")
+    tools_dir = os.path.dirname(LOCAL_MAKEAPPX)
+    os.makedirs(tools_dir, exist_ok=True)
+    url = "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.buildtools/10.0.26100.1742/microsoft.windows.sdk.buildtools.10.0.26100.1742.nupkg"
+    data = urllib.request.urlopen(url).read()
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for name in z.namelist():
+            if "bin/" in name and "/x64/" in name:
+                filename = os.path.basename(name)
+                if filename:
+                    with open(os.path.join(tools_dir, filename), "wb") as f:
+                        f.write(z.read(name))
+    return LOCAL_MAKEAPPX
 
-if makeappx_exe:
-    print(f"2. Compiling MSIX with Windows SDK MakeAppx: {makeappx_exe}...")
+makeappx_exe = ensure_makeappx()
+
+if makeappx_exe and os.path.exists(makeappx_exe):
+    print(f"2. Compiling MSIX with official MakeAppx: {makeappx_exe}...")
     cmd = [makeappx_exe, "pack", "/d", STAGING_DIR, "/p", OUTPUT_MSIX, "/o"]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode == 0:
@@ -49,4 +68,4 @@ if makeappx_exe:
     else:
         print("   MakeAppx failed:", res.stderr, res.stdout)
 else:
-    print("ERROR: MakeAppx.exe not found! MSIX must be compiled using official MakeAppx tool.")
+    print("ERROR: Could not locate or acquire MakeAppx.exe!")
