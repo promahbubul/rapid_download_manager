@@ -22,6 +22,7 @@ Desktop.ini
 
 # Staged build artifacts (keep installer packages)
 /dist/RapidDownloadManager/
+/dist/msix_staging/
 
 # Temporary scripts and installers
 /rustup-init.exe
