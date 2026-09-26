@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — Rapid Download Manager</title>
+    <meta name="description" content="Official Privacy Policy for Rapid Download Manager. Zero-telemetry, zero tracking, local-only data storage, and 100% memory safety.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0B0F19;
+            --surface: #111827;
+            --card-bg: rgba(17, 24, 39, 0.75);
+            --border: #1F2937;
+            --primary: #6366F1;
+            --primary-hover: #4F46E5;
+            --accent: #A855F7;
+            --text-main: #F3F4F6;
+            --text-muted: #9CA3AF;
+            --success: #10B981;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            line-height: 1.65;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 860px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 48px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+        }
+        .logo-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #A855F7, #6366F1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+        }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 28px;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        h2 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: #FFFFFF;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #E2E8F0;
+            margin: 16px 0 8px 0;
+        }
+        p {
+            color: #D1D5DB;
+            margin-bottom: 12px;
+        }
+        ul {
+            margin-left: 20px;
+            margin-bottom: 16px;
+            color: #D1D5DB;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        .highlight-badge {
+            display: inline-block;
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            margin-bottom: 14px;
+        }
+        code {
+            background: rgba(31, 41, 55, 0.8);
+            color: #E2E8F0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+            font-size: 0.9em;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 48px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            border-top: 1px solid var(--border);
+            padding-top: 24px;
+        }
+        a {
+            color: #818CF8;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1 class="logo-title">Rapid Download Manager</h1>
+            <p class="subtitle">Official Public Privacy Policy</p>
+            <div style="margin-top: 10px;">
+                <span class="highlight-badge">✓ 100% Zero-Telemetry Certified</span>
+                <span class="highlight-badge">✓ Pure Local Storage Only</span>
+            </div>
+            <p style="font-size: 0.85rem; color: #64748B; margin-top: 6px;">Effective Date: September 2026 | Version 1.0.0</p>
+        </header>
+
+        <section class="card">
+            <h2>1. Fundamental Privacy Commitment</h2>
+            <p>At <strong>Rapid Download Manager</strong>, we believe that your downloads, file transfers, and browsing activities belong solely to you. We hold a strict zero-telemetry policy:</p>
+            <p><strong>Rapid Download Manager does not collect, record, track, transmit, or monetize any personally identifiable information (PII), download activity, or user diagnostics.</strong></p>
+        </section>
+
+        <section class="card">
+            <h2>2. Information We DO NOT Collect</h2>
+            <ul>
+                <li><strong>No Personal Identifiers:</strong> We do not ask for or collect your name, email address, physical location, or credentials.</li>
+                <li><strong>No Download URL or File Tracking:</strong> The URLs you download, file contents, file names, and download metadata are processed entirely in local memory on your device. Nothing is sent to any remote server.</li>
+                <li><strong>No Analytics or Tracking SDKs:</strong> The software contains zero analytics libraries, zero advertising frameworks, and zero tracking beacons.</li>
+                <li><strong>No Account System:</strong> Rapid Download Manager operates as completely standalone software without requiring any login or account creation.</li>
+                <li><strong>No Background Telemetry:</strong> No usage metrics or behavioral tracking are performed in the background.</li>
+            </ul>
+        </section>
+
+        <section class="card">
+            <h2>3. Local Storage Architecture</h2>
+            <p>All application state, user preferences, download history, and schedules are stored exclusively on your local computer in standard Windows user directories:</p>
+            <ul>
+                <li><code>%APPDATA%\RapidDownloadManager\history.json</code> — Download history and resume points.</li>
+                <li><code>%APPDATA%\RapidDownloadManager\config.json</code> — User settings and speed limiter configurations.</li>
+                <li><code>%APPDATA%\RapidDownloadManager\scheduler.json</code> — Scheduled start/stop timers.</li>
+                <li><code>%LOCALAPPDATA%\RapidDownloadManager\logs\app.log</code> — Local diagnostic logs.</li>
+            </ul>
+            <p>This data remains strictly on your hard drive and can be purged at any time from within the application or by running the uninstaller.</p>
+        </section>
+
+        <section class="card">
+            <h2>4. Automatic Sensitive Data Sanitization</h2>
+            <p>Rapid Download Manager includes a built-in zero-leak credential sanitizer in its logging engine. If a download URL contains sensitive query parameters such as <code>token=</code>, <code>api_key=</code>, or <code>password=</code>, the logger automatically strips and redacts them to <code>[REDACTED]</code> before any diagnostic information is written to local log files.</p>
+        </section>
+
+        <section class="card">
+            <h2>5. Network Communications</h2>
+            <p>Rapid Download Manager communicates over the network exclusively under two circumstances:</p>
+            <ol style="margin-left: 20px; color: #D1D5DB; margin-bottom: 12px;">
+                <li style="margin-bottom: 8px;"><strong>User-Initiated Downloads:</strong> Connecting to the destination servers for URLs that you explicitly add or import from your web browser.</li>
+                <li style="margin-bottom: 8px;"><strong>Update Verification:</strong> Connecting to the official GitHub API (<code>api.github.com</code>) only when you manually check for updates or open the About modal to verify the latest release tag.</li>
+            </ol>
+            <p>All network traffic uses memory-safe <strong>Rustls TLS</strong> encryption.</p>
+        </section>
+
+        <section class="card">
+            <h2>6. Crash Diagnostics</h2>
+            <p>In the unlikely event of an unexpected crash, diagnostic backtraces and version information are written locally to <code>%LOCALAPPDATA%\RapidDownloadManager\logs\crash.log</code>. These crash logs are never uploaded automatically over the internet.</p>
+        </section>
+
+        <section class="card">
+            <h2>7. Open Source Transparency & Contact</h2>
+            <p>Rapid Download Manager is open-source software. You are encouraged to inspect our complete source code on GitHub:</p>
+            <p><a href="https://github.com/promahbubul/rapid_download_manager" target="_blank">https://github.com/promahbubul/rapid_download_manager</a></p>
+            <p>For inquiries, support, or privacy verification, open an issue on our official repository:</p>
+            <p><a href="https://github.com/promahbubul/rapid_download_manager/issues" target="_blank">https://github.com/promahbubul/rapid_download_manager/issues</a></p>
+        </section>
+
+        <footer class="footer">
+            <p>&copy; 2026 Promahbubul. All rights reserved.</p>
+            <p><a href="licenses.html">Third-Party Open Source Licenses</a> &bull; <a href="https://github.com/promahbubul/rapid_download_manager">GitHub Project</a></p>
+        </footer>
+    </div>
+</body>
+</html>
