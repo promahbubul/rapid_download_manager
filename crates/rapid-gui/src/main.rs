@@ -58,6 +58,7 @@ enum FilterCategory {
     Completed,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModernIcon {
     Close,
@@ -597,6 +598,30 @@ pub fn get_categorized_destination(base_dir: &std::path::Path, filename: &str) -
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum UpdateStatus {
+    Idle,
+    Checking,
+    UpToDate { checked_at: String },
+    Available {
+        version: String,
+        download_url: String,
+        release_notes: String,
+        published_at: String,
+    },
+    Error(String),
+}
+
+fn parse_ver_triplet(v: &str) -> (u32, u32, u32) {
+    let clean = v.trim_start_matches('v').split('-').next().unwrap_or("");
+    let mut parts = clean.split('.').filter_map(|s| s.parse::<u32>().ok());
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
+fn is_remote_version_newer(remote: &str, current: &str) -> bool {
+    parse_ver_triplet(remote) > parse_ver_triplet(current)
+}
+
 struct RapidApp {
     tokio_rt: Arc<Runtime>,
     tasks: Arc<Mutex<Vec<ActiveTaskUI>>>,
@@ -628,6 +653,8 @@ struct RapidApp {
     tasks_to_delete: HashSet<String>,
     has_requested_initial_focus: bool,
     show_browser_integration_modal: bool,
+    pub show_about_modal: bool,
+    pub update_status: Arc<std::sync::Mutex<UpdateStatus>>,
     browser_integration_msg: Option<(String, bool)>,
     pub speed_limit_bps: Arc<AtomicU64>,
     pub selected_speed_limit_idx: usize,
@@ -643,6 +670,90 @@ struct RapidApp {
 }
 
 impl RapidApp {
+    fn check_for_updates(&self) {
+        let status_arc = Arc::clone(&self.update_status);
+        if let Ok(mut s) = status_arc.lock() {
+            *s = UpdateStatus::Checking;
+        }
+        self.tokio_rt.spawn(async move {
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .user_agent("RapidDownloadManager-UpdateChecker/1.0")
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    if let Ok(mut s) = status_arc.lock() {
+                        *s = UpdateStatus::Error(format!("Failed to build client: {}", e));
+                    }
+                    return;
+                }
+            };
+
+            let res = client
+                .get("https://api.github.com/repos/promahbubul/rapid_download_manager/releases/latest")
+                .send()
+                .await;
+
+            match res {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        if let Ok(text) = resp.text().await {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                let tag = json.get("tag_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .trim_start_matches('v')
+                                    .to_string();
+                                let html_url = json.get("html_url")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("https://github.com/promahbubul/rapid_download_manager/releases")
+                                    .to_string();
+                                let body = json.get("body")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Release improvements and bug fixes.")
+                                    .to_string();
+                                let published = json.get("published_at")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                let current = env!("CARGO_PKG_VERSION");
+                                let newer = is_remote_version_newer(&tag, current);
+
+                                if let Ok(mut s) = status_arc.lock() {
+                                    if newer {
+                                        *s = UpdateStatus::Available {
+                                            version: tag,
+                                            download_url: html_url,
+                                            release_notes: body,
+                                            published_at: published,
+                                        };
+                                    } else {
+                                        *s = UpdateStatus::UpToDate {
+                                            checked_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                                        };
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    if let Ok(mut s) = status_arc.lock() {
+                        *s = UpdateStatus::UpToDate {
+                            checked_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                        };
+                    }
+                }
+                Err(e) => {
+                    if let Ok(mut s) = status_arc.lock() {
+                        *s = UpdateStatus::Error(format!("Network connection error: {}", e));
+                    }
+                }
+            }
+        });
+    }
+
     fn open_add_download_dialog(&mut self, ctx: &egui::Context) {
         self.show_add_dialog = true;
         self.add_error = None;
@@ -895,6 +1006,8 @@ impl RapidApp {
             tasks_to_delete: HashSet::new(),
             has_requested_initial_focus: false,
             show_browser_integration_modal: false,
+            show_about_modal: false,
+            update_status: Arc::new(std::sync::Mutex::new(UpdateStatus::Idle)),
             browser_integration_msg: None,
             speed_limit_bps: Arc::new(AtomicU64::new(0)),
             selected_speed_limit_idx: 0,
@@ -2494,6 +2607,22 @@ impl eframe::App for RapidApp {
                         ) {
                             self.show_browser_integration_modal = true;
                             self.browser_integration_msg = None;
+                        }
+
+                        if render_custom_btn_chip_modern(
+                            ui,
+                            ModernIcon::Refresh,
+                            "Updates & About",
+                            "Check for updates, release notes, and application identity",
+                        ) {
+                            self.show_about_modal = true;
+                            let should_check = {
+                                let s = self.update_status.lock().unwrap();
+                                matches!(*s, UpdateStatus::Idle)
+                            };
+                            if should_check {
+                                self.check_for_updates();
+                            }
                         }
                     });
                 });

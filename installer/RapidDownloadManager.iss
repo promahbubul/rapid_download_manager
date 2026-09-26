@@ -31,6 +31,10 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+CloseApplications=yes
+RestartApplications=no
+CloseApplicationsFilter=*.exe
 DisableProgramGroupPage=yes
 
 [Languages]
@@ -63,3 +67,22 @@ Root: HKCU; Subkey: "Software\Mozilla\Firefox\Extensions"; ValueType: string; Va
 [Run]
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\auto_integrate_browsers.ps1"" -Silent"; Flags: runhidden; Tasks: browserintegration
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}"
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  AppDataDir: String;
+  LocalAppDataDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if MsgBox('Would you like to completely delete your download history, logs and settings?' + #13#10 + 'Choose No if you plan to reinstall or update later.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    begin
+      AppDataDir := ExpandConstant('{userappdata}\RapidDownloadManager');
+      LocalAppDataDir := ExpandConstant('{localappdata}\RapidDownloadManager');
+      DelTree(AppDataDir, True, True, True);
+      DelTree(LocalAppDataDir, True, True, True);
+    end;
+  end;
+end;
