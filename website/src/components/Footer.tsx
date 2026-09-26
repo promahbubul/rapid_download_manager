@@ -2,7 +2,6 @@
 
 import React from "react";
 import Link from "next/link";
-import { Shield, FileText, Heart, HelpCircle, Terminal, Activity, Tag, Mail } from "lucide-react";
 import { GithubIcon } from "./Icons";
 import { useTheme } from "../context/ThemeContext";
 
@@ -10,73 +9,70 @@ export default function Footer() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
+  const logoSrc = resolvedTheme === "light"
+    ? "/assets/titlebar_logo_light.png"
+    : "/assets/titlebar_logo.png";
+
   return (
     <footer
       className="border-t transition-colors duration-200 mt-auto"
       style={{
-        backgroundColor: isDark ? "rgba(11, 15, 25, 0.95)" : "rgba(241, 245, 249, 0.95)",
+        backgroundColor: isDark ? "rgba(11, 15, 23, 0.95)" : "rgba(241, 245, 249, 0.95)",
         borderColor: "var(--border-subtle)",
       }}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-8 mb-8">
-          {/* Brand Col */}
+          {/* Brand Col with Exact Software Logo */}
           <div className="md:col-span-2 space-y-3">
-            <Link href="/" className="flex items-center gap-3">
+            <Link href="/" className="inline-block py-1">
               <img
-                src="/assets/app_icon.png"
-                alt="Rapid Download Manager Logo"
-                className="w-8 h-8 object-contain drop-shadow"
+                src={logoSrc}
+                alt="Rapid Download Manager"
+                className="h-7 w-auto object-contain"
               />
-              <span className="font-bold text-base sm:text-lg" style={{ color: "var(--text-heading)" }}>
-                Rapid Download Manager
-              </span>
             </Link>
             <p className="text-xs max-w-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              High-performance, multi-segment download accelerator engineered in memory-safe Rust. Built for speed, security, and uncompromised privacy.
+              High-performance, multi-segment download accelerator engineered in memory-safe Rust. Built for speed, reliability, and zero telemetry privacy.
             </p>
-            <div className="flex items-center gap-3 pt-2 text-xs" style={{ color: "var(--text-muted)" }}>
-              <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-400">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                v1.0.0 GA Live
-              </span>
-              <span>•</span>
-              <span>Windows 10/11 Certified</span>
+            <div className="flex items-center gap-2 pt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-mono text-[11px] text-emerald-400">v1.0.0 GA Official Release</span>
             </div>
           </div>
 
-          {/* Col 1: Software */}
+          {/* Col 1: Product */}
           <div className="space-y-2 text-xs">
             <div className="font-bold uppercase tracking-wider text-[11px]" style={{ color: "var(--text-heading)" }}>
               Product
             </div>
             <ul className="space-y-1.5" style={{ color: "var(--text-muted)" }}>
-              <li><a href="/#download" className="hover:text-indigo-400 transition-colors">Download Matrix</a></li>
-              <li><a href="/#features" className="hover:text-indigo-400 transition-colors">16x Parallel Engine</a></li>
-              <li><a href="/#showcase" className="hover:text-indigo-400 transition-colors">3D Showcase</a></li>
+              <li><a href="/#download" className="hover:text-indigo-400 transition-colors">Download Hub</a></li>
+              <li><a href="/#features" className="hover:text-indigo-400 transition-colors">Features</a></li>
+              <li><a href="/#showcase" className="hover:text-indigo-400 transition-colors">Interface Preview</a></li>
               <li><Link href="/extension" className="hover:text-indigo-400 transition-colors">Browser Extension</Link></li>
               <li><Link href="/benchmarks" className="hover:text-indigo-400 transition-colors">Speed Benchmarks</Link></li>
             </ul>
           </div>
 
-          {/* Col 2: Documentation */}
+          {/* Col 2: Resources */}
           <div className="space-y-2 text-xs">
             <div className="font-bold uppercase tracking-wider text-[11px]" style={{ color: "var(--text-heading)" }}>
               Resources
             </div>
             <ul className="space-y-1.5" style={{ color: "var(--text-muted)" }}>
-              <li><Link href="/docs" className="hover:text-indigo-400 transition-colors">User Documentation</Link></li>
-              <li><Link href="/changelog" className="hover:text-indigo-400 transition-colors">Changelog & Releases</Link></li>
-              <li><Link href="/faq" className="hover:text-indigo-400 transition-colors">Frequently Asked Questions</Link></li>
-              <li><Link href="/contact" className="hover:text-indigo-400 transition-colors">Support & Contact</Link></li>
+              <li><Link href="/docs" className="hover:text-indigo-400 transition-colors">Documentation</Link></li>
+              <li><Link href="/changelog" className="hover:text-indigo-400 transition-colors">Release Notes</Link></li>
+              <li><Link href="/faq" className="hover:text-indigo-400 transition-colors">FAQ</Link></li>
+              <li><Link href="/contact" className="hover:text-indigo-400 transition-colors">Contact & Support</Link></li>
               <li>
                 <a
                   href="https://github.com/promahbubul/rapid_download_manager"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="hover:text-indigo-400 transition-colors inline-flex items-center gap-1"
+                  className="hover:text-indigo-400 transition-colors"
                 >
-                  <span>GitHub Repository</span>
+                  GitHub Repository
                 </a>
               </li>
             </ul>
@@ -102,7 +98,7 @@ export default function Footer() {
           style={{ borderColor: "var(--border-subtle)", color: "var(--text-muted)" }}
         >
           <div>
-            &copy; {new Date().getFullYear()} Rapid Download Manager. All rights reserved. Open source under MIT/Apache 2.0.
+            &copy; {new Date().getFullYear()} Rapid Download Manager. Open source under MIT/Apache 2.0.
           </div>
           <div className="flex items-center gap-4">
             <a

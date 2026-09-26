@@ -31,52 +31,44 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Standard, clean, uncluttered navigation links (only 4 primary sections)
   const navLinks = [
     { name: "Features", href: "/#features" },
-    { name: "Showcase", href: "/#showcase" },
-    { name: "Download", href: "/#download" },
     { name: "Docs", href: "/docs" },
     { name: "Extension", href: "/extension" },
-    { name: "Benchmarks", href: "/benchmarks" },
     { name: "Changelog", href: "/changelog" },
-    { name: "FAQ", href: "/faq" },
   ];
+
+  // Exact software titlebar logo: dark logo for dark mode, dark-text variant for light mode
+  const logoSrc = resolvedTheme === "light"
+    ? "/assets/titlebar_logo_light.png"
+    : "/assets/titlebar_logo.png";
 
   return (
     <header
       className="sticky top-0 z-50 w-full backdrop-blur-xl border-b transition-colors duration-200"
       style={{
-        backgroundColor: resolvedTheme === "dark" ? "rgba(11, 15, 23, 0.85)" : "rgba(255, 255, 255, 0.88)",
+        backgroundColor: resolvedTheme === "dark" ? "rgba(11, 15, 23, 0.9)" : "rgba(255, 255, 255, 0.92)",
         borderColor: resolvedTheme === "dark" ? "rgba(30, 41, 59, 0.8)" : "rgba(226, 232, 240, 0.8)",
       }}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        {/* Brand Logo with Official Software App Icon */}
-        <Link href="/" className="flex items-center gap-3 group">
+        {/* Exact Software Logo Asset as in Desktop App Title Bar */}
+        <Link href="/" className="flex items-center group py-1" title="Rapid Download Manager">
           <img
-            src="/assets/app_icon.png"
-            alt="Rapid Download Manager Icon"
-            className="w-8 h-8 sm:w-9 sm:h-9 object-contain drop-shadow transition-transform duration-200 group-hover:scale-105"
+            src={logoSrc}
+            alt="Rapid Download Manager"
+            className="h-7 sm:h-8 w-auto object-contain transition-opacity duration-200 group-hover:opacity-90"
           />
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-base sm:text-lg tracking-tight" style={{ color: "var(--text-heading)" }}>
-                Rapid Download Manager
-              </span>
-              <span className="hidden sm:inline-flex text-[10px] font-semibold px-2 py-0.5 rounded-full border border-indigo-500/30 text-indigo-400 bg-indigo-500/10">
-                v1.0.0 GA
-              </span>
-            </div>
-          </div>
         </Link>
 
-        {/* Desktop Navigation Links */}
+        {/* Clean Standard Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-1 lg:gap-2">
           {navLinks.map((link) => (
             <Link
               key={link.name}
               href={link.href}
-              className="px-3 py-1.5 rounded-lg text-xs lg:text-sm font-medium transition-colors hover:text-indigo-400"
+              className="px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors hover:text-indigo-400"
               style={{ color: "var(--text-muted)" }}
             >
               {link.name}
@@ -86,7 +78,7 @@ export default function Navbar() {
 
         {/* Right Action Icons & Theme Switcher */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* GitHub Star Button */}
+          {/* GitHub Star Link */}
           <a
             href="https://github.com/promahbubul/rapid_download_manager"
             target="_blank"
@@ -97,12 +89,12 @@ export default function Navbar() {
               backgroundColor: "var(--bg-card)",
               color: "var(--text-heading)",
             }}
-            title="View Source on GitHub"
+            title="GitHub Repository"
           >
             <GithubIcon className="w-4 h-4" />
           </a>
 
-          {/* 3-Mode Theme Dropdown */}
+          {/* 3-Mode Theme Dropdown (Light, Dark, System) */}
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -112,7 +104,7 @@ export default function Navbar() {
                 backgroundColor: "var(--bg-card)",
                 color: "var(--text-heading)",
               }}
-              title="Theme Selector"
+              title="Select Theme"
             >
               {resolvedTheme === "dark" ? (
                 <Moon className="w-4 h-4 text-indigo-400" />
@@ -178,7 +170,7 @@ export default function Navbar() {
             )}
           </div>
 
-          {/* Direct Download Button */}
+          {/* Standard Primary CTA */}
           <a
             href="#download"
             className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm transition-colors"
