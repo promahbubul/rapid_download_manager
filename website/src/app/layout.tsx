@@ -9,9 +9,13 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Rapid Download Manager — High-Speed Download Accelerator for Windows",
+  title: "Rapid Download Manager — High-Speed 3D Download Accelerator",
   description:
-    "Turbocharged multi-segment download accelerator engineered in memory-safe Rust with automated browser integration for Windows 10/11.",
+    "Turbocharged 16-socket multi-segment download accelerator engineered in memory-safe Rust with automated browser integration for Windows, macOS, and Linux.",
+  icons: {
+    icon: "/assets/app_icon.png",
+    apple: "/assets/app_icon.png",
+  },
   keywords: [
     "download manager",
     "download accelerator",
@@ -19,11 +23,13 @@ export const metadata: Metadata = {
     "rust download manager",
     "idm alternative",
     "rapid download manager",
+    "cross platform download manager",
   ],
   authors: [{ name: "Mahbubul Alam (promahbubul)" }],
   openGraph: {
     title: "Rapid Download Manager — High-Speed Download Accelerator",
-    description: "16x chunk acceleration, zero telemetry, memory-safe Rust for Windows.",
+    description: "16x chunk acceleration, zero telemetry, memory-safe Rust for Windows, macOS, and Linux.",
+    images: ["/assets/master_logo.png"],
     type: "website",
   },
 };
