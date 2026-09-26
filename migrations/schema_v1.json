@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "description": "Initial production storage schema for Rapid Download Manager",
+  "entities": {
+    "DownloadHistory": {
+      "path": "%APPDATA%/RapidDownloadManager/history.json",
+      "backup": "%APPDATA%/RapidDownloadManager/history.json.bak",
+      "fields": ["id", "url", "target_file", "total_bytes", "downloaded_bytes", "status", "completed_at", "speed_bps"]
+    },
+    "AppConfig": {
+      "path": "%APPDATA%/RapidDownloadManager/config.json",
+      "backup": "%APPDATA%/RapidDownloadManager/config.json.bak",
+      "fields": ["base_download_dir", "max_concurrent_downloads", "speed_limit_bps", "selected_speed_limit_idx"]
+    },
+    "SchedulerConfig": {
+      "path": "%APPDATA%/RapidDownloadManager/scheduler.json",
+      "backup": "%APPDATA%/RapidDownloadManager/scheduler.json.bak",
+      "fields": ["enabled", "start_hour", "start_minute", "stop_hour", "stop_minute", "auto_shutdown"]
+    }
+  }
+}
