@@ -1,10 +1,9 @@
 "use client";
 
-import { GithubIcon } from "./Icons";
-
 import React from "react";
 import Link from "next/link";
-import { Zap,  Shield, FileText, Heart } from "lucide-react";
+import { Zap, Shield, FileText, Heart, HelpCircle, Terminal, Activity, Tag, Mail } from "lucide-react";
+import { GithubIcon } from "./Icons";
 import { useTheme } from "../context/ThemeContext";
 
 export default function Footer() {
@@ -12,43 +11,56 @@ export default function Footer() {
   const isDark = resolvedTheme === "dark";
 
   return (
-    <footer className="border-t transition-colors duration-200"
+    <footer className="border-t transition-colors duration-200 mt-auto"
       style={{
-        backgroundColor: isDark ? "rgba(11, 15, 25, 0.9)" : "rgba(241, 245, 249, 0.9)",
+        backgroundColor: isDark ? "rgba(11, 15, 25, 0.95)" : "rgba(241, 245, 249, 0.95)",
         borderColor: "var(--border-subtle)",
       }}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-8 mb-8">
           {/* Brand Col */}
           <div className="md:col-span-2 space-y-3">
-            <div className="flex items-center gap-2.5">
+            <Link href="/" className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-md shadow-indigo-500/25">
                 <Zap className="w-4 h-4 text-white fill-white" />
               </div>
-              <span className="font-bold text-lg" style={{ color: "var(--text-heading)" }}>
+              <span className="font-bold text-base sm:text-lg" style={{ color: "var(--text-heading)" }}>
                 Rapid Download Manager
               </span>
-            </div>
+            </Link>
             <p className="text-xs max-w-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
               High-performance, multi-segment download accelerator engineered in memory-safe Rust with automated browser integration for Windows 10/11.
             </p>
             <div className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
-              Created by <span className="font-semibold text-indigo-400">Mahbubul Alam (promahbubul)</span>
+              Crafted by <span className="font-semibold text-indigo-400">Mahbubul Alam (promahbubul)</span>
             </div>
           </div>
 
-          {/* Navigation Links */}
+          {/* Product Col */}
           <div className="space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-400">
               Product
             </h4>
             <ul className="space-y-2 text-xs" style={{ color: "var(--text-muted)" }}>
-              <li><a href="#features" className="hover:text-indigo-400 transition-colors">Key Features</a></li>
-              <li><a href="#preview" className="hover:text-indigo-400 transition-colors">Desktop UI Preview</a></li>
-              <li><a href="#benchmarks" className="hover:text-indigo-400 transition-colors">Benchmarks & Comparison</a></li>
-              <li><a href="#download" className="hover:text-indigo-400 transition-colors">Download Center</a></li>
-              <li><a href="#extension" className="hover:text-indigo-400 transition-colors">Browser Extension</a></li>
+              <li><Link href="/#features" className="hover:text-indigo-400 transition-colors">Key Features</Link></li>
+              <li><Link href="/#preview" className="hover:text-indigo-400 transition-colors">Desktop UI Preview</Link></li>
+              <li><Link href="/benchmarks" className="hover:text-indigo-400 transition-colors">Speed Lab & Benchmarks</Link></li>
+              <li><Link href="/#download" className="hover:text-indigo-400 transition-colors">Download Center</Link></li>
+              <li><Link href="/extension" className="hover:text-indigo-400 transition-colors">Browser Extension</Link></li>
+            </ul>
+          </div>
+
+          {/* Resources & Support Col */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-400">
+              Resources & Support
+            </h4>
+            <ul className="space-y-2 text-xs" style={{ color: "var(--text-muted)" }}>
+              <li><Link href="/docs" className="hover:text-indigo-400 transition-colors">Documentation Hub</Link></li>
+              <li><Link href="/changelog" className="hover:text-indigo-400 transition-colors">Release Changelog</Link></li>
+              <li><Link href="/faq" className="hover:text-indigo-400 transition-colors">Frequently Asked Questions</Link></li>
+              <li><Link href="/contact" className="hover:text-indigo-400 transition-colors">Contact & Feedback</Link></li>
             </ul>
           </div>
 
@@ -65,9 +77,15 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
-                <Link href="/licenses" className="hover:text-indigo-400 transition-colors flex items-center gap-1.5">
+                <Link href="/terms" className="hover:text-indigo-400 transition-colors flex items-center gap-1.5">
                   <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Open Source Licenses</span>
+                  <span>Terms of Service</span>
+                </Link>
+              </li>
+              <li>
+                <Link href="/licenses" className="hover:text-indigo-400 transition-colors flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Third-Party Licenses</span>
                 </Link>
               </li>
               <li>
@@ -92,7 +110,7 @@ export default function Footer() {
           }}
         >
           <div>
-            &copy; 2026 Rapid Download Manager. All rights reserved. Licensed under MIT.
+            &copy; 2026 Rapid Download Manager. Open-source under MIT License.
           </div>
           <div className="flex items-center gap-1">
             <span>Built with precision in</span>
