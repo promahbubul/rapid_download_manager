@@ -54,7 +54,9 @@ jobs:
             throw "ISCC compiler not found"
           }
           & $iscc "installer\RapidDownloadManager.iss"
-          Compress-Archive -Path "dist\RapidDownloadManager\*" -DestinationPath "dist\installer\RapidDownloadManager_v1.0.0_Portable.zip" -Force
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag) { $tag = "v1.0.1" }
+          Compress-Archive -Path "dist\RapidDownloadManager\*" -DestinationPath "dist\installer\RapidDownloadManager_${tag}_Portable.zip" -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -65,5 +67,5 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            dist/installer/RapidDownloadManager_Setup_v1.0.0.exe
-            dist/installer/RapidDownloadManager_v1.0.0_Portable.zip
+            dist/installer/RapidDownloadManager_Setup_*.exe
+            dist/installer/RapidDownloadManager_*_Portable.zip
