@@ -288,45 +288,141 @@ impl GDriveResolver {
         items
     }
 
-    /// Extract confirmed URL from Google's virus scan warning form
+        /// Extract confirmed URL from Google's virus scan warning form, anchor link, or confirm token
     pub fn extract_confirm_form_url(html: &str, current_url: &str) -> Option<String> {
-        if let Some(form_pos) = html.find("id=\"download-form\"") {
-            let form_slice = &html[form_pos..];
-            let action_url = if let Some(act_pos) = form_slice.find("action=\"") {
-                let act_slice = &form_slice[act_pos + 8..];
-                if let Some(act_end) = act_slice.find('"') {
-                    Some(act_slice[..act_end].replace("&amp;", "&"))
-                } else {
-                    None
-                }
-            } else {
-                None
+        let lower = html.to_lowercase();
+        let form_starts: Vec<usize> = lower.match_indices("<form").map(|(i, _)| i).collect();
+
+        for f_start in form_starts {
+            let f_end = match lower[f_start..].find("</form>") {
+                Some(idx) => f_start + idx + 7,
+                None => html.len(),
             };
+            let form_html = &html[f_start..f_end];
+            let form_lower = &lower[f_start..f_end];
 
-            let form_end = form_slice.find("</form>").unwrap_or(form_slice.len());
-            let inner_form = &form_slice[..form_end];
+            if form_lower.contains("download") || form_lower.contains("confirm") || form_lower.contains("uc-download") {
+                let tag_open_end = form_html.find('>').unwrap_or(form_html.len());
+                let tag_open = &form_html[..tag_open_end];
 
-            let mut params = Vec::new();
-            for input in inner_form.split("<input ") {
-                if let Some(name_pos) = input.find("name=\"") {
-                    let n_slice = &input[name_pos + 6..];
-                    if let Some(name_end) = n_slice.find('"') {
-                        let name = &n_slice[..name_end];
-                        if let Some(val_pos) = input.find("value=\"") {
-                            let v_slice = &input[val_pos + 7..];
-                            if let Some(val_end) = v_slice.find('"') {
-                                let val = &v_slice[..val_end];
-                                params.push(format!("{}={}", name, val));
+                let mut action_opt = None;
+                for act_pattern in &["action=\"", "action='", "action="] {
+                    if let Some(pos) = tag_open.to_lowercase().find(act_pattern) {
+                        let after = &tag_open[pos + act_pattern.len()..];
+                        let quote = if act_pattern.ends_with('"') {
+                            Some('"')
+                        } else if act_pattern.ends_with(''') {
+                            Some(''')
+                        } else {
+                            None
+                        };
+
+                        let act_val = if let Some(q) = quote {
+                            after.split(q).next()
+                        } else {
+                            after.split_whitespace().next()
+                        };
+
+                        if let Some(val) = act_val {
+                            let clean = val.replace("&amp;", "&");
+                            if !clean.is_empty() {
+                                action_opt = Some(clean);
+                                break;
                             }
                         }
                     }
                 }
-            }
 
-            if let Some(action) = action_url {
+                let mut params = Vec::new();
+                for inp_slice in form_html.split("<input ") {
+                    let inp_tag = inp_slice.split('>').next().unwrap_or("");
+                    let mut name_val = None;
+                    let mut value_val = None;
+
+                    for n_pat in &["name=\"", "name='", "name="] {
+                        if let Some(p) = inp_tag.to_lowercase().find(n_pat) {
+                            let after = &inp_tag[p + n_pat.len()..];
+                            let q = if n_pat.ends_with('"') { Some('"') } else if n_pat.ends_with(''') { Some(''') } else { None };
+                            let n = if let Some(quote_ch) = q { after.split(quote_ch).next() } else { after.split_whitespace().next() };
+                            if let Some(n_str) = n {
+                                name_val = Some(n_str.trim().to_string());
+                                break;
+                            }
+                        }
+                    }
+
+                    for v_pat in &["value=\"", "value='", "value="] {
+                        if let Some(p) = inp_tag.to_lowercase().find(v_pat) {
+                            let after = &inp_tag[p + v_pat.len()..];
+                            let q = if v_pat.ends_with('"') { Some('"') } else if v_pat.ends_with(''') { Some(''') } else { None };
+                            let v = if let Some(quote_ch) = q { after.split(quote_ch).next() } else { after.split_whitespace().next() };
+                            if let Some(v_str) = v {
+                                value_val = Some(v_str.trim().to_string());
+                                break;
+                            }
+                        }
+                    }
+
+                    if let (Some(n), Some(v)) = (name_val, value_val) {
+                        if !n.is_empty() {
+                            params.push(format!("{}={}", n, v));
+                        }
+                    }
+                }
+
+                let base_action = action_opt.unwrap_or_else(|| {
+                    if current_url.contains("usercontent.google.com") {
+                        "https://drive.usercontent.google.com/download".to_string()
+                    } else {
+                        "https://drive.google.com/uc?export=download".to_string()
+                    }
+                });
+
+                let resolved_action = if base_action.starts_with("http://") || base_action.starts_with("https://") {
+                    base_action
+                } else if base_action.starts_with('/') {
+                    if base_action.starts_with("/download") {
+                        format!("https://drive.usercontent.google.com{}", base_action)
+                    } else {
+                        format!("https://drive.google.com{}", base_action)
+                    }
+                } else {
+                    format!("https://drive.google.com/{}", base_action)
+                };
+
                 if !params.is_empty() {
-                    let sep = if action.contains('?') { "&" } else { "?" };
-                    return Some(format!("{}{}{}", action, sep, params.join("&")));
+                    let sep = if resolved_action.contains('?') { "&" } else { "?" };
+                    return Some(format!("{}{}{}", resolved_action, sep, params.join("&")));
+                } else {
+                    return Some(resolved_action);
+                }
+            }
+        }
+
+        for a_slice in html.split("<a ") {
+            let a_tag = a_slice.split('>').next().unwrap_or("");
+            let a_lower = a_tag.to_lowercase();
+            if a_lower.contains("download") || a_lower.contains("confirm") || a_lower.contains("uc-download-link") {
+                for href_pat in &["href=\"", "href='", "href="] {
+                    if let Some(pos) = a_lower.find(href_pat) {
+                        let after = &a_tag[pos + href_pat.len()..];
+                        let q = if href_pat.ends_with('"') { Some('"') } else if href_pat.ends_with(''') { Some(''') } else { None };
+                        let link = if let Some(quote_ch) = q { after.split(quote_ch).next() } else { after.split_whitespace().next() };
+                        if let Some(raw_link) = link {
+                            let decoded = raw_link.replace("&amp;", "&");
+                            if decoded.contains("confirm=") || decoded.contains("export=download") || decoded.contains("drive.usercontent.google.com") {
+                                if decoded.starts_with("http://") || decoded.starts_with("https://") {
+                                    return Some(decoded);
+                                } else if decoded.starts_with('/') {
+                                    if decoded.starts_with("/download") {
+                                        return Some(format!("https://drive.usercontent.google.com{}", decoded));
+                                    } else {
+                                        return Some(format!("https://drive.google.com{}", decoded));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

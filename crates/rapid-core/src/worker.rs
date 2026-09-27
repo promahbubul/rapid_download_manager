@@ -84,7 +84,8 @@ impl DownloadWorker {
             let mut req = client.get(&url);
 
             if let Some(ref c) = cookies {
-                if let Ok(c_val) = reqwest::header::HeaderValue::from_str(c) {
+                let clean_c: String = c.chars().filter(|ch| ch.is_ascii() && !ch.is_ascii_control()).collect();
+                if let Ok(c_val) = reqwest::header::HeaderValue::from_str(&clean_c) {
                     req = req.header(reqwest::header::COOKIE, c_val);
                 }
             }
@@ -247,27 +248,5 @@ impl DownloadWorker {
 }
 
 fn extract_gdrive_confirm_url(html: &str, current_url: &str) -> Option<String> {
-    if let Some(pos) = html.find("href=\"/uc?export=download") {
-        if let Some(end_pos) = html[pos + 6..].find('"') {
-            let link = &html[pos + 6..pos + 6 + end_pos];
-            let decoded = link.replace("&amp;", "&");
-            return Some(format!("https://drive.google.com{}", decoded));
-        }
-    }
-    if let Some(pos) = html.find("href=\"https://drive.google.com/uc?export=download") {
-        if let Some(end_pos) = html[pos + 6..].find('"') {
-            let link = &html[pos + 6..pos + 6 + end_pos];
-            let decoded = link.replace("&amp;", "&");
-            return Some(decoded.to_string());
-        }
-    }
-    if let Some(confirm_pos) = html.find("confirm=") {
-        let after = &html[confirm_pos + 8..];
-        let token: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect();
-        if !token.is_empty() && current_url.contains("drive.google.com") {
-            let sep = if current_url.contains('?') { "&" } else { "?" };
-            return Some(format!("{}{}confirm={}", current_url, sep, token));
-        }
-    }
-    None
+    crate::gdrive::GDriveResolver::extract_confirm_form_url(html, current_url)
 }

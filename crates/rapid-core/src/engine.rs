@@ -45,6 +45,12 @@ impl DownloadTask {
         let client = build_client_with_config(&config, 30)?;
 
         let (final_url, filename, total_bytes_probe, accept_ranges_probe) = if is_gdrive {
+            if config.url.contains("confirm=") || config.url.contains("takeout-download-drive") {
+                let candidate = config.custom_filename.as_deref().unwrap_or("Google_Drive_Download.zip");
+                let best_name = resolve_best_filename(Some(candidate), "Google_Drive_Download.zip");
+                let unique_name = Self::resolve_unique_filename(&config.output_dir, &best_name);
+                (config.url.clone(), unique_name, None, false)
+            } else {
             let res_type = crate::gdrive::GDriveResolver::parse_resource_type(&config.url);
             match res_type {
                 crate::gdrive::GDriveResourceType::File(file_id) => {
@@ -68,6 +74,7 @@ impl DownloadTask {
                     let unique_name = Self::resolve_unique_filename(&config.output_dir, &best_name);
                     (config.url.clone(), unique_name, None, false)
                 }
+            }
             }
         } else {
             let metadata = Probe::inspect(&client, &config.url).await?;
@@ -459,26 +466,29 @@ fn build_client_with_config(config: &DownloadConfig, timeout_secs: u64) -> Resul
     // Setup Cookie Jar for redirects
     if let Some(cookie_str) = &config.cookies {
         let jar = reqwest::cookie::Jar::default();
-        if let Ok(url) = reqwest::Url::parse(&config.url) {
+        let is_google = config.is_gdrive || config.url.contains("google") || config.url.contains("usercontent");
+        let google_domains = [
+            "https://drive.google.com",
+            "https://drive.usercontent.google.com",
+            "https://googleusercontent.com",
+            "https://usercontent.google.com",
+            "https://takeout-download-drive.usercontent.google.com",
+            "https://docs.google.com",
+            "https://google.com",
+            "https://www.google.com",
+            "https://accounts.google.com",
+        ];
+
+        if let Ok(main_url) = reqwest::Url::parse(&config.url) {
             for c in cookie_str.split(';') {
                 let trimmed = c.trim();
                 if !trimmed.is_empty() {
-                    jar.add_cookie_str(trimmed, &url);
-                    if config.is_gdrive || config.url.contains("google") {
-                        if let Ok(g_url) = reqwest::Url::parse("https://drive.google.com") {
-                            jar.add_cookie_str(trimmed, &g_url);
-                        }
-                        if let Ok(c_url) = reqwest::Url::parse("https://googleusercontent.com") {
-                            jar.add_cookie_str(trimmed, &c_url);
-                        }
-                        if let Ok(u_url) = reqwest::Url::parse("https://usercontent.google.com") {
-                            jar.add_cookie_str(trimmed, &u_url);
-                        }
-                        if let Ok(t_url) = reqwest::Url::parse("https://takeout-download-drive.usercontent.google.com") {
-                            jar.add_cookie_str(trimmed, &t_url);
-                        }
-                        if let Ok(root_g) = reqwest::Url::parse("https://google.com") {
-                            jar.add_cookie_str(trimmed, &root_g);
+                    jar.add_cookie_str(trimmed, &main_url);
+                    if is_google {
+                        for g_domain in &google_domains {
+                            if let Ok(g_url) = reqwest::Url::parse(g_domain) {
+                                jar.add_cookie_str(trimmed, &g_url);
+                            }
                         }
                     }
                 }
