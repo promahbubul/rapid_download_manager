@@ -1878,8 +1878,187 @@ impl RapidApp {
     }
 }
 
+// --- AUTOMATED SCREENSHOT HOOK ---
+fn rdm_setup_screenshots(app: &mut RapidApp, _ctx: &egui::Context) {
+    let step = std::env::var("RDM_SHOT_STEP").unwrap_or_else(|_| "1".to_string());
+    
+    // Set up mock tasks once
+    if let Ok(mut tasks) = app.tasks.try_lock() {
+        if tasks.is_empty() {
+            let total_1 = 6_871_947_673u64;
+            let downloaded_1 = 4_398_046_511u64;
+            let mut segments_1 = Vec::new();
+            let chunk_size = total_1 / 16;
+            for i in 0..16 {
+                let start = i as u64 * chunk_size;
+                let end = if i == 15 { total_1 - 1 } else { start + chunk_size - 1 };
+                let mut seg = rapid_core::Segment::new(i, start, end);
+                if i < 8 {
+                    seg.downloaded_bytes = seg.total_bytes();
+                    seg.is_complete = true;
+                } else if i < 14 {
+                    seg.downloaded_bytes = (seg.total_bytes() as f64 * 0.65) as u64;
+                    seg.is_complete = false;
+                } else {
+                    seg.downloaded_bytes = (seg.total_bytes() as f64 * 0.25) as u64;
+                    seg.is_complete = false;
+                }
+                segments_1.push(seg);
+            }
+
+            tasks.push(ActiveTaskUI {
+                id: "task-win11-iso".to_string(),
+                filename: "Windows_11_24H2_English_x64.iso".to_string(),
+                url: "https://software.download.prss.microsoft.com/db/Win11_24H2_English_x64.iso".to_string(),
+                target_file: std::path::PathBuf::from("C:\\Users\\User\\Downloads\\Windows_11_24H2_English_x64.iso"),
+                total_bytes: Some(total_1),
+                downloaded_bytes: downloaded_1,
+                progress_percent: 64.0,
+                speed_bps: 45_200_000,
+                eta_seconds: Some(54),
+                status: rapid_core::DownloadStatus::Downloading,
+                segments: segments_1,
+                task_handle: None,
+                num_segments: 16,
+                is_resuming: false,
+                cookies: None,
+                referrer: None,
+                user_agent: None,
+                is_youtube: false,
+                quality: None,
+                yt_cancel_token: None,
+            });
+
+            tasks.push(ActiveTaskUI {
+                id: "task-rustrover".to_string(),
+                filename: "RustRover-2026.1.1.exe".to_string(),
+                url: "https://download.jetbrains.com/rustrover/RustRover-2026.1.1.exe".to_string(),
+                target_file: std::path::PathBuf::from("C:\\Users\\User\\Downloads\\RustRover-2026.1.1.exe"),
+                total_bytes: Some(1_240_500_000),
+                downloaded_bytes: 980_000_000,
+                progress_percent: 79.0,
+                speed_bps: 18_400_000,
+                eta_seconds: Some(14),
+                status: rapid_core::DownloadStatus::Downloading,
+                segments: Vec::new(),
+                task_handle: None,
+                num_segments: 8,
+                is_resuming: false,
+                cookies: None,
+                referrer: None,
+                user_agent: None,
+                is_youtube: false,
+                quality: None,
+                yt_cancel_token: None,
+            });
+
+            tasks.push(ActiveTaskUI {
+                id: "task-ubuntu".to_string(),
+                filename: "ubuntu-24.04-desktop-amd64.iso".to_string(),
+                url: "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso".to_string(),
+                target_file: std::path::PathBuf::from("C:\\Users\\User\\Downloads\\ubuntu-24.04-desktop-amd64.iso"),
+                total_bytes: Some(6_120_000_000),
+                downloaded_bytes: 6_120_000_000,
+                progress_percent: 100.0,
+                speed_bps: 0,
+                eta_seconds: None,
+                status: rapid_core::DownloadStatus::Completed,
+                segments: Vec::new(),
+                task_handle: None,
+                num_segments: 16,
+                is_resuming: false,
+                cookies: None,
+                referrer: None,
+                user_agent: None,
+                is_youtube: false,
+                quality: None,
+                yt_cancel_token: None,
+            });
+        }
+    }
+
+    app.selected_task_index = Some(0);
+
+    match step.as_str() {
+        "1" => {
+            app.show_add_dialog = false;
+            app.show_browser_integration_modal = false;
+            app.show_scheduler_modal = false;
+            app.show_about_modal = false;
+        }
+        "2" => {
+            app.show_add_dialog = true;
+            app.input_url = "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso".to_string();
+            app.input_filename = "ubuntu-24.04-desktop-amd64.iso".to_string();
+            app.input_segments = 16;
+            app.show_browser_integration_modal = false;
+            app.show_scheduler_modal = false;
+            app.show_about_modal = false;
+        }
+        "3" => {
+            app.show_add_dialog = false;
+            app.show_browser_integration_modal = true;
+            app.show_scheduler_modal = false;
+            app.show_about_modal = false;
+        }
+        "4" => {
+            app.show_add_dialog = false;
+            app.show_browser_integration_modal = false;
+            app.show_scheduler_modal = true;
+            app.scheduler.enabled = true;
+            app.scheduler.start_hour = 2;
+            app.scheduler.start_minute = 0;
+            app.scheduler.stop_hour = 6;
+            app.scheduler.stop_minute = 0;
+            app.show_about_modal = false;
+        }
+        "5" => {
+            app.show_add_dialog = false;
+            app.show_browser_integration_modal = false;
+            app.show_scheduler_modal = false;
+            app.show_about_modal = true;
+        }
+        _ => {}
+    }
+}
+
 impl eframe::App for RapidApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Automated Screenshot Capture Engine
+        if std::env::var("RDM_CAPTURE_SCREENSHOTS").is_ok() {
+            self.splash_duration = std::time::Duration::ZERO;
+            let step = std::env::var("RDM_SHOT_STEP").unwrap_or_else(|_| "1".to_string());
+            rdm_setup_screenshots(self, ctx);
+
+            // Check for incoming screenshot events
+            for event in &ctx.input(|i| i.raw.events.clone()) {
+                if let egui::Event::Screenshot { image, .. } = event {
+                    let out_path = format!("D:/mahbub/project/rapid_download_manager/store_listing/assets/raw_shot_{}.raw", step);
+                    let w = image.size[0] as u32;
+                    let h = image.size[1] as u32;
+                    let mut bytes = w.to_le_bytes().to_vec();
+                    bytes.extend_from_slice(&h.to_le_bytes());
+                    for p in &image.pixels {
+                        bytes.extend_from_slice(&p.to_array());
+                    }
+                    let _ = std::fs::write(&out_path, bytes);
+                    log::info!("CAPTURED SCREENSHOT STEP {}: {}x{} to {}", step, w, h, out_path);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    return;
+                }
+            }
+
+            static FRAME_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let frame = FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if frame < 10 {
+                ctx.request_repaint();
+            } else if frame == 10 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+                ctx.request_repaint();
+            } else if frame > 25 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
         if !self.has_requested_initial_focus {
             self.has_requested_initial_focus = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -4847,6 +5026,169 @@ fn render_parallel_connections_combobox(
             }
         }
 
+        // Cyber-Obsidian Modern About & Updates Modal
+        if self.show_about_modal {
+            let screen_rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("about_modal_backdrop")));
+            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 220));
+
+            let mut close_modal = false;
+            let mut open_url_target: Option<&str> = None;
+
+            egui::Area::new(egui::Id::new("about_modal_window"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(GLASS_SURFACE)
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                        .rounding(egui::Rounding::same(12.0))
+                        .inner_margin(Margin::symmetric(28.0, 24.0))
+                        .show(ui, |ui| {
+                            ui.set_width(520.0);
+
+                            // Header row with Title and Close Button
+                            ui.horizontal(|ui| {
+                                ui.heading(
+                                    RichText::new("About Rapid Download Manager")
+                                        .size(17.0)
+                                        .color(Color32::WHITE)
+                                        .strong(),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let close_x = egui::Button::new(
+                                        RichText::new("X").size(14.0).color(Color32::from_rgb(148, 163, 184)),
+                                    )
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::NONE)
+                                    .min_size(Vec2::splat(24.0));
+                                    if ui.add(close_x).clicked() {
+                                        close_modal = true;
+                                    }
+                                });
+                            });
+
+                            ui.add_space(14.0);
+
+                            // App Identity Card
+                            egui::Frame::none()
+                                .fill(GLASS_CARD)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(8.0))
+                                .inner_margin(Margin::symmetric(18.0, 16.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.image((self.titlebar_logo.id(), Vec2::new(50.0, 50.0)));
+                                        ui.add_space(14.0);
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new("Rapid Download Manager")
+                                                    .size(16.0)
+                                                    .color(Color32::WHITE)
+                                                    .strong(),
+                                            );
+                                            ui.label(
+                                                RichText::new("Version 1.0.0 (Production Release)")
+                                                    .size(12.5)
+                                                    .color(Color32::from_rgb(56, 189, 248)),
+                                            );
+                                            ui.label(
+                                                RichText::new("Next-Gen Multi-Socket Accelerated Download Engine")
+                                                    .size(11.0)
+                                                    .color(GLASS_MUTED),
+                                            );
+                                        });
+                                    });
+                                });
+
+                            ui.add_space(12.0);
+
+                            // Engine Architecture Highlights
+                            egui::Frame::none()
+                                .fill(GLASS_CARD)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(8.0))
+                                .inner_margin(Margin::symmetric(18.0, 14.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new("System Architecture & Performance").size(12.0).color(Color32::WHITE).strong());
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("• 16-Socket Concurrent Chunk Partitioning with Dynamic Chunk Merging").size(11.0).color(GLASS_MUTED));
+                                    ui.label(RichText::new("• Asynchronous Non-Blocking Tokio Runtime Engine").size(11.0).color(GLASS_MUTED));
+                                    ui.label(RichText::new("• High-Efficiency WGPU Direct3D Hardware Acceleration").size(11.0).color(GLASS_MUTED));
+                                    ui.label(RichText::new("• Zero-Telemetry, Privacy-Preserving Architecture").size(11.0).color(Color32::from_rgb(52, 211, 153)));
+                                });
+
+                            ui.add_space(12.0);
+
+                            // Update Status Card
+                            egui::Frame::none()
+                                .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
+                                .rounding(egui::Rounding::same(8.0))
+                                .inner_margin(Margin::symmetric(16.0, 10.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
+                                        draw_modern_icon(ui.painter(), ModernIcon::Check, icon_r, Color32::from_rgb(16, 185, 129));
+                                        ui.add_space(6.0);
+                                        ui.label(RichText::new("Application is up to date: Version 1.0.0").size(11.5).color(Color32::from_rgb(167, 243, 208)).strong());
+                                    });
+                                });
+
+                            ui.add_space(16.0);
+
+                            // Footer Buttons
+                            ui.horizontal(|ui| {
+                                let web_btn = egui::Button::new(
+                                    RichText::new("Official Website").size(11.5).color(Color32::WHITE),
+                                )
+                                .fill(Color32::from_rgb(14, 116, 144))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(Vec2::new(140.0, 32.0));
+
+                                if ui.add(web_btn).clicked() {
+                                    open_url_target = Some("https://rdm.vercel.app");
+                                }
+
+                                let priv_btn = egui::Button::new(
+                                    RichText::new("Privacy Policy").size(11.5).color(Color32::from_rgb(203, 213, 225)),
+                                )
+                                .fill(GLASS_CARD)
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(Vec2::new(130.0, 32.0));
+
+                                if ui.add(priv_btn).clicked() {
+                                    open_url_target = Some("https://rdm.vercel.app/privacy");
+                                }
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let close_btn = egui::Button::new(
+                                        RichText::new("Close").size(11.5).color(Color32::WHITE),
+                                    )
+                                    .fill(Color32::from_rgb(30, 41, 59))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .min_size(Vec2::new(80.0, 32.0));
+
+                                    if ui.add(close_btn).clicked() {
+                                        close_modal = true;
+                                    }
+                                });
+                            });
+                        });
+                });
+
+            if let Some(target) = open_url_target {
+                let _ = open::that(target);
+            }
+
+            if close_modal {
+                self.show_about_modal = false;
+            }
+        }
+
 
     }
 }
@@ -5735,8 +6077,11 @@ fn main() -> Result<(), eframe::Error> {
 
     let rt = Arc::new(Runtime::new().expect("Failed to initialize Tokio runtime"));
 
-    let win_w = 1100.0_f32;
-    let win_h = 680.0_f32;
+    let (win_w, win_h) = if std::env::var("RDM_CAPTURE_SCREENSHOTS").is_ok() {
+        (1366.0_f32, 768.0_f32)
+    } else {
+        (1100.0_f32, 680.0_f32)
+    };
 
     let raw_icon_128 = include_bytes!("../assets/icon_128.raw");
     let icon_data = egui::IconData {
