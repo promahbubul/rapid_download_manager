@@ -5,6 +5,10 @@ pub struct AppPaths;
 
 impl AppPaths {
     /// %APPDATA%\RapidDownloadManager (Roaming: user configs, scheduler, history)
+    pub fn data_dir() -> PathBuf {
+        Self::app_data_dir()
+    }
+
     pub fn app_data_dir() -> PathBuf {
         if let Ok(roaming) = std::env::var("APPDATA") {
             let p = PathBuf::from(roaming).join("RapidDownloadManager");

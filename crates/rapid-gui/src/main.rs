@@ -683,7 +683,7 @@ pub fn save_google_cookies(cookies: &str) {
         if let Ok(mut lock) = CACHED_GOOGLE_COOKIES.write() {
             *lock = Some(clean.to_string());
         }
-        let cookie_file = rapid_core::AppPaths::data_dir().join("google_cookies.txt");
+        let cookie_file = rapid_core::AppPaths::app_data_dir().join("google_cookies.txt");
         let _ = std::fs::write(cookie_file, clean);
     }
 }
@@ -694,7 +694,7 @@ pub fn load_google_cookies() -> Option<String> {
             return Some(c.clone());
         }
     }
-    let cookie_file = rapid_core::AppPaths::data_dir().join("google_cookies.txt");
+    let cookie_file = rapid_core::AppPaths::app_data_dir().join("google_cookies.txt");
     if let Ok(content) = std::fs::read_to_string(cookie_file) {
         let trimmed = content.trim().to_string();
         if !trimmed.is_empty() {
