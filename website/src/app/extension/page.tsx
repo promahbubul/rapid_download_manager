@@ -49,7 +49,16 @@ export default function ExtensionPage() {
             Automatically intercept large file downloads in Google Chrome, Microsoft Edge, Brave, Opera, and Firefox. Seamlessly forwards authentication cookies, session tokens, and referrers to your local native engine.
           </p>
 
-          <div className="pt-2">
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+            <a
+              href="https://addons.mozilla.org/en-US/firefox/addon/rapid-download-manager-integra/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 text-white text-xs font-bold shadow-lg shadow-orange-500/25 hover:scale-103 transition-all"
+            >
+              <ExternalLink className="w-4 h-4" />
+              <span>Add to Firefox (Mozilla Add-ons)</span>
+            </a>
             <a
               href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
               target="_blank"

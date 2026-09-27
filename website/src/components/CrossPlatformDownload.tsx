@@ -457,16 +457,17 @@ export default function CrossPlatformDownload() {
               </div>
               <div className="pt-6">
                 <a
-                  href="/extension"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-colors hover:bg-slate-500/10"
+                  href="https://addons.mozilla.org/en-US/firefox/addon/rapid-download-manager-integra/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-all hover:bg-orange-500/15 hover:border-orange-500/50 text-orange-400"
                   style={{
                     borderColor: "var(--border-subtle)",
                     backgroundColor: "var(--bg-card)",
-                    color: "var(--text-heading)",
                   }}
                 >
-                  <ExternalLink className="w-4 h-4" />
-                  <span>Firefox Installation</span>
+                  <ExternalLink className="w-4 h-4 text-orange-400" />
+                  <span>Add to Firefox (AMO)</span>
                 </a>
               </div>
             </div>
