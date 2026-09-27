@@ -25,14 +25,18 @@ jobs:
 
       - name: Build Release Binary
         run: |
-          cargo build --release -p rapid-gui
+          cargo build --release --target x86_64-pc-windows-msvc -p rapid-gui
 
       - name: Stage Distribution Files
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "dist\RapidDownloadManager\extension" -Force
           New-Item -ItemType Directory -Path "dist\installer" -Force
-          Copy-Item -Path "target\release\rapid-gui.exe" -Destination "dist\RapidDownloadManager\rapid-gui.exe" -Force
+          if (Test-Path "target\x86_64-pc-windows-msvc\release\rapid-gui.exe") {
+            Copy-Item -Path "target\x86_64-pc-windows-msvc\release\rapid-gui.exe" -Destination "dist\RapidDownloadManager\rapid-gui.exe" -Force
+          } else {
+            Copy-Item -Path "target\release\rapid-gui.exe" -Destination "dist\RapidDownloadManager\rapid-gui.exe" -Force
+          }
           Copy-Item -Path "extension\*" -Destination "dist\RapidDownloadManager\extension\" -Recurse -Force
           Copy-Item -Path "install_extension.bat" -Destination "dist\RapidDownloadManager\install_extension.bat" -Force
           Copy-Item -Path "run_rapid_gui.bat" -Destination "dist\RapidDownloadManager\run_rapid_gui.bat" -Force
