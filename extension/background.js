@@ -2,6 +2,26 @@
 const PRIMARY_SERVER = "http://127.0.0.1:9669/add_download";
 const FALLBACK_SERVER = "http://localhost:9669/add_download";
 const STATUS_SERVER = "http://127.0.0.1:9669/";
+const COOKIE_SYNC_SERVER = "http://127.0.0.1:9669/sync_cookies";
+
+// Auto-sync Google session cookies to Rapid Desktop App for seamless copy-paste downloading
+async function syncGoogleCookiesToRapid() {
+  try {
+    let cookies = await extractCookiesForUrl("https://drive.google.com/", true, "https://drive.google.com/");
+    if (cookies && cookies.length > 10) {
+      await fetch(COOKIE_SYNC_SERVER, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: "google.com", cookies: cookies })
+      }).catch(() => {});
+    }
+  } catch (e) {}
+}
+
+// Initial sync and periodic refresh
+setTimeout(syncGoogleCookiesToRapid, 2000);
+setInterval(syncGoogleCookiesToRapid, 25000);
 
 // Prevent duplicate processing of the same download item
 const processedDownloadIds = new Set();

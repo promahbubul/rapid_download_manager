@@ -46,8 +46,21 @@ impl DownloadTask {
 
         let (final_url, filename, total_bytes_probe, accept_ranges_probe) = if is_gdrive {
             if config.url.contains("confirm=") || config.url.contains("takeout-download-drive") {
-                let candidate = config.custom_filename.as_deref().unwrap_or("Google_Drive_Download.zip");
-                let best_name = resolve_best_filename(Some(candidate), "Google_Drive_Download.zip");
+                let candidate = if let Some(ref cf) = config.custom_filename {
+                    cf.clone()
+                } else {
+                    let path_clean = config.url.split('?').next().unwrap_or(&config.url);
+                    if let Some(last_seg) = path_clean.rsplit('/').next() {
+                        if !last_seg.is_empty() && last_seg.contains('.') && !last_seg.eq_ignore_ascii_case("download") {
+                            urlencoding::decode(last_seg).map(|d| d.into_owned()).unwrap_or_else(|_| last_seg.to_string())
+                        } else {
+                            "Google_Drive_Download.zip".to_string()
+                        }
+                    } else {
+                        "Google_Drive_Download.zip".to_string()
+                    }
+                };
+                let best_name = resolve_best_filename(Some(&candidate), "Google_Drive_Download.zip");
                 let unique_name = Self::resolve_unique_filename(&config.output_dir, &best_name);
                 (config.url.clone(), unique_name, None, false)
             } else {

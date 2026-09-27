@@ -9,7 +9,7 @@
   <Identity
     Name="promahbubul.RapidDownloadManager"
     Publisher="CN=06D46701-C88B-4502-A804-C57A5DC840EC"
-    Version="1.0.1.0"
+    Version="1.0.2.0"
     ProcessorArchitecture="x64" />
 
   <Properties>

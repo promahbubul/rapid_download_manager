@@ -61,6 +61,7 @@ enum FilterCategory {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModernIcon {
+    Globe,
     Close,
     Play,
     Pause,
@@ -84,6 +85,11 @@ fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect,
     let center = rect.center();
     let stroke = Stroke::new(1.5_f32, color);
     match icon {
+        ModernIcon::Globe => {
+            painter.circle_stroke(center, 5.0, stroke);
+            painter.line_segment([egui::pos2(center.x - 5.0, center.y), egui::pos2(center.x + 5.0, center.y)], stroke);
+            painter.line_segment([egui::pos2(center.x, center.y - 5.0), egui::pos2(center.x, center.y + 5.0)], stroke);
+        }
         ModernIcon::Close => {
             painter.line_segment(
                 [egui::pos2(center.x - 5.0, center.y - 5.0), egui::pos2(center.x + 5.0, center.y + 5.0)],
@@ -669,6 +675,91 @@ struct RapidApp {
     tray_handle: Option<tray::TrayHandle>,
 }
 
+static CACHED_GOOGLE_COOKIES: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+pub fn save_google_cookies(cookies: &str) {
+    let clean = cookies.trim();
+    if clean.len() > 10 && (clean.contains("SID=") || clean.contains("HSID=") || clean.contains("OSID=") || clean.contains("download_warning_")) {
+        if let Ok(mut lock) = CACHED_GOOGLE_COOKIES.write() {
+            *lock = Some(clean.to_string());
+        }
+        let cookie_file = rapid_core::AppPaths::data_dir().join("google_cookies.txt");
+        let _ = std::fs::write(cookie_file, clean);
+    }
+}
+
+pub fn load_google_cookies() -> Option<String> {
+    if let Ok(lock) = CACHED_GOOGLE_COOKIES.read() {
+        if let Some(ref c) = *lock {
+            return Some(c.clone());
+        }
+    }
+    let cookie_file = rapid_core::AppPaths::data_dir().join("google_cookies.txt");
+    if let Ok(content) = std::fs::read_to_string(cookie_file) {
+        let trimmed = content.trim().to_string();
+        if !trimmed.is_empty() {
+            if let Ok(mut lock) = CACHED_GOOGLE_COOKIES.write() {
+                *lock = Some(trimmed.clone());
+            }
+            return Some(trimmed);
+        }
+    }
+    None
+}
+
+pub fn launch_chrome_with_extension(target_url: Option<&str>) {
+    let chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ];
+
+    let mut browser_exe = None;
+    for p in &chrome_paths {
+        if std::path::Path::new(p).exists() {
+            browser_exe = Some(p.to_string());
+            break;
+        }
+    }
+
+    if browser_exe.is_none() {
+        if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
+            let chrome_local = format!("{}\Google\Chrome\Application\chrome.exe", local_app);
+            if std::path::Path::new(&chrome_local).exists() {
+                browser_exe = Some(chrome_local);
+            }
+        }
+    }
+
+    let Some(exe) = browser_exe else {
+        if let Some(u) = target_url {
+            let _ = open::that(u);
+        }
+        return;
+    };
+
+    let mut ext_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("extension")))
+        .unwrap_or_else(|| std::path::PathBuf::from("extension"));
+
+    if !ext_dir.exists() {
+        let alt = std::path::PathBuf::from(r"D:\mahbub\project\rapid_download_manager\extension");
+        if alt.exists() {
+            ext_dir = alt;
+        }
+    }
+
+    let ext_arg = format!("--load-extension={}", ext_dir.to_string_lossy());
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg(ext_arg);
+    if let Some(u) = target_url {
+        cmd.arg(u);
+    }
+    let _ = cmd.spawn();
+}
+
 impl RapidApp {
     fn check_for_updates(&self) {
         let status_arc = Arc::clone(&self.update_status);
@@ -857,6 +948,24 @@ impl RapidApp {
         visuals.selection.bg_fill = Color32::from_rgb(30, 24, 64);   // Translucent Violet Aura
         visuals.selection.stroke = Stroke::new(1.5_f32, GLASS_PRIMARY); // 1.5px glowing Electric Violet border
         cc.egui_ctx.set_visuals(visuals);
+
+        // Unicode Bangla Font Configuration (Noto Sans Bengali)
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "noto_bengali".to_owned(),
+            egui::FontData::from_static(include_bytes!("../../../assets/fonts/NotoSansBengali-Regular.ttf")),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .push("noto_bengali".to_owned());
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push("noto_bengali".to_owned());
+        cc.egui_ctx.set_fonts(fonts);
 
         let default_download_dir = dirs_or_fallback();
 
@@ -1470,6 +1579,12 @@ impl RapidApp {
             || url.contains("docs.google.com")
             || url.contains("takeout-download-drive");
 
+        let effective_cookies = if is_gd {
+            load_google_cookies().or(cookies)
+        } else {
+            cookies
+        };
+
         let speed_limit_arc = Arc::clone(&self.speed_limit_bps);
         rt.spawn(async move {
             let _ = tokio::fs::remove_file(&target_file).await;
@@ -1481,7 +1596,7 @@ impl RapidApp {
                 output_dir: dest_dir,
                 custom_filename: Some(filename.clone()),
                 num_segments: if is_gd { 1 } else { segments_count },
-                cookies,
+                cookies: effective_cookies,
                 referrer,
                 user_agent,
                 is_gdrive: is_gd,
@@ -3347,6 +3462,14 @@ impl eframe::App for RapidApp {
                                                         action_redownload = Some(i);
                                                     }
 
+                                                    if let DownloadStatus::Failed(_) = &item.status {
+                                                        if item.url.contains("google") || item.url.contains("drive") || item.url.contains("takeout") {
+                                                            if modern_icon_button(ui, ModernIcon::Globe, Vec2::new(24.0, 22.0), Color32::from_rgb(56, 189, 248), Color32::WHITE, "Bypass with Chromium Engine") {
+                                                                launch_chrome_with_extension(Some(&item.url));
+                                                            }
+                                                        }
+                                                    }
+
                                                     if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(24.0, 22.0), STATUS_FAILED, Color32::WHITE, "Delete") {
                                                         action_remove_ids.push(item.id.clone());
                                                     }
@@ -4952,6 +5075,20 @@ fn render_parallel_connections_combobox(
                             run_auto_integrate = true;
                         }
 
+                        let launch_chrome_btn = egui::Button::new(
+                            RichText::new("⚡ Launch Chrome Hook")
+                                .size(11.5)
+                                .color(Color32::WHITE)
+                                .strong(),
+                        )
+                        .fill(Color32::from_rgb(14, 165, 233))
+                        .rounding(egui::Rounding::same(6.0))
+                        .min_size(Vec2::new(145.0, 32.0));
+
+                        if ui.add(launch_chrome_btn).on_hover_text("Launch Chrome with Rapid Download Manager hook active").clicked() {
+                            launch_chrome_with_extension(None);
+                        }
+
                         let export_btn = egui::Button::new(
                             RichText::new("Export Webstore Zip")
                                 .size(11.5)
@@ -5451,12 +5588,17 @@ fn spawn_download_task(
             || url.contains("usercontent.google.com")
             || url.contains("docs.google.com")
             || url.contains("takeout-download-drive");
+        let effective_cookies = if gdrive && cookies.is_none() {
+            load_google_cookies()
+        } else {
+            cookies.clone()
+        };
         let config = DownloadConfig {
             url: url.clone(),
             output_dir: dest_dir.clone(),
             custom_filename: custom_filename.clone(),
             num_segments: if gdrive { 1 } else { segments },
-            cookies: cookies.clone(),
+            cookies: effective_cookies,
             user_agent: user_agent.clone(),
             referrer: referrer.clone(),
             is_gdrive: gdrive,
@@ -5696,6 +5838,25 @@ async fn run_extension_server(
                 return;
             }
 
+            if req_str.contains("/sync_cookies") {
+                if let Some(hend) = header_end {
+                    let body_slice = &buffer[hend..];
+                    if let Ok(body_str) = std::str::from_utf8(body_slice) {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(body_str.trim()) {
+                            if let Some(cookies) = val.get("cookies").and_then(|c| c.as_str()) {
+                                save_google_cookies(cookies);
+                                let resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
+                                let _ = socket.write_all(resp.as_bytes()).await;
+                                return;
+                            }
+                        }
+                    }
+                }
+                let resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
+                let _ = socket.write_all(resp.as_bytes()).await;
+                return;
+            }
+
             // Handle health check and wake
             if req_str.starts_with("GET") {
                 if req_str.contains("/tasks") {
@@ -5779,6 +5940,17 @@ async fn run_extension_server(
                                 || url_str.contains("usercontent.google.com")
                                 || url_str.contains("docs.google.com")
                                 || url_str.contains("takeout-download-drive");
+
+                            if let Some(ref c) = cookies_str {
+                                if is_gdrive {
+                                    save_google_cookies(c);
+                                }
+                            }
+                            let cookies_str = if cookies_str.is_none() && is_gdrive {
+                                load_google_cookies()
+                            } else {
+                                cookies_str
+                            };
 
                             let is_youtube = val.get("is_youtube").and_then(|y| y.as_bool()).unwrap_or(false)
                                 || val.get("is_video_platform").and_then(|p| p.as_bool()).unwrap_or(false)
