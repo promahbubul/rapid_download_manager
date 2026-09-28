@@ -1,7 +1,7 @@
 ; Inno Setup Script for Rapid Download Manager
 #define MyAppName "Rapid Download Manager"
 #define MyAppVersion "1.0.2"
-#define MyAppQuadVersion "1.0.1.0"
+#define MyAppQuadVersion "1.0.2.0"
 #define MyAppPublisher "Promahbubul"
 #define MyAppURL "https://github.com/promahbubul/rapid_download_manager"
 #define MyAppExeName "rapid-gui.exe"
@@ -24,7 +24,7 @@ DefaultDirName={autopf}\Rapid Download Manager
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=..\dist\installer
-OutputBaseFilename=RapidDownloadManager_Setup_v1.0.1
+OutputBaseFilename=RapidDownloadManager_Setup_v{#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
