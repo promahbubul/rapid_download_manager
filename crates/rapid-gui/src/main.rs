@@ -725,7 +725,7 @@ pub fn launch_chrome_with_extension(target_url: Option<&str>) {
 
     if browser_exe.is_none() {
         if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
-            let chrome_local = format!("{}\Google\Chrome\Application\chrome.exe", local_app);
+            let chrome_local = format!(r"{}\Google\Chrome\Application\chrome.exe", local_app);
             if std::path::Path::new(&chrome_local).exists() {
                 browser_exe = Some(chrome_local);
             }
