@@ -220,6 +220,12 @@ impl YoutubeResolver {
                 if candidate.exists() {
                     return Some(candidate);
                 }
+                if let Some(parent) = dir.parent() {
+                    let candidate = parent.join("yt-dlp.exe");
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
+                }
             }
         }
 
@@ -259,6 +265,12 @@ impl YoutubeResolver {
                 let candidate = dir.join("ffmpeg.exe");
                 if candidate.exists() {
                     return Some(candidate);
+                }
+                if let Some(parent) = dir.parent() {
+                    let candidate = parent.join("ffmpeg.exe");
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
                 }
             }
         }

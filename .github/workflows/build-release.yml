@@ -40,6 +40,7 @@ jobs:
           Copy-Item -Path "extension\*" -Destination "dist\RapidDownloadManager\extension\" -Recurse -Force
           Copy-Item -Path "install_extension.bat" -Destination "dist\RapidDownloadManager\install_extension.bat" -Force
           Copy-Item -Path "run_rapid_gui.bat" -Destination "dist\RapidDownloadManager\run_rapid_gui.bat" -Force
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "dist\RapidDownloadManager\yt-dlp.exe"
 
       - name: Install Inno Setup
         run: choco install innosetup -y

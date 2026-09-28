@@ -1,6 +1,8 @@
+#![windows_subsystem = "windows"]
+
 use chrono::Timelike;
 use serde::{Deserialize, Serialize};
-// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // Console enabled for diagnostics
+
 
 use chrono::Utc;
 use eframe::egui::{self, Color32, Margin, RichText, Stroke, Vec2};
