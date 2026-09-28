@@ -953,7 +953,7 @@ impl RapidApp {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "noto_bengali".to_owned(),
-            std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../../../assets/fonts/NotoSansBengali-Regular.ttf"))),
+            egui::FontData::from_static(include_bytes!("../../../assets/fonts/NotoSansBengali-Regular.ttf")),
         );
         fonts
             .families
