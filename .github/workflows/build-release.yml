@@ -30,27 +30,26 @@ jobs:
       - name: Stage Distribution Files
         shell: pwsh
         run: |
-          # Clean staging and installer output directories to prevent mixing old versions
-          if (Test-Path "dist\installer") {
-            Remove-Item -Path "dist\installer\*" -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path "dist/installer") {
+            Remove-Item -Path "dist/installer/*" -Recurse -Force -ErrorAction SilentlyContinue
           }
-          New-Item -ItemType Directory -Path "dist\RapidDownloadManager\extension" -Force
-          New-Item -ItemType Directory -Path "dist\installer" -Force
+          New-Item -ItemType Directory -Path "dist/RapidDownloadManager/extension" -Force
+          New-Item -ItemType Directory -Path "dist/installer" -Force
 
-          if (Test-Path "target_64-pc-windows-msvceleaseapid-gui.exe") {
-            Copy-Item -Path "target_64-pc-windows-msvceleaseapid-gui.exe" -Destination "dist\RapidDownloadManagerapid-gui.exe" -Force
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/rapid-gui.exe") {
+            Copy-Item -Path "target/x86_64-pc-windows-msvc/release/rapid-gui.exe" -Destination "dist/RapidDownloadManager/rapid-gui.exe" -Force
           } else {
-            Copy-Item -Path "targeteleaseapid-gui.exe" -Destination "dist\RapidDownloadManagerapid-gui.exe" -Force
+            Copy-Item -Path "target/release/rapid-gui.exe" -Destination "dist/RapidDownloadManager/rapid-gui.exe" -Force
           }
-          if (Test-Path "target_64-pc-windows-msvceleaseapid-cli.exe") {
-            Copy-Item -Path "target_64-pc-windows-msvceleaseapid-cli.exe" -Destination "dist\RapidDownloadManagerapid-cli.exe" -Force
-          } elseif (Test-Path "targeteleaseapid-cli.exe") {
-            Copy-Item -Path "targeteleaseapid-cli.exe" -Destination "dist\RapidDownloadManagerapid-cli.exe" -Force
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/rapid-cli.exe") {
+            Copy-Item -Path "target/x86_64-pc-windows-msvc/release/rapid-cli.exe" -Destination "dist/RapidDownloadManager/rapid-cli.exe" -Force
+          } elseif (Test-Path "target/release/rapid-cli.exe") {
+            Copy-Item -Path "target/release/rapid-cli.exe" -Destination "dist/RapidDownloadManager/rapid-cli.exe" -Force
           }
-          Copy-Item -Path "extension\*" -Destination "dist\RapidDownloadManager\extension" -Recurse -Force
-          Copy-Item -Path "install_extension.bat" -Destination "dist\RapidDownloadManager\install_extension.bat" -Force
-          Copy-Item -Path "run_rapid_gui.bat" -Destination "dist\RapidDownloadManagerun_rapid_gui.bat" -Force
-          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "dist\RapidDownloadManager\yt-dlp.exe"
+          Copy-Item -Path "extension/*" -Destination "dist/RapidDownloadManager/extension/" -Recurse -Force
+          Copy-Item -Path "install_extension.bat" -Destination "dist/RapidDownloadManager/install_extension.bat" -Force
+          Copy-Item -Path "run_rapid_gui.bat" -Destination "dist/RapidDownloadManager/run_rapid_gui.bat" -Force
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "dist/RapidDownloadManager/yt-dlp.exe"
 
       - name: Install Inno Setup
         run: choco install innosetup -y
@@ -61,17 +60,17 @@ jobs:
           $iscc = ""
           if (Get-Command ISCC.exe -ErrorAction SilentlyContinue) {
             $iscc = "ISCC.exe"
-          } elseif (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") {
-            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          } elseif (Test-Path "C:\Program Files\Inno Setup 6\ISCC.exe") {
-            $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe"
+          } elseif (Test-Path "C:/Program Files (x86)/Inno Setup 6/ISCC.exe") {
+            $iscc = "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          } elseif (Test-Path "C:/Program Files/Inno Setup 6/ISCC.exe") {
+            $iscc = "C:/Program Files/Inno Setup 6/ISCC.exe"
           } else {
             throw "ISCC compiler not found"
           }
-          & $iscc "installer\RapidDownloadManager.iss"
+          & $iscc "installer/RapidDownloadManager.iss"
           $tag = "${{ github.ref_name }}"
           if (-not $tag) { $tag = "v1.0.4" }
-          Compress-Archive -Path "dist\RapidDownloadManager\*" -DestinationPath "dist\installer\RapidDownloadManager_${tag}_Portable.zip" -Force
+          Compress-Archive -Path "dist/RapidDownloadManager/*" -DestinationPath "dist/installer/RapidDownloadManager_${tag}_Portable.zip" -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -84,4 +83,3 @@ jobs:
           files: |
             dist/installer/RapidDownloadManager_Setup_${{ github.ref_name }}.exe
             dist/installer/RapidDownloadManager_${{ github.ref_name }}_Portable.zip
-            dist/installer/RapidDownloadManager_${{ github.ref_name }}.msix
