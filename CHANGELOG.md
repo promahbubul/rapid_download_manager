@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.3] - 2026-09-29
+
+### Added
+- **Native Bengali Font Shaping Engine:** Integrated `rustybuzz` and PUA glyph mapping (`kalpurush-pua.ttf`) in `bengali.rs`, delivering flawless complex Bengali text shaping with zero broken ligatures or dotted circles.
+- **Ultra-Clean Non-Colliding Status Bar:** Redesigned bottom status bar inspired by VS Code and Arc with mathematically partitioned left status line and right quick action dock (`Downloads`, `Browser`, `About`, `Tray`).
+- **Responsive Compact Mode:** Status bar automatically adapts to narrow window widths (< 600px) with icon-only action dock and GPU clipping.
+- **Embedded LLVM Runtime:** Bundled `libunwind.dll` directly inside all distribution and MSIX staging packages (`dist/msix_staging`, `dist/RapidDownloadManager`), permanently resolving the `libunwind.dll missing` system error on clean Windows and Microsoft Store installations.
+
+### Fixed
+- Fixed UI collisions and text overlapping on high DPI scaling and small screen resolutions.
+- Fixed 404 download URLs in documentation and website release links.
+
+---
+
 ## [1.0.0] - 2026-09-24
 
 ### Initial Production Release

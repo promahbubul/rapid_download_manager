@@ -15,8 +15,8 @@ Choose your preferred format below to download the latest **v1.0.0 Production Re
 
 | Package Type | Description | Primary Download (GitHub Releases) | Direct Mirror (Repository) |
 | :--- | :--- | :--- | :--- |
-| 💿 **Windows Installer (Setup .exe)** | **Recommended:** Full guided Windows setup wizard, Start Menu shortcuts, Desktop icon, autostart toggle, and uninstaller. | [⬇️ **Download Setup v1.0.0 (.exe)**](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_Setup_v1.0.0.exe) | [⬇️ Mirror (.exe)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_Setup_v1.0.0.exe) |
-| 📦 **Portable Standalone (.zip)** | No installation required. Extract anywhere and run `rapid-gui.exe` immediately. | [⬇️ **Download Portable v1.0.0 (.zip)**](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_v1.0.0_Portable.zip) | [⬇️ Mirror (.zip)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_v1.0.0_Portable.zip) |
+| 💿 **Windows Installer (Setup .exe)** | **Recommended:** Full guided Windows setup wizard, Start Menu shortcuts, Desktop icon, autostart toggle, and uninstaller. | [⬇️ **Download Setup v1.0.0 (.exe)**](https://github.com/promahbubul/rapid_download_manager/releases/latest) | [⬇️ Mirror (.exe)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_Setup_v1.0.0.exe) |
+| 📦 **Portable Standalone (.zip)** | No installation required. Extract anywhere and run `rapid-gui.exe` immediately. | [⬇️ **Download Portable v1.0.0 (.zip)**](https://github.com/promahbubul/rapid_download_manager/releases/latest) | [⬇️ Mirror (.zip)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_v1.0.0_Portable.zip) |
 
 🔗 **View all releases & changelogs:** [GitHub Releases Page](https://github.com/promahbubul/rapid_download_manager/releases)
 
@@ -80,14 +80,14 @@ Rapid Download Manager departs completely from outdated 90s-style download utili
 ## 💻 Installation & Setup Guide
 
 ### Method 1: Windows Setup Wizard (Recommended)
-1. Download [`RapidDownloadManager_Setup_v1.0.0.exe`](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_Setup_v1.0.0.exe).
+1. Download [`RapidDownloadManager_Setup_v1.0.0.exe`](https://github.com/promahbubul/rapid_download_manager/releases/latest).
 2. Double-click the installer to launch the modern Inno Setup wizard.
 3. Choose installation path (defaults to `%LocalAppData%\Programs\Rapid Download Manager`).
 4. Optionally check *"Create a desktop icon"* and *"Start Rapid Download Manager when Windows starts"*.
 5. Click **Install** and then **Launch Rapid Download Manager**.
 
 ### Method 2: Portable Standalone Package
-1. Download [`RapidDownloadManager_v1.0.0_Portable.zip`](https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_v1.0.0_Portable.zip).
+1. Download [`RapidDownloadManager_v1.0.0_Portable.zip`](https://github.com/promahbubul/rapid_download_manager/releases/latest).
 2. Extract the archive into any folder on your PC.
 3. Double-click `rapid-gui.exe` (or `run_rapid_gui.bat`).
 

@@ -76,3 +76,10 @@
    - **Automatic MIME Extension Fallback**: Added `extension_from_mime` in `probe.rs`. If a download URL is dynamic (e.g., `/download/stream?id=...` or `/get.php`) and has no file extension or server content disposition, the real extension is deduced from `Content-Type` (e.g. `video/mp4` -> `.mp4`, `application/pdf` -> `.pdf`).
    - **Generic Placeholder Overrides**: Added `is_generic_placeholder` and `resolve_best_filename` in `engine.rs`. If the browser extension or URL passes generic names like `"download"`, `"download.bin"`, `"uc"`, `"file"`, etc., the engine defers to the real probed filename. If a custom name has no extension, the real probed extension is automatically preserved and attached.
    - **Browser Extension Cleaning**: Updated `content.js` and `background.js` to discard generic `<a download="Download">` attributes and Chrome fallback names so only verified original filenames reach the desktop client.
+
+
+## 🌟 Latest Completed Milestones (v1.0.3 Release)
+1. **Bengali Complex Script Shaping Engine**: Built native HarfBuzz-level text shaping using `rustybuzz 0.20.1` and custom PUA Unicode glyph map in `crates/rapid-gui/src/bengali.rs` + `assets/fonts/kalpurush-pua.ttf`. Unit tested and verified across complex sentences.
+2. **Non-Colliding Glassmorphism Status Bar**: Replaced fragile discrete chip layout with mathematically bounded dual-rectangle partition (`left_rect` + `right_rect`), preventing any text collisions on small screens or DPI scaling.
+3. **Microsoft Store & Windows Runtime Compatibility**: Bundled `libunwind.dll` into MSIX staging and installer directories, fixing runtime dependency errors on end-user machines.
+4. **Documentation & Release Links Synchronization**: Fixed 404 download endpoints, unified latest release links, and synchronized changelogs.

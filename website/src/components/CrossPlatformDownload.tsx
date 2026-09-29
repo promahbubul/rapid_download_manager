@@ -145,7 +145,7 @@ export default function CrossPlatformDownload() {
               </div>
               <div className="pt-6">
                 <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager_1.0.0.0_x64.msix"
+                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors"
                 >
                   <Download className="w-4 h-4" />
@@ -174,7 +174,7 @@ export default function CrossPlatformDownload() {
               </div>
               <div className="pt-6">
                 <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager-Setup-1.0.0.exe"
+                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-colors hover:bg-slate-500/10"
                   style={{
                     borderColor: "var(--border-subtle)",
