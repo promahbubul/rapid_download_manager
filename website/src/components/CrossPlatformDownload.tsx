@@ -242,7 +242,7 @@ export default function CrossPlatformDownload() {
               </div>
               <div className="pt-6">
                 <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager-arm64.dmg"
+                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors"
                 >
                   <Download className="w-4 h-4" />
@@ -271,7 +271,7 @@ export default function CrossPlatformDownload() {
               </div>
               <div className="pt-6">
                 <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager-x64.dmg"
+                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-colors hover:bg-slate-500/10"
                   style={{
                     borderColor: "var(--border-subtle)",
@@ -334,12 +334,12 @@ export default function CrossPlatformDownload() {
                   Native DEB package for Ubuntu, Debian, Pop!_OS, and Linux Mint.
                 </p>
                 <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-rose-300 overflow-x-auto">
-                  <span>sudo dpkg -i rdm_1.0.0_amd64.deb</span>
+                  <span>sudo dpkg -i rdm_1.0.4_amd64.deb</span>
                 </div>
               </div>
               <div className="pt-6">
                 <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/rapid-download-manager_1.0.0_amd64.deb"
+                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors"
                 >
                   <Download className="w-4 h-4" />
@@ -368,7 +368,7 @@ export default function CrossPlatformDownload() {
               </div>
               <div className="pt-6">
                 <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/download/v1.0.0/RapidDownloadManager-x86_64.AppImage"
+                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-colors hover:bg-slate-500/10"
                   style={{
                     borderColor: "var(--border-subtle)",
