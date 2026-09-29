@@ -161,7 +161,11 @@ impl YoutubeResolver {
         })?;
 
         let mut cmd = tokio::process::Command::new(ytdlp_bin);
+        cmd.env("PYTHONIOENCODING", "utf-8");
+        cmd.env("PYTHONUTF8", "1");
         cmd.args(&[
+            "--encoding",
+            "utf-8",
             "--js-runtimes",
             "node",
             "--no-playlist",
@@ -189,8 +193,8 @@ impl YoutubeResolver {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let first_line = stdout.lines().next().unwrap_or("").trim();
-        let parts: Vec<&str> = first_line.split("@@@").collect();
+        let line = stdout.lines().find(|l| l.contains("@@@")).unwrap_or_else(|| stdout.lines().next().unwrap_or("")).trim();
+        let parts: Vec<&str> = line.split("@@@").collect();
 
         let title = parts.get(0).unwrap_or(&"YouTube_Video").trim().to_string();
         let id = parts.get(1).unwrap_or(&"video").trim().to_string();
@@ -350,7 +354,11 @@ impl YoutubeDownloader {
         let out_target = self.target_file.to_string_lossy().to_string();
 
         let mut cmd = tokio::process::Command::new(ytdlp_bin);
+        cmd.env("PYTHONIOENCODING", "utf-8");
+        cmd.env("PYTHONUTF8", "1");
         cmd.args(&[
+            "--encoding",
+            "utf-8",
             "--js-runtimes",
             "node",
             "-N",

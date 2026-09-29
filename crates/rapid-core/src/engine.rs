@@ -526,7 +526,10 @@ pub fn is_generic_placeholder(name: &str) -> bool {
         "file", "file.bin", "file.tmp", "document.bin",
         "bin", "default", "unnamed", "undefined", "null", "true", "false",
         "uc", "uc.bin", "view", "index", "get", "media",
-        "downloading...", "google_drive_download.zip", "google_drive_download",
+        "watch", "watch.mp4", "watch.mkv", "watch.webm",
+        "videoplayback", "videoplayback.mp4", "videoplayback.mkv", "videoplayback.webm",
+        "downloading...", "resolving video title...", "resolving filename...", "resolving original filename...", "detecting filename...",
+        "google_drive_download.zip", "google_drive_download",
     ];
     if exact_generics.contains(&s.as_str()) {
         return true;
@@ -535,6 +538,11 @@ pub fn is_generic_placeholder(name: &str) -> bool {
     let p = std::path::Path::new(&s);
     let stem = p.file_stem().and_then(|st| st.to_str()).unwrap_or(&s);
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    // If stem is watch or videoplayback, always consider placeholder
+    if stem == "watch" || stem == "videoplayback" {
+        return true;
+    }
 
     // If it has no extension, or extension is dummy (.bin, .tmp, .crdownload)
     if ext.is_empty() || ext == "bin" || ext == "tmp" || ext == "crdownload" {
@@ -624,6 +632,10 @@ mod tests {
         assert!(is_generic_placeholder("file_12345.bin"));
         assert!(is_generic_placeholder("uc"));
         assert!(is_generic_placeholder("Downloading..."));
+        assert!(is_generic_placeholder("watch"));
+        assert!(is_generic_placeholder("watch.mp4"));
+        assert!(is_generic_placeholder("videoplayback"));
+        assert!(is_generic_placeholder("Resolving video title..."));
         assert!(!is_generic_placeholder("Lecture_01.mp4"));
         assert!(!is_generic_placeholder("document.pdf"));
     }
