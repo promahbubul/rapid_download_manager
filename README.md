@@ -1,6 +1,6 @@
 # ⚡ Rapid Download Manager (Neon Pink Velvet Edition)
 
-[![Release](https://img.shields.io/badge/Release-v1.0.0-FF2A85?style=for-the-badge&logo=github)](https://github.com/promahbubul/rapid_download_manager/releases/tag/v1.0.0)
+[![Release](https://img.shields.io/badge/Release-v1.0.4-FF2A85?style=for-the-badge&logo=github)](https://github.com/promahbubul/rapid_download_manager/releases/tag/v1.0.4)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(x64)-1A0F24?style=for-the-badge&logo=windows)](https://github.com/promahbubul/rapid_download_manager/releases)
 [![Rust](https://img.shields.io/badge/Language-Rust%202021-DEA584?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-00E5FF?style=for-the-badge)](LICENSE)
@@ -11,12 +11,12 @@
 
 ## 📥 Download Production Software
 
-Choose your preferred format below to download the latest **v1.0.0 Production Release**:
+Choose your preferred format below to download the latest **v1.0.4 Production Release**:
 
 | Package Type | Description | Primary Download (GitHub Releases) | Direct Mirror (Repository) |
 | :--- | :--- | :--- | :--- |
-| 💿 **Windows Installer (Setup .exe)** | **Recommended:** Full guided Windows setup wizard, Start Menu shortcuts, Desktop icon, autostart toggle, and uninstaller. | [⬇️ **Download Setup v1.0.0 (.exe)**](https://github.com/promahbubul/rapid_download_manager/releases/latest) | [⬇️ Mirror (.exe)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_Setup_v1.0.0.exe) |
-| 📦 **Portable Standalone (.zip)** | No installation required. Extract anywhere and run `rapid-gui.exe` immediately. | [⬇️ **Download Portable v1.0.0 (.zip)**](https://github.com/promahbubul/rapid_download_manager/releases/latest) | [⬇️ Mirror (.zip)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_v1.0.0_Portable.zip) |
+| 💿 **Windows Installer (Setup .exe)** | **Recommended:** Full guided Windows setup wizard, Start Menu shortcuts, Desktop icon, autostart toggle, and uninstaller. | [⬇️ **Download Setup v1.0.4 (.exe)**](https://github.com/promahbubul/rapid_download_manager/releases/latest) | [⬇️ Mirror (.exe)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_Setup_v1.0.4.exe) |
+| 📦 **Portable Standalone (.zip)** | No installation required. Extract anywhere and run `rapid-gui.exe` immediately. | [⬇️ **Download Portable v1.0.4 (.zip)**](https://github.com/promahbubul/rapid_download_manager/releases/latest) | [⬇️ Mirror (.zip)](https://github.com/promahbubul/rapid_download_manager/raw/main/dist/installer/RapidDownloadManager_v1.0.4_Portable.zip) |
 
 🔗 **View all releases & changelogs:** [GitHub Releases Page](https://github.com/promahbubul/rapid_download_manager/releases)
 
@@ -28,7 +28,7 @@ Rapid Download Manager departs completely from outdated 90s-style download utili
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│  ⚡ RAPID DOWNLOAD MANAGER v1.0.0                    [─] [□] [✕]      │
+│  ⚡ RAPID DOWNLOAD MANAGER v1.0.4                    [─] [□] [✕]      │
 ├────────────────────────────────────────────────────────────────────────┤
 │  [＋ New Download]  [▶ Resume All]  [⏸ Pause All]   [📂 Open Folder]   │
 ├────────────────────────────────────────────────────────────────────────┤
@@ -80,14 +80,14 @@ Rapid Download Manager departs completely from outdated 90s-style download utili
 ## 💻 Installation & Setup Guide
 
 ### Method 1: Windows Setup Wizard (Recommended)
-1. Download [`RapidDownloadManager_Setup_v1.0.0.exe`](https://github.com/promahbubul/rapid_download_manager/releases/latest).
+1. Download [`RapidDownloadManager_Setup_v1.0.4.exe`](https://github.com/promahbubul/rapid_download_manager/releases/latest).
 2. Double-click the installer to launch the modern Inno Setup wizard.
 3. Choose installation path (defaults to `%LocalAppData%\Programs\Rapid Download Manager`).
 4. Optionally check *"Create a desktop icon"* and *"Start Rapid Download Manager when Windows starts"*.
 5. Click **Install** and then **Launch Rapid Download Manager**.
 
 ### Method 2: Portable Standalone Package
-1. Download [`RapidDownloadManager_v1.0.0_Portable.zip`](https://github.com/promahbubul/rapid_download_manager/releases/latest).
+1. Download [`RapidDownloadManager_v1.0.4_Portable.zip`](https://github.com/promahbubul/rapid_download_manager/releases/latest).
 2. Extract the archive into any folder on your PC.
 3. Double-click `rapid-gui.exe` (or `run_rapid_gui.bat`).
 
@@ -146,7 +146,7 @@ target/release/rapid-gui.exe
 ```powershell
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer/RapidDownloadManager.iss
 ```
-The compiled installer will be generated in `dist/installer/RapidDownloadManager_Setup_v1.0.0.exe`.
+The compiled installer will be generated in `dist/installer/RapidDownloadManager_Setup_v1.0.4.exe`.
 
 ---
 
@@ -169,8 +169,8 @@ rapid_download_manager/
 │       └── src/tray.rs          # Win32 system tray & notification area
 ├── dist/
 │   └── installer/               # Production executables & releases
-│       ├── RapidDownloadManager_Setup_v1.0.0.exe
-│       └── RapidDownloadManager_v1.0.0_Portable.zip
+│       ├── RapidDownloadManager_Setup_v1.0.4.exe
+│       └── RapidDownloadManager_v1.0.4_Portable.zip
 ├── extension/                   # Manifest V3 browser integration
 │   ├── manifest.json
 │   ├── background.js            # Interception & RPC dispatcher

@@ -13,7 +13,7 @@ export default function ChangelogPage() {
 
   const releases = [
     {
-      version: "v1.0.0",
+      version: "v1.0.4",
       date: "September 26, 2026",
       tagline: "First Official General Availability (GA) Production Release",
       isLatest: true,

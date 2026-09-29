@@ -71,7 +71,7 @@ export default function DocsPage() {
             }}
           >
             <span>Current Version:</span>
-            <span className="font-bold text-indigo-400">v1.0.0 (x64)</span>
+            <span className="font-bold text-indigo-400">v1.0.4 (x64)</span>
           </div>
         </div>
 

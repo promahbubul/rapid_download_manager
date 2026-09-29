@@ -10,7 +10,7 @@ Use these exact fields when submitting to [Microsoft Partner Center](https://par
 * **Publisher Display Name:** promahbubul
 * **Seller ID:** 96219170
 * **Developer Name:** Mahbubul Alam
-* **Quad Version:** 1.0.0.0 (SemVer: 1.0.0)
+* **Quad Version:** 1.0.4.0 (SemVer: 1.0.4)
 * **Category:** Utilities & tools
 * **Subcategory:** File managers / Productivity
 

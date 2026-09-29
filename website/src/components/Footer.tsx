@@ -37,7 +37,7 @@ export default function Footer() {
             </p>
             <div className="flex items-center gap-2 pt-1 text-xs" style={{ color: "var(--text-muted)" }}>
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="font-mono text-[11px] text-emerald-400">v1.0.0 GA Official Release</span>
+              <span className="font-mono text-[11px] text-emerald-400">v1.0.4 GA Official Release</span>
             </div>
           </div>
 
