@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.4] - 2026-09-29
+
+### Highlights
+- **Microsoft Store Production Release (v1.0.4 / 1.0.4.0):**
+  - Bundled `libunwind.dll` to guarantee 100% out-of-the-box runtime compatibility across all Windows 10 & 11 PCs.
+  - Complete HarfBuzz-level native Bengali font shaping (`kalpurush-pua.ttf` + `bengali.rs`).
+  - Redesigned, non-colliding VS Code & Arc style status bar with dual bounded layouts and compact narrow mode.
+  - Production MSIX container and standalone Inno Setup packages.
+
+---
+
 ## [1.0.3] - 2026-09-29
 
 ### Added

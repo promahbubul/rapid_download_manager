@@ -3555,7 +3555,7 @@ dependencies = [
 
 [[package]]
 name = "rapid-cli"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3566,7 +3566,7 @@ dependencies = [
 
 [[package]]
 name = "rapid-core"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "bytes",
  "chrono",
@@ -3585,7 +3585,7 @@ dependencies = [
 
 [[package]]
 name = "rapid-gui"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "arboard",
