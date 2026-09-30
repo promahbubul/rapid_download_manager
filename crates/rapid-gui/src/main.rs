@@ -83,12 +83,26 @@ enum ModernIcon {
     WinMaximize,
     WinRestore,
     WinClose,
+    Github,
 }
 
 fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect, color: Color32) {
     let center = rect.center();
     let stroke = Stroke::new(1.5_f32, color);
     match icon {
+        ModernIcon::Github => {
+            painter.circle_stroke(center, 5.2, stroke);
+            // Left cat ear
+            painter.line_segment([egui::pos2(center.x - 3.8, center.y - 3.5), egui::pos2(center.x - 2.5, center.y - 6.2)], stroke);
+            painter.line_segment([egui::pos2(center.x - 2.5, center.y - 6.2), egui::pos2(center.x - 1.2, center.y - 5.0)], stroke);
+            // Right cat ear
+            painter.line_segment([egui::pos2(center.x + 1.2, center.y - 5.0), egui::pos2(center.x + 2.5, center.y - 6.2)], stroke);
+            painter.line_segment([egui::pos2(center.x + 2.5, center.y - 6.2), egui::pos2(center.x + 3.8, center.y - 3.5)], stroke);
+            // Branch/stem
+            painter.line_segment([egui::pos2(center.x, center.y - 1.0), egui::pos2(center.x, center.y + 4.2)], Stroke::new(1.3_f32, color));
+            painter.circle_filled(egui::pos2(center.x - 2.0, center.y + 1.5), 1.0, color);
+            painter.circle_filled(egui::pos2(center.x + 2.0, center.y + 1.5), 1.0, color);
+        }
         ModernIcon::Globe => {
             painter.circle_stroke(center, 5.0, stroke);
             painter.line_segment([egui::pos2(center.x - 5.0, center.y), egui::pos2(center.x + 5.0, center.y)], stroke);
@@ -5189,14 +5203,15 @@ fn render_parallel_connections_combobox(
                 .fixed_size(Vec2::new(540.0, 410.0))
                 .frame(
                     egui::Frame::none()
-                        .fill(GLASS_BG)
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(99, 102, 241)))
+                        // Transparent glassmorphic background & NO border stroke
+                        .fill(Color32::from_rgba_unmultiplied(12, 18, 34, 230))
+                        .stroke(Stroke::NONE)
                         .rounding(egui::Rounding::ZERO)
                         .shadow(egui::epaint::Shadow {
-                            offset: egui::vec2(0.0, 10.0),
-                            blur: 28.0_f32,
-                            spread: 0.0_f32,
-                            color: Color32::from_rgba_unmultiplied(0, 0, 0, 200),
+                            offset: egui::vec2(0.0, 12.0),
+                            blur: 32.0_f32,
+                            spread: 2.0_f32,
+                            color: Color32::from_rgba_unmultiplied(0, 0, 0, 230),
                         })
                         .inner_margin(Margin::ZERO),
                 )
@@ -5210,8 +5225,8 @@ fn render_parallel_connections_combobox(
                     let btn_w = 42.0_f32;
                     let btn_h = 30.0_f32;
                     let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(win_rect.max.x - btn_w, win_rect.min.y - 1.0),
-                        egui::pos2(win_rect.max.x + 1.0, win_rect.min.y + btn_h),
+                        egui::pos2(win_rect.max.x - btn_w, win_rect.min.y),
+                        egui::pos2(win_rect.max.x, win_rect.min.y + btn_h),
                     );
 
                     let close_resp = ui.interact(close_rect, ui.id().with("about_corner_00_close_btn"), egui::Sense::click());
@@ -5275,15 +5290,14 @@ fn render_parallel_connections_combobox(
                                     );
                                 });
 
-                                ui.add_space(10.0);
+                                ui.add_space(12.0);
 
-                                // 2. Full-Width Details Card (System Architecture & Capabilities)
+                                // 2. Full-Width Details Section (Border and Background REMOVED)
                                 let avail_w = ui.available_width();
                                 egui::Frame::none()
-                                    .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .inner_margin(Margin::symmetric(16.0, 12.0))
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::NONE)
+                                    .inner_margin(Margin::symmetric(4.0, 2.0))
                                     .show(ui, |ui| {
                                         ui.set_width(avail_w);
                                         ui.label(
@@ -5323,12 +5337,11 @@ fn render_parallel_connections_combobox(
 
                                 ui.add_space(8.0);
 
-                                // 3. Full-Width Update Status Card
+                                // 3. Full-Width Update Status Section (Border and Background REMOVED)
                                 egui::Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 20))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .inner_margin(Margin::symmetric(16.0, 8.0))
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::NONE)
+                                    .inner_margin(Margin::symmetric(4.0, 2.0))
                                     .show(ui, |ui| {
                                         ui.set_width(avail_w);
                                         ui.horizontal(|ui| {
@@ -5344,48 +5357,81 @@ fn render_parallel_connections_combobox(
                                         });
                                     });
 
-                                ui.add_space(10.0);
+                                ui.add_space(14.0);
 
-                                // 4. Full-Width 3 Equal Action Buttons
+                                // 4. Full-Width 3 Action Buttons in 3 Distinct Colors with Icons
                                 let btn_spacing = 8.0_f32;
                                 let btn_w = (ui.available_width() - 2.0 * btn_spacing) / 3.0_f32;
 
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = btn_spacing;
 
-                                    let web_btn = egui::Button::new(
-                                        RichText::new("Official Website").size(11.0).color(Color32::WHITE).strong(),
-                                    )
-                                    .fill(Color32::from_rgb(14, 116, 144))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .min_size(Vec2::new(btn_w, 32.0));
-
-                                    if ui.add(web_btn).clicked() {
+                                    // Button 1: Official Website (Ocean Blue / Cyan)
+                                    let (web_rect, web_resp) = ui.allocate_exact_size(Vec2::new(btn_w, 34.0), egui::Sense::click());
+                                    let web_bg = if web_resp.is_pointer_button_down_on() {
+                                        Color32::from_rgb(12, 74, 96)
+                                    } else if web_resp.hovered() {
+                                        Color32::from_rgb(8, 145, 178)
+                                    } else {
+                                        Color32::from_rgb(14, 116, 144)
+                                    };
+                                    ui.painter().rect_filled(web_rect, egui::Rounding::same(5.0), web_bg);
+                                    let web_icon_r = egui::Rect::from_center_size(egui::pos2(web_rect.left() + 20.0, web_rect.center().y), Vec2::splat(13.0));
+                                    draw_modern_icon(ui.painter(), ModernIcon::Globe, web_icon_r, Color32::WHITE);
+                                    ui.painter().text(
+                                        egui::pos2(web_rect.left() + 34.0, web_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        "Official Website",
+                                        egui::FontId::proportional(11.5),
+                                        Color32::WHITE,
+                                    );
+                                    if web_resp.clicked() {
                                         open_url_target = Some("https://promahbubul.github.io/rapid_download_manager/");
                                     }
 
-                                    let gh_btn = egui::Button::new(
-                                        RichText::new("GitHub Repository").size(11.0).color(Color32::from_rgb(226, 232, 240)).strong(),
-                                    )
-                                    .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .min_size(Vec2::new(btn_w, 32.0));
-
-                                    if ui.add(gh_btn).clicked() {
+                                    // Button 2: GitHub Repository (Royal Violet / Purple with GitHub Icon)
+                                    let (gh_rect, gh_resp) = ui.allocate_exact_size(Vec2::new(btn_w, 34.0), egui::Sense::click());
+                                    let gh_bg = if gh_resp.is_pointer_button_down_on() {
+                                        Color32::from_rgb(67, 56, 202)
+                                    } else if gh_resp.hovered() {
+                                        Color32::from_rgb(129, 140, 248)
+                                    } else {
+                                        Color32::from_rgb(99, 102, 241)
+                                    };
+                                    ui.painter().rect_filled(gh_rect, egui::Rounding::same(5.0), gh_bg);
+                                    let gh_icon_r = egui::Rect::from_center_size(egui::pos2(gh_rect.left() + 18.0, gh_rect.center().y), Vec2::splat(14.0));
+                                    draw_modern_icon(ui.painter(), ModernIcon::Github, gh_icon_r, Color32::WHITE);
+                                    ui.painter().text(
+                                        egui::pos2(gh_rect.left() + 32.0, gh_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        "GitHub Repository",
+                                        egui::FontId::proportional(11.5),
+                                        Color32::WHITE,
+                                    );
+                                    if gh_resp.clicked() {
                                         open_url_target = Some("https://github.com/promahbubul/rapid_download_manager");
                                     }
 
-                                    let priv_btn = egui::Button::new(
-                                        RichText::new("Privacy Policy").size(11.0).color(Color32::from_rgb(203, 213, 225)).strong(),
-                                    )
-                                    .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .min_size(Vec2::new(btn_w, 32.0));
-
-                                    if ui.add(priv_btn).clicked() {
+                                    // Button 3: Privacy Policy (Emerald Green)
+                                    let (priv_rect, priv_resp) = ui.allocate_exact_size(Vec2::new(btn_w, 34.0), egui::Sense::click());
+                                    let priv_bg = if priv_resp.is_pointer_button_down_on() {
+                                        Color32::from_rgb(4, 120, 87)
+                                    } else if priv_resp.hovered() {
+                                        Color32::from_rgb(16, 185, 129)
+                                    } else {
+                                        Color32::from_rgb(5, 150, 105)
+                                    };
+                                    ui.painter().rect_filled(priv_rect, egui::Rounding::same(5.0), priv_bg);
+                                    let priv_icon_r = egui::Rect::from_center_size(egui::pos2(priv_rect.left() + 20.0, priv_rect.center().y), Vec2::splat(13.0));
+                                    draw_modern_icon(ui.painter(), ModernIcon::ExternalFile, priv_icon_r, Color32::WHITE);
+                                    ui.painter().text(
+                                        egui::pos2(priv_rect.left() + 34.0, priv_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        "Privacy Policy",
+                                        egui::FontId::proportional(11.5),
+                                        Color32::WHITE,
+                                    );
+                                    if priv_resp.clicked() {
                                         open_url_target = Some("https://github.com/promahbubul/rapid_download_manager/blob/main/store_listing/PRIVACY_POLICY.md");
                                     }
                                 });
