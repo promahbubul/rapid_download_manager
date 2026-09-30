@@ -5204,12 +5204,14 @@ fn render_parallel_connections_combobox(
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.spacing_mut().window_margin = Margin::ZERO;
 
-                    let win_rect = ui.max_rect();
+                    let win_rect = ui.clip_rect();
 
                     // Absolute Top-Right Corner Close Button (Position 0,0 - 0 margin, 0 padding, 0 border-radius)
+                    let btn_w = 42.0_f32;
+                    let btn_h = 30.0_f32;
                     let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(win_rect.max.x - 38.0, win_rect.min.y - 1.0),
-                        egui::pos2(win_rect.max.x + 1.0, win_rect.min.y + 28.0),
+                        egui::pos2(win_rect.max.x - btn_w, win_rect.min.y - 1.0),
+                        egui::pos2(win_rect.max.x + 1.0, win_rect.min.y + btn_h),
                     );
 
                     let close_resp = ui.interact(close_rect, ui.id().with("about_corner_00_close_btn"), egui::Sense::click());
@@ -5234,7 +5236,7 @@ fn render_parallel_connections_combobox(
                     // Main Content Container (Full Width with Inner Margin)
                     egui::Frame::none()
                         .fill(Color32::TRANSPARENT)
-                        .inner_margin(Margin::symmetric(20.0, 16.0))
+                        .inner_margin(Margin::symmetric(24.0, 16.0))
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
                                 // 1. Centered Hero Header (Logo + Name + Version + Subtitle)
@@ -5270,7 +5272,7 @@ fn render_parallel_connections_combobox(
                                         RichText::new("High-Speed Multi-Stream Accelerated Download Accelerator")
                                             .size(11.0)
                                             .color(GLASS_MUTED),
-                                        );
+                                    );
                                 });
 
                                 ui.add_space(10.0);
