@@ -5201,22 +5201,23 @@ fn render_parallel_connections_combobox(
                     ui.spacing_mut().window_margin = Margin::ZERO;
 
                     let win_rect = ui.max_rect();
+                    // Extend 2px outward on top, left, and right to completely cover the outer stroke seamlessly
                     let bar_rect = egui::Rect::from_min_max(
-                        win_rect.min,
-                        egui::pos2(win_rect.max.x, win_rect.min.y + 32.0),
+                        egui::pos2(win_rect.min.x - 2.0, win_rect.min.y - 2.0),
+                        egui::pos2(win_rect.max.x + 2.0, win_rect.min.y + 32.0),
                     );
 
                     let painter = ui.painter();
 
-                    // Top bar background & bottom border (Flush 0,0)
+                    // Top bar background & bottom border
                     painter.rect_filled(bar_rect, egui::Rounding::ZERO, Color32::from_rgb(15, 23, 42));
                     painter.line_segment([bar_rect.left_bottom(), bar_rect.right_bottom()], Stroke::new(1.0_f32, GLASS_BORDER));
 
                     // Left Pulse Beacon Icon & Title
-                    let beacon_rect = egui::Rect::from_center_size(egui::pos2(bar_rect.left() + 18.0, bar_rect.center().y), Vec2::splat(12.0));
+                    let beacon_rect = egui::Rect::from_center_size(egui::pos2(bar_rect.left() + 20.0, bar_rect.center().y), Vec2::splat(12.0));
                     draw_modern_icon(painter, ModernIcon::PulseBeacon, beacon_rect, Color32::from_rgb(129, 140, 248));
 
-                    let title_pos = egui::pos2(bar_rect.left() + 32.0, bar_rect.center().y);
+                    let title_pos = egui::pos2(bar_rect.left() + 34.0, bar_rect.center().y);
                     painter.text(
                         title_pos,
                         egui::Align2::LEFT_CENTER,
@@ -5225,13 +5226,13 @@ fn render_parallel_connections_combobox(
                         Color32::WHITE,
                     );
 
-                    // Exact Absolute 0,0 Top-Right Red Close Button (Seamlessly flush with top & right window borders)
+                    // Exact 0,0 Corner-Covering Red Close Button (Completely flush with outer edge)
                     let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(bar_rect.right() - 42.0, bar_rect.top()),
+                        egui::pos2(bar_rect.right() - 44.0, bar_rect.top()),
                         bar_rect.right_bottom(),
                     );
 
-                    let close_resp = ui.interact(close_rect, ui.id().with("about_absolute_close_btn"), egui::Sense::click());
+                    let close_resp = ui.interact(close_rect, ui.id().with("about_corner_flush_close_btn"), egui::Sense::click());
                     let close_bg = if close_resp.is_pointer_button_down_on() {
                         Color32::from_rgb(185, 28, 28)
                     } else if close_resp.hovered() {
@@ -5243,7 +5244,7 @@ fn render_parallel_connections_combobox(
                     painter.rect_filled(close_rect, egui::Rounding::ZERO, close_bg);
 
                     // Crisp White Vector Cross
-                    let icon_box = egui::Rect::from_center_size(close_rect.center(), Vec2::splat(11.0));
+                    let icon_box = egui::Rect::from_center_size(close_rect.center(), Vec2::splat(12.0));
                     draw_modern_icon(painter, ModernIcon::Close, icon_box, Color32::WHITE);
 
                     if close_resp.clicked() {
@@ -5251,7 +5252,7 @@ fn render_parallel_connections_combobox(
                     }
 
                     // Advance cursor past the top bar
-                    ui.allocate_rect(bar_rect, egui::Sense::hover());
+                    ui.allocate_exact_size(Vec2::new(win_rect.width(), 32.0), egui::Sense::hover());
 
                     // Main Content Container (Full Width)
                     egui::Frame::none()
