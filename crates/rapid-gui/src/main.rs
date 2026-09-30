@@ -5182,7 +5182,7 @@ fn render_parallel_connections_combobox(
                 .resizable(false)
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(540.0, 440.0))
+                .fixed_size(Vec2::new(540.0, 435.0))
                 .frame(
                     egui::Frame::none()
                         .fill(GLASS_BG)
@@ -5198,39 +5198,58 @@ fn render_parallel_connections_combobox(
                 )
                 .show(ctx, |ui| {
                     ui.vertical(|ui| {
-                        // Top Header Bar (0,0 snapped close button in red background)
+                        // Top Header Bar (0,0 Absolute Top-Right Red Close Button with Crisp Vector Icon)
                         egui::Frame::none()
                             .fill(Color32::from_rgb(15, 23, 42))
                             .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                             .rounding(egui::Rounding::ZERO)
                             .inner_margin(Margin::ZERO)
                             .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.add_space(14.0);
-                                    let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
-                                    draw_modern_icon(ui.painter(), ModernIcon::PulseBeacon, icon_r, Color32::from_rgb(129, 140, 248));
-                                    ui.add_space(6.0);
-                                    ui.label(
-                                        RichText::new("About Rapid Download Manager")
-                                            .size(13.0)
-                                            .color(Color32::WHITE)
-                                            .strong(),
-                                    );
+                                let full_w = ui.available_width();
+                                let (bar_rect, _) = ui.allocate_exact_size(Vec2::new(full_w, 32.0), egui::Sense::hover());
+                                let painter = ui.painter();
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let close_btn = egui::Button::new(
-                                            RichText::new("✕").size(14.0).color(Color32::WHITE).strong(),
-                                        )
-                                        .fill(Color32::from_rgb(220, 38, 38))
-                                        .stroke(Stroke::NONE)
-                                        .rounding(egui::Rounding::ZERO)
-                                        .min_size(Vec2::new(38.0, 30.0));
+                                // Top bar background & bottom border
+                                painter.rect_filled(bar_rect, egui::Rounding::ZERO, Color32::from_rgb(15, 23, 42));
+                                painter.line_segment([bar_rect.left_bottom(), bar_rect.right_bottom()], Stroke::new(1.0_f32, GLASS_BORDER));
 
-                                        if ui.add(close_btn).clicked() {
-                                            close_modal = true;
-                                        }
-                                    });
-                                });
+                                // Left Pulse Beacon Icon & Title
+                                let beacon_rect = egui::Rect::from_center_size(egui::pos2(bar_rect.left() + 18.0, bar_rect.center().y), Vec2::splat(12.0));
+                                draw_modern_icon(painter, ModernIcon::PulseBeacon, beacon_rect, Color32::from_rgb(129, 140, 248));
+
+                                let title_pos = egui::pos2(bar_rect.left() + 32.0, bar_rect.center().y);
+                                painter.text(
+                                    title_pos,
+                                    egui::Align2::LEFT_CENTER,
+                                    "About Rapid Download Manager",
+                                    egui::FontId::proportional(12.5),
+                                    Color32::WHITE,
+                                );
+
+                                // Exact 0,0 Top-Right Red Close Button (Flush to top and right edges)
+                                let close_rect = egui::Rect::from_min_max(
+                                    egui::pos2(bar_rect.right() - 40.0, bar_rect.top()),
+                                    bar_rect.right_bottom(),
+                                );
+
+                                let close_resp = ui.interact(close_rect, ui.id().with("about_top_close_btn"), egui::Sense::click());
+                                let close_bg = if close_resp.is_pointer_button_down_on() {
+                                    Color32::from_rgb(185, 28, 28)
+                                } else if close_resp.hovered() {
+                                    Color32::from_rgb(239, 68, 68)
+                                } else {
+                                    Color32::from_rgb(220, 38, 38)
+                                };
+
+                                painter.rect_filled(close_rect, egui::Rounding::ZERO, close_bg);
+
+                                // Crisp White Vector Cross (ModernIcon::Close)
+                                let icon_box = egui::Rect::from_center_size(close_rect.center(), Vec2::splat(11.0));
+                                draw_modern_icon(painter, ModernIcon::Close, icon_box, Color32::WHITE);
+
+                                if close_resp.clicked() {
+                                    close_modal = true;
+                                }
                             });
 
                         // Main Content Container (Full Width)
@@ -5287,7 +5306,7 @@ fn render_parallel_connections_combobox(
                                         .show(ui, |ui| {
                                             ui.set_width(avail_w);
                                             ui.label(
-                                                RichText::new("🚀 System Architecture & Engine Capabilities")
+                                                RichText::new("System Architecture & Engine Capabilities")
                                                     .size(12.0)
                                                     .color(Color32::WHITE)
                                                     .strong(),
@@ -5346,7 +5365,7 @@ fn render_parallel_connections_combobox(
 
                                     ui.add_space(14.0);
 
-                                    // 4. Full-Width 3 Equal Action Buttons (No Close Button at bottom)
+                                    // 4. Full-Width 3 Equal Action Buttons (Clean text, no broken glyphs)
                                     let btn_spacing = 8.0_f32;
                                     let btn_w = (ui.available_width() - 2.0 * btn_spacing) / 3.0_f32;
 
@@ -5354,7 +5373,7 @@ fn render_parallel_connections_combobox(
                                         ui.spacing_mut().item_spacing.x = btn_spacing;
 
                                         let web_btn = egui::Button::new(
-                                            RichText::new("🌐 Official Website").size(11.0).color(Color32::WHITE).strong(),
+                                            RichText::new("Official Website").size(11.0).color(Color32::WHITE).strong(),
                                         )
                                         .fill(Color32::from_rgb(14, 116, 144))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
@@ -5366,7 +5385,7 @@ fn render_parallel_connections_combobox(
                                         }
 
                                         let gh_btn = egui::Button::new(
-                                            RichText::new("⭐ GitHub Repo").size(11.0).color(Color32::from_rgb(226, 232, 240)).strong(),
+                                            RichText::new("GitHub Repository").size(11.0).color(Color32::from_rgb(226, 232, 240)).strong(),
                                         )
                                         .fill(GLASS_CARD)
                                         .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
@@ -5378,7 +5397,7 @@ fn render_parallel_connections_combobox(
                                         }
 
                                         let priv_btn = egui::Button::new(
-                                            RichText::new("🛡️ Privacy Policy").size(11.0).color(Color32::from_rgb(203, 213, 225)).strong(),
+                                            RichText::new("Privacy Policy").size(11.0).color(Color32::from_rgb(203, 213, 225)).strong(),
                                         )
                                         .fill(GLASS_CARD)
                                         .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
