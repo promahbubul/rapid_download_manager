@@ -5174,156 +5174,223 @@ fn render_parallel_connections_combobox(
 
         // Cyber-Obsidian Modern About & Updates Modal
         if self.show_about_modal {
-            let screen_rect = ctx.screen_rect();
-            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("about_modal_backdrop")));
-            painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 220));
-
             let mut close_modal = false;
             let mut open_url_target: Option<&str> = None;
 
-            egui::Area::new(egui::Id::new("about_modal_window"))
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
+            egui::Window::new("about_rapid_modal")
+                .title_bar(false)
+                .resizable(false)
+                .collapsible(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .fixed_size(Vec2::new(560.0, 420.0))
+                .frame(
                     egui::Frame::none()
-                        .fill(GLASS_SURFACE)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                        .fill(GLASS_BG)
+                        .stroke(Stroke::new(1.2_f32, Color32::from_rgb(99, 102, 241)))
                         .rounding(egui::Rounding::same(12.0))
-                        .inner_margin(Margin::symmetric(28.0, 24.0))
-                        .show(ui, |ui| {
-                            ui.set_width(520.0);
+                        .shadow(egui::epaint::Shadow {
+                            offset: egui::vec2(0.0, 8.0),
+                            blur: 24.0_f32,
+                            spread: 0.0_f32,
+                            color: Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+                        })
+                        .inner_margin(Margin::same(22.0)),
+                )
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        // Modal Header Bar
+                        ui.horizontal(|ui| {
+                            let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                            draw_modern_icon(ui.painter(), ModernIcon::PulseBeacon, icon_r, Color32::from_rgb(129, 140, 248));
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new("About Rapid Download Manager")
+                                    .size(17.0)
+                                    .color(Color32::WHITE)
+                                    .strong(),
+                            );
 
-                            // Header row with Title and Close Button
-                            ui.horizontal(|ui| {
-                                ui.heading(
-                                    RichText::new("About Rapid Download Manager")
-                                        .size(17.0)
-                                        .color(Color32::WHITE)
-                                        .strong(),
-                                );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let close_x = egui::Button::new(
-                                        RichText::new("X").size(14.0).color(Color32::from_rgb(148, 163, 184)),
-                                    )
-                                    .fill(Color32::TRANSPARENT)
-                                    .stroke(Stroke::NONE)
-                                    .min_size(Vec2::splat(24.0));
-                                    if ui.add(close_x).clicked() {
-                                        close_modal = true;
-                                    }
-                                });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let close_x = egui::Button::new(
+                                    RichText::new("✕").size(15.0).color(GLASS_MUTED),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::NONE)
+                                .min_size(Vec2::splat(26.0));
+                                if ui.add(close_x).clicked() {
+                                    close_modal = true;
+                                }
                             });
+                        });
 
-                            ui.add_space(14.0);
+                        ui.add_space(14.0);
 
-                            // App Identity Card
-                            egui::Frame::none()
-                                .fill(GLASS_CARD)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(8.0))
-                                .inner_margin(Margin::symmetric(18.0, 16.0))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.image((self.titlebar_logo.id(), Vec2::new(50.0, 50.0)));
-                                        ui.add_space(14.0);
-                                        ui.vertical(|ui| {
+                        // App Identity Card (Crisp Proportional Logo + Dynamic Version)
+                        egui::Frame::none()
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                            .rounding(egui::Rounding::same(10.0))
+                            .inner_margin(Margin::symmetric(18.0, 14.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    // Proportional 155x31 wide crisp logo
+                                    ui.image((self.titlebar_logo.id(), Vec2::new(155.0, 31.0)));
+                                    ui.add_space(16.0);
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
                                             ui.label(
                                                 RichText::new("Rapid Download Manager")
-                                                    .size(16.0)
+                                                    .size(15.5)
                                                     .color(Color32::WHITE)
                                                     .strong(),
                                             );
-                                            ui.label(
-                                                RichText::new("Version 1.0.0 (Production Release)")
-                                                    .size(12.5)
-                                                    .color(Color32::from_rgb(56, 189, 248)),
-                                            );
-                                            ui.label(
-                                                RichText::new("Next-Gen Multi-Socket Accelerated Download Engine")
-                                                    .size(11.0)
-                                                    .color(GLASS_MUTED),
-                                            );
+                                            ui.add_space(6.0);
+                                            // Dynamic Version Chip
+                                            egui::Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(99, 102, 241, 40))
+                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(129, 140, 248)))
+                                                .rounding(egui::Rounding::same(4.0))
+                                                .inner_margin(Margin::symmetric(6.0, 2.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                                            .size(11.0)
+                                                            .color(Color32::from_rgb(165, 180, 252))
+                                                            .strong(),
+                                                    );
+                                                });
                                         });
+                                        ui.add_space(2.0);
+                                        ui.label(
+                                            RichText::new("High-Speed Multi-Stream Accelerated Download Accelerator")
+                                                .size(11.0)
+                                                .color(GLASS_MUTED),
+                                        );
                                     });
-                                });
-
-                            ui.add_space(12.0);
-
-                            // Engine Architecture Highlights
-                            egui::Frame::none()
-                                .fill(GLASS_CARD)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(8.0))
-                                .inner_margin(Margin::symmetric(18.0, 14.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("System Architecture & Performance").size(12.0).color(Color32::WHITE).strong());
-                                    ui.add_space(6.0);
-                                    ui.label(RichText::new("• 16-Socket Concurrent Chunk Partitioning with Dynamic Chunk Merging").size(11.0).color(GLASS_MUTED));
-                                    ui.label(RichText::new("• Asynchronous Non-Blocking Tokio Runtime Engine").size(11.0).color(GLASS_MUTED));
-                                    ui.label(RichText::new("• High-Efficiency WGPU Direct3D Hardware Acceleration").size(11.0).color(GLASS_MUTED));
-                                    ui.label(RichText::new("• Zero-Telemetry, Privacy-Preserving Architecture").size(11.0).color(Color32::from_rgb(52, 211, 153)));
-                                });
-
-                            ui.add_space(12.0);
-
-                            // Update Status Card
-                            egui::Frame::none()
-                                .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
-                                .rounding(egui::Rounding::same(8.0))
-                                .inner_margin(Margin::symmetric(16.0, 10.0))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
-                                        draw_modern_icon(ui.painter(), ModernIcon::Check, icon_r, Color32::from_rgb(16, 185, 129));
-                                        ui.add_space(6.0);
-                                        ui.label(RichText::new("Application is up to date: Version 1.0.0").size(11.5).color(Color32::from_rgb(167, 243, 208)).strong());
-                                    });
-                                });
-
-                            ui.add_space(16.0);
-
-                            // Footer Buttons
-                            ui.horizontal(|ui| {
-                                let web_btn = egui::Button::new(
-                                    RichText::new("Official Website").size(11.5).color(Color32::WHITE),
-                                )
-                                .fill(Color32::from_rgb(14, 116, 144))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
-                                .rounding(egui::Rounding::same(6.0))
-                                .min_size(Vec2::new(140.0, 32.0));
-
-                                if ui.add(web_btn).clicked() {
-                                    open_url_target = Some("https://rdm.vercel.app");
-                                }
-
-                                let priv_btn = egui::Button::new(
-                                    RichText::new("Privacy Policy").size(11.5).color(Color32::from_rgb(203, 213, 225)),
-                                )
-                                .fill(GLASS_CARD)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(6.0))
-                                .min_size(Vec2::new(130.0, 32.0));
-
-                                if ui.add(priv_btn).clicked() {
-                                    open_url_target = Some("https://rdm.vercel.app/privacy");
-                                }
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let close_btn = egui::Button::new(
-                                        RichText::new("Close").size(11.5).color(Color32::WHITE),
-                                    )
-                                    .fill(Color32::from_rgb(30, 41, 59))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .min_size(Vec2::new(80.0, 32.0));
-
-                                    if ui.add(close_btn).clicked() {
-                                        close_modal = true;
-                                    }
                                 });
                             });
+
+                        ui.add_space(12.0);
+
+                        // Engine Architecture & Capabilities Card
+                        egui::Frame::none()
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                            .rounding(egui::Rounding::same(10.0))
+                            .inner_margin(Margin::symmetric(18.0, 14.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("🚀 System Architecture & Engine Capabilities")
+                                        .size(12.5)
+                                        .color(Color32::WHITE)
+                                        .strong(),
+                                );
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new("• Up to 32 Parallel Sockets with Dynamic TCP Stream Balancing")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• Asynchronous Non-Blocking Tokio Runtime + Rustls Security Stack")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• Native HarfBuzz-grade Bengali & Multilingual Font Shaping")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• High-Efficiency WGPU Hardware-Accelerated Rendering")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• 100% Memory-Safe, Zero-Telemetry & Privacy-First Architecture")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(52, 211, 153))
+                                        .strong(),
+                                );
+                            });
+
+                        ui.add_space(12.0);
+
+                        // Dynamic Update Status Card
+                        egui::Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 20))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
+                            .rounding(egui::Rounding::same(8.0))
+                            .inner_margin(Margin::symmetric(16.0, 9.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(13.0), egui::Sense::hover());
+                                    draw_modern_icon(ui.painter(), ModernIcon::Check, icon_r, Color32::from_rgb(16, 185, 129));
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        RichText::new(format!("Application is up to date: Version {} (Production Release)", env!("CARGO_PKG_VERSION")))
+                                            .size(11.5)
+                                            .color(Color32::from_rgb(167, 243, 208))
+                                            .strong(),
+                                    );
+                                });
+                            });
+
+                        ui.add_space(16.0);
+
+                        // Footer Action Buttons
+                        ui.horizontal(|ui| {
+                            let web_btn = egui::Button::new(
+                                RichText::new("🌐 Official Website").size(11.5).color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(14, 116, 144))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
+                            .rounding(egui::Rounding::same(6.0))
+                            .min_size(Vec2::new(135.0, 32.0));
+
+                            if ui.add(web_btn).clicked() {
+                                open_url_target = Some("https://promahbubul.github.io/rapid_download_manager/");
+                            }
+
+                            let gh_btn = egui::Button::new(
+                                RichText::new("⭐ GitHub Repo").size(11.5).color(Color32::from_rgb(226, 232, 240)),
+                            )
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                            .rounding(egui::Rounding::same(6.0))
+                            .min_size(Vec2::new(115.0, 32.0));
+
+                            if ui.add(gh_btn).clicked() {
+                                open_url_target = Some("https://github.com/promahbubul/rapid_download_manager");
+                            }
+
+                            let priv_btn = egui::Button::new(
+                                RichText::new("🛡️ Privacy Policy").size(11.5).color(Color32::from_rgb(203, 213, 225)),
+                            )
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                            .rounding(egui::Rounding::same(6.0))
+                            .min_size(Vec2::new(120.0, 32.0));
+
+                            if ui.add(priv_btn).clicked() {
+                                open_url_target = Some("https://github.com/promahbubul/rapid_download_manager/blob/main/store_listing/PRIVACY_POLICY.md");
+                            }
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let close_btn = egui::Button::new(
+                                    RichText::new("Close").size(11.5).color(Color32::WHITE),
+                                )
+                                .fill(Color32::from_rgb(30, 41, 59))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(Vec2::new(75.0, 32.0));
+
+                                if ui.add(close_btn).clicked() {
+                                    close_modal = true;
+                                }
+                            });
                         });
+                    });
                 });
 
             if let Some(target) = open_url_target {
