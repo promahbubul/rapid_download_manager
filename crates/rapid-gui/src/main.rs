@@ -963,6 +963,7 @@ impl RapidApp {
     fn new(cc: &eframe::CreationContext<'_>, rt: Arc<Runtime>) -> Self {
         // Master Color Palette: Glassmorphism Dark Theme (Futuristic • Elegant • Premium)
         let mut visuals = egui::Visuals::dark();
+        visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
         visuals.window_rounding = egui::Rounding::same(8.0);
         visuals.panel_fill = GLASS_SURFACE;                          // Translucent Glass Surface (#0B1224)
         visuals.faint_bg_color = Color32::from_rgb(14, 22, 44);      // Subtle alternate glass row
@@ -2163,6 +2164,7 @@ fn rdm_setup_screenshots(app: &mut RapidApp, _ctx: &egui::Context) {
 
 impl eframe::App for RapidApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.style_mut(|s| s.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand));
         // Automated Screenshot Capture Engine
         if std::env::var("RDM_CAPTURE_SCREENSHOTS").is_ok() {
             self.splash_duration = std::time::Duration::ZERO;
@@ -2609,6 +2611,7 @@ impl eframe::App for RapidApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Primary Action Button: "Add Download"
                         let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(130.0, 32.0), egui::Sense::click());
+                        let btn_resp = btn_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                         let is_btn_h = btn_resp.hovered();
                         let btn_bg = if is_btn_h { GLASS_PRIMARY_HOVER } else { GLASS_PRIMARY };
                         ui.painter().rect_filled(btn_rect, 7.0, btn_bg);
@@ -3150,6 +3153,7 @@ impl eframe::App for RapidApp {
 
                             let btn_size = Vec2::new(54.0, 54.0);
                             let (rect, resp) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+                            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                             let hovered = resp.hovered();
 
                             if hovered {
@@ -4901,7 +4905,7 @@ fn render_parallel_connections_combobox(
                         egui::pos2(top_bar_rect.max.x, top_bar_rect.max.y),
                     );
 
-                    let close_resp = ui.allocate_rect(close_rect, egui::Sense::click());
+                    let close_resp = ui.allocate_rect(close_rect, egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
                     let close_hov = close_resp.hovered();
 
                     ui.painter().rect_filled(
@@ -5229,7 +5233,7 @@ fn render_parallel_connections_combobox(
                         egui::pos2(win_rect.max.x, win_rect.min.y + btn_h),
                     );
 
-                    let close_resp = ui.interact(close_rect, ui.id().with("about_corner_00_close_btn"), egui::Sense::click());
+                    let close_resp = ui.interact(close_rect, ui.id().with("about_corner_00_close_btn"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
                     let close_bg = if close_resp.is_pointer_button_down_on() {
                         Color32::from_rgb(185, 28, 28)
                     } else if close_resp.hovered() {
@@ -5368,6 +5372,7 @@ fn render_parallel_connections_combobox(
 
                                     // Button 1: Official Website (Ocean Blue / Cyan)
                                     let (web_rect, web_resp) = ui.allocate_exact_size(Vec2::new(btn_w, 34.0), egui::Sense::click());
+                                    let web_resp = web_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                                     let web_bg = if web_resp.is_pointer_button_down_on() {
                                         Color32::from_rgb(12, 74, 96)
                                     } else if web_resp.hovered() {
@@ -5391,6 +5396,7 @@ fn render_parallel_connections_combobox(
 
                                     // Button 2: GitHub Repository (Royal Violet / Purple with GitHub Icon)
                                     let (gh_rect, gh_resp) = ui.allocate_exact_size(Vec2::new(btn_w, 34.0), egui::Sense::click());
+                                    let gh_resp = gh_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                                     let gh_bg = if gh_resp.is_pointer_button_down_on() {
                                         Color32::from_rgb(67, 56, 202)
                                     } else if gh_resp.hovered() {
@@ -5414,6 +5420,7 @@ fn render_parallel_connections_combobox(
 
                                     // Button 3: Privacy Policy (Emerald Green)
                                     let (priv_rect, priv_resp) = ui.allocate_exact_size(Vec2::new(btn_w, 34.0), egui::Sense::click());
+                                    let priv_resp = priv_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                                     let priv_bg = if priv_resp.is_pointer_button_down_on() {
                                         Color32::from_rgb(4, 120, 87)
                                     } else if priv_resp.hovered() {
@@ -6261,6 +6268,7 @@ fn render_status_action_btn(
     };
     let btn_w = if is_compact { 22.0 } else { (text_w + 24.0).max(46.0) };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(btn_w, 20.0), egui::Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     let is_h = resp.hovered();
 
     let bg = if is_h {
