@@ -5177,12 +5177,16 @@ fn render_parallel_connections_combobox(
             let mut close_modal = false;
             let mut open_url_target: Option<&str> = None;
 
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_modal = true;
+            }
+
             egui::Window::new("about_rapid_modal")
                 .title_bar(false)
                 .resizable(false)
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(540.0, 435.0))
+                .fixed_size(Vec2::new(540.0, 400.0))
                 .frame(
                     egui::Frame::none()
                         .fill(GLASS_BG)
@@ -5194,226 +5198,177 @@ fn render_parallel_connections_combobox(
                             spread: 0.0_f32,
                             color: Color32::from_rgba_unmultiplied(0, 0, 0, 200),
                         })
-                        .inner_margin(Margin::ZERO),
+                        .inner_margin(Margin::same(20.0)),
                 )
                 .show(ctx, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::ZERO;
-                    ui.spacing_mut().window_margin = Margin::ZERO;
-
-                    let win_rect = ui.max_rect();
-                    // Extend 2px outward on top, left, and right to completely cover the outer stroke seamlessly
-                    let bar_rect = egui::Rect::from_min_max(
-                        egui::pos2(win_rect.min.x - 2.0, win_rect.min.y - 2.0),
-                        egui::pos2(win_rect.max.x + 2.0, win_rect.min.y + 32.0),
-                    );
-
-                    let painter = ui.painter();
-
-                    // Top bar background & bottom border
-                    painter.rect_filled(bar_rect, egui::Rounding::ZERO, Color32::from_rgb(15, 23, 42));
-                    painter.line_segment([bar_rect.left_bottom(), bar_rect.right_bottom()], Stroke::new(1.0_f32, GLASS_BORDER));
-
-                    // Left Pulse Beacon Icon & Title
-                    let beacon_rect = egui::Rect::from_center_size(egui::pos2(bar_rect.left() + 20.0, bar_rect.center().y), Vec2::splat(12.0));
-                    draw_modern_icon(painter, ModernIcon::PulseBeacon, beacon_rect, Color32::from_rgb(129, 140, 248));
-
-                    let title_pos = egui::pos2(bar_rect.left() + 34.0, bar_rect.center().y);
-                    painter.text(
-                        title_pos,
-                        egui::Align2::LEFT_CENTER,
-                        "About Rapid Download Manager",
-                        egui::FontId::proportional(12.5),
-                        Color32::WHITE,
-                    );
-
-                    // Exact 0,0 Corner-Covering Red Close Button (Completely flush with outer edge)
-                    let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(bar_rect.right() - 44.0, bar_rect.top()),
-                        bar_rect.right_bottom(),
-                    );
-
-                    let close_resp = ui.interact(close_rect, ui.id().with("about_corner_flush_close_btn"), egui::Sense::click());
-                    let close_bg = if close_resp.is_pointer_button_down_on() {
-                        Color32::from_rgb(185, 28, 28)
-                    } else if close_resp.hovered() {
-                        Color32::from_rgb(239, 68, 68)
-                    } else {
-                        Color32::from_rgb(220, 38, 38)
-                    };
-
-                    painter.rect_filled(close_rect, egui::Rounding::ZERO, close_bg);
-
-                    // Crisp White Vector Cross
-                    let icon_box = egui::Rect::from_center_size(close_rect.center(), Vec2::splat(12.0));
-                    draw_modern_icon(painter, ModernIcon::Close, icon_box, Color32::WHITE);
-
-                    if close_resp.clicked() {
-                        close_modal = true;
-                    }
-
-                    // Advance cursor past the top bar
-                    ui.allocate_exact_size(Vec2::new(win_rect.width(), 32.0), egui::Sense::hover());
-
-                    // Main Content Container (Full Width)
-                    egui::Frame::none()
-                        .fill(Color32::TRANSPARENT)
-                        .inner_margin(Margin::symmetric(18.0, 14.0))
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 8.0;
-
-                            ui.vertical(|ui| {
-                                // 1. Centered Hero Header (Logo + Name + Version + Subtitle)
-                                ui.vertical_centered(|ui| {
-                                    ui.image((self.titlebar_logo.id(), Vec2::new(180.0, 36.0)));
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        let full_w = ui.available_width();
-                                        ui.add_space(full_w * 0.5 - 120.0);
-                                        ui.label(
-                                            RichText::new("Rapid Download Manager")
-                                                .size(16.0)
-                                                .color(Color32::WHITE)
-                                                .strong(),
-                                        );
-                                        ui.add_space(6.0);
-                                        egui::Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(99, 102, 241, 40))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(129, 140, 248)))
-                                            .rounding(egui::Rounding::same(3.0))
-                                            .inner_margin(Margin::symmetric(6.0, 1.5))
-                                            .show(ui, |ui| {
-                                                ui.label(
-                                                    RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                                                        .size(10.5)
-                                                        .color(Color32::from_rgb(165, 180, 252))
-                                                        .strong(),
-                                                );
-                                            });
-                                    });
-                                    ui.add_space(1.0);
-                                    ui.label(
-                                        RichText::new("High-Speed Multi-Stream Accelerated Download Accelerator")
-                                            .size(11.0)
-                                            .color(GLASS_MUTED),
-                                    );
-                                });
-
-                                ui.add_space(8.0);
-
-                                // 2. Full-Width Details Card (System Architecture & Capabilities)
-                                let avail_w = ui.available_width();
-                                egui::Frame::none()
-                                    .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .inner_margin(Margin::symmetric(16.0, 12.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(avail_w);
-                                        ui.label(
-                                            RichText::new("System Architecture & Engine Capabilities")
-                                                .size(12.0)
-                                                .color(Color32::WHITE)
-                                                .strong(),
-                                        );
-                                        ui.add_space(6.0);
-                                        ui.label(
-                                            RichText::new("• Up to 32 Parallel Sockets with Dynamic TCP Stream Balancing")
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(226, 232, 240)),
-                                        );
-                                        ui.label(
-                                            RichText::new("• Asynchronous Non-Blocking Tokio Runtime + Rustls Security Stack")
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(226, 232, 240)),
-                                        );
-                                        ui.label(
-                                            RichText::new("• Native HarfBuzz-grade Bengali & Multilingual Font Shaping")
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(226, 232, 240)),
-                                        );
-                                        ui.label(
-                                            RichText::new("• High-Efficiency WGPU Hardware-Accelerated Rendering")
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(226, 232, 240)),
-                                        );
-                                        ui.label(
-                                            RichText::new("• 100% Memory-Safe, Zero-Telemetry & Privacy-First Architecture")
-                                                .size(10.5)
-                                                .color(Color32::from_rgb(52, 211, 153))
-                                                .strong(),
-                                        );
-                                    });
-
+                    ui.vertical(|ui| {
+                        // 1. Top Hero Section with Top-Right subtle Close X
+                        ui.horizontal(|ui| {
+                            let full_w = ui.available_width();
+                            ui.vertical_centered(|ui| {
+                                ui.image((self.titlebar_logo.id(), Vec2::new(180.0, 36.0)));
                                 ui.add_space(4.0);
-
-                                // 3. Full-Width Update Status Card
-                                egui::Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 20))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .inner_margin(Margin::symmetric(16.0, 8.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(avail_w);
-                                        ui.horizontal(|ui| {
-                                            let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
-                                            draw_modern_icon(ui.painter(), ModernIcon::Check, icon_r, Color32::from_rgb(16, 185, 129));
-                                            ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    let inner_w = ui.available_width();
+                                    ui.add_space(inner_w * 0.5 - 120.0);
+                                    ui.label(
+                                        RichText::new("Rapid Download Manager")
+                                            .size(16.0)
+                                            .color(Color32::WHITE)
+                                            .strong(),
+                                    );
+                                    ui.add_space(6.0);
+                                    egui::Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(99, 102, 241, 40))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(129, 140, 248)))
+                                        .rounding(egui::Rounding::same(3.0))
+                                        .inner_margin(Margin::symmetric(6.0, 1.5))
+                                        .show(ui, |ui| {
                                             ui.label(
-                                                RichText::new(format!("Application is up to date: Version {} (Production Release)", env!("CARGO_PKG_VERSION")))
-                                                    .size(11.0)
-                                                    .color(Color32::from_rgb(167, 243, 208))
+                                                RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                                    .size(10.5)
+                                                    .color(Color32::from_rgb(165, 180, 252))
                                                     .strong(),
                                             );
                                         });
-                                    });
-
-                                ui.add_space(8.0);
-
-                                // 4. Full-Width 3 Equal Action Buttons (Clean text, no broken glyphs)
-                                let btn_spacing = 8.0_f32;
-                                let btn_w = (ui.available_width() - 2.0 * btn_spacing) / 3.0_f32;
-
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = btn_spacing;
-
-                                    let web_btn = egui::Button::new(
-                                        RichText::new("Official Website").size(11.0).color(Color32::WHITE).strong(),
-                                    )
-                                    .fill(Color32::from_rgb(14, 116, 144))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .min_size(Vec2::new(btn_w, 32.0));
-
-                                    if ui.add(web_btn).clicked() {
-                                        open_url_target = Some("https://promahbubul.github.io/rapid_download_manager/");
-                                    }
-
-                                    let gh_btn = egui::Button::new(
-                                        RichText::new("GitHub Repository").size(11.0).color(Color32::from_rgb(226, 232, 240)).strong(),
-                                    )
-                                    .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .min_size(Vec2::new(btn_w, 32.0));
-
-                                    if ui.add(gh_btn).clicked() {
-                                        open_url_target = Some("https://github.com/promahbubul/rapid_download_manager");
-                                    }
-
-                                    let priv_btn = egui::Button::new(
-                                        RichText::new("Privacy Policy").size(11.0).color(Color32::from_rgb(203, 213, 225)).strong(),
-                                    )
-                                    .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .min_size(Vec2::new(btn_w, 32.0));
-
-                                    if ui.add(priv_btn).clicked() {
-                                        open_url_target = Some("https://github.com/promahbubul/rapid_download_manager/blob/main/store_listing/PRIVACY_POLICY.md");
-                                    }
                                 });
+                                ui.add_space(1.0);
+                                ui.label(
+                                    RichText::new("High-Speed Multi-Stream Accelerated Download Accelerator")
+                                        .size(11.0)
+                                        .color(GLASS_MUTED),
+                                );
+                            });
+
+                            // Floating subtle close X in top right of content
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                                let (close_r, close_resp) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::click());
+                                let icon_color = if close_resp.hovered() { Color32::WHITE } else { GLASS_MUTED };
+                                if close_resp.hovered() {
+                                    ui.painter().rect_filled(close_r, egui::Rounding::same(3.0), Color32::from_rgba_unmultiplied(239, 68, 68, 180));
+                                }
+                                draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_r.center(), Vec2::splat(10.0)), icon_color);
+                                if close_resp.clicked() {
+                                    close_modal = true;
+                                }
                             });
                         });
+
+                        ui.add_space(12.0);
+
+                        // 2. Full-Width Details Card (System Architecture & Capabilities)
+                        let avail_w = ui.available_width();
+                        egui::Frame::none()
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(Margin::symmetric(16.0, 12.0))
+                            .show(ui, |ui| {
+                                ui.set_width(avail_w);
+                                ui.label(
+                                    RichText::new("System Architecture & Engine Capabilities")
+                                        .size(12.0)
+                                        .color(Color32::WHITE)
+                                        .strong(),
+                                );
+                                ui.add_space(6.0);
+                                ui.label(
+                                    RichText::new("• Up to 32 Parallel Sockets with Dynamic TCP Stream Balancing")
+                                        .size(10.5)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• Asynchronous Non-Blocking Tokio Runtime + Rustls Security Stack")
+                                        .size(10.5)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• Native HarfBuzz-grade Bengali & Multilingual Font Shaping")
+                                        .size(10.5)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• High-Efficiency WGPU Hardware-Accelerated Rendering")
+                                        .size(10.5)
+                                        .color(Color32::from_rgb(226, 232, 240)),
+                                );
+                                ui.label(
+                                    RichText::new("• 100% Memory-Safe, Zero-Telemetry & Privacy-First Architecture")
+                                        .size(10.5)
+                                        .color(Color32::from_rgb(52, 211, 153))
+                                        .strong(),
+                                );
+                            });
+
+                        ui.add_space(8.0);
+
+                        // 3. Full-Width Update Status Card
+                        egui::Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 20))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(Margin::symmetric(16.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.set_width(avail_w);
+                                ui.horizontal(|ui| {
+                                    let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
+                                    draw_modern_icon(ui.painter(), ModernIcon::Check, icon_r, Color32::from_rgb(16, 185, 129));
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        RichText::new(format!("Application is up to date: Version {} (Production Release)", env!("CARGO_PKG_VERSION")))
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(167, 243, 208))
+                                            .strong(),
+                                    );
+                                });
+                            });
+
+                        ui.add_space(12.0);
+
+                        // 4. Full-Width 3 Equal Action Buttons
+                        let btn_spacing = 8.0_f32;
+                        let btn_w = (ui.available_width() - 2.0 * btn_spacing) / 3.0_f32;
+
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = btn_spacing;
+
+                            let web_btn = egui::Button::new(
+                                RichText::new("Official Website").size(11.0).color(Color32::WHITE).strong(),
+                            )
+                            .fill(Color32::from_rgb(14, 116, 144))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
+                            .rounding(egui::Rounding::same(4.0))
+                            .min_size(Vec2::new(btn_w, 32.0));
+
+                            if ui.add(web_btn).clicked() {
+                                open_url_target = Some("https://promahbubul.github.io/rapid_download_manager/");
+                            }
+
+                            let gh_btn = egui::Button::new(
+                                RichText::new("GitHub Repository").size(11.0).color(Color32::from_rgb(226, 232, 240)).strong(),
+                            )
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                            .rounding(egui::Rounding::same(4.0))
+                            .min_size(Vec2::new(btn_w, 32.0));
+
+                            if ui.add(gh_btn).clicked() {
+                                open_url_target = Some("https://github.com/promahbubul/rapid_download_manager");
+                            }
+
+                            let priv_btn = egui::Button::new(
+                                RichText::new("Privacy Policy").size(11.0).color(Color32::from_rgb(203, 213, 225)).strong(),
+                            )
+                            .fill(GLASS_CARD)
+                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                            .rounding(egui::Rounding::same(4.0))
+                            .min_size(Vec2::new(btn_w, 32.0));
+
+                            if ui.add(priv_btn).clicked() {
+                                open_url_target = Some("https://github.com/promahbubul/rapid_download_manager/blob/main/store_listing/PRIVACY_POLICY.md");
+                            }
+                        });
+                    });
                 });
 
             if let Some(target) = open_url_target {
