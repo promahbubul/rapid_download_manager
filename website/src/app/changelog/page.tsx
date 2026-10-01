@@ -13,10 +13,28 @@ export default function ChangelogPage() {
 
   const releases = [
     {
-      version: "v1.0.4",
-      date: "September 26, 2026",
-      tagline: "First Official General Availability (GA) Production Release",
+      version: "v1.0.5",
+      date: "October 1, 2026",
+      tagline: "Native MEGA.nz Cloud Folder Acceleration & Lock-Safe Redownload Engine",
       isLatest: true,
+      features: [
+        "Native MEGA.nz folder crawling: recursively discovers all files and nested folder hierarchies.",
+        "Automatic directory structure preservation: creates matching subfolders on local disk.",
+        "On-the-fly AES-128-CTR hardware-accelerated decryption streaming directly from MEGA CDN servers.",
+        "Byte-accurate HTTP Range resume support on MEGA encrypted endpoints.",
+        "Lock-safe redownload & resume engine preventing mutex deadlocks and eliminating GUI freezes.",
+        "Updated Microsoft Store MSIX package (v1.0.5.0) and portable distributions.",
+      ],
+      fixes: [
+        "Fixed concurrency deadlock when redownloading tasks by deferring task cleanup outside mutex locks.",
+        "Fixed MEGA key derivation and attribute decoding for shared public folders.",
+      ],
+    },
+    {
+      version: "v1.0.4",
+      date: "September 29, 2026",
+      tagline: "Microsoft Store Packaging, Bengali Font Shaping & High-DPI Status Bar",
+      isLatest: false,
       features: [
         "16-chunk dynamic HTTP byte-range segmentation engine written in Tokio/Rustls.",
         "Full desktop GUI with Cyber-Obsidian dark mode, high-DPI scaling, and real-time chunk visualizer.",

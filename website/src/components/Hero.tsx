@@ -57,7 +57,7 @@ export default function Hero() {
           }}
         >
           <img src="/assets/app_icon.png" alt="icon" className="w-3.5 h-3.5" />
-          <span className="font-semibold">Rapid Download Manager v1.0.4 GA</span>
+          <span className="font-semibold">Rapid Download Manager v1.0.5 GA</span>
           <span className="opacity-40">•</span>
           <span>Pure Memory-Safe Rust</span>
         </div>

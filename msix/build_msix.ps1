@@ -6,7 +6,7 @@ $DistApp = Join-Path $ProjectRoot "dist\RapidDownloadManager"
 $MsixSrc = Join-Path $ProjectRoot "msix"
 $StagingDir = Join-Path $ProjectRoot "dist\msix_staging"
 $InstallerDir = Join-Path $ProjectRoot "dist\installer"
-$OutputMsix = Join-Path $InstallerDir "RapidDownloadManager_v1.0.0.msix"
+$OutputMsix = Join-Path $InstallerDir "RapidDownloadManager_v1.0.5.msix"
 $LocalMakeAppx = Join-Path $MsixSrc "tools\x64\makeappx.exe"
 
 Write-Host "==> Staging MSIX Package directory..." -ForegroundColor Cyan

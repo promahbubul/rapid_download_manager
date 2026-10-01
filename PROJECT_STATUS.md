@@ -78,7 +78,23 @@
    - **Browser Extension Cleaning**: Updated `content.js` and `background.js` to discard generic `<a download="Download">` attributes and Chrome fallback names so only verified original filenames reach the desktop client.
 
 
-## 🌟 Latest Completed Milestones (v1.0.3 Release)
+## 🌟 Latest Completed Milestones (v1.0.5 Release)
+1. **Native MEGA.nz Folder Crawler & Decrypted Streaming Engine**:
+   - Implemented `crates/rapid-core/src/mega.rs` with full recursive folder hierarchy crawling for public MEGA folder URLs (`https://mega.nz/folder/...#...`).
+   - Dynamic tree traversal resolving folders and subfolders, automatically preserving directory structure on disk.
+   - On-the-fly AES-128-CTR hardware-accelerated decryption streaming directly from MEGA CDN servers without intermediate temporary file bloat.
+   - Byte-accurate HTTP Range resume support on MEGA CDN endpoints.
+   - Integrated into GUI: pasting a MEGA folder link in `+ Add Download` instantly discovers all files and enqueues them for parallel accelerated download.
+2. **Lock-Safe Redownload & Resume Engine**:
+   - Fixed concurrency deadlocks on Redownload/Resume by deferring worker task aborts and file locks outside active Mutex guards.
+   - Immediate responsive UI feedback and state re-initialization.
+3. **Microsoft Store MSIX Packaging & Metadata Update**:
+   - Bumped package version to `1.0.5.0` (`RapidDownloadManager_v1.0.5.msix`).
+   - Generated release packages in `dist/installer/` with updated AppxManifest and store listing.
+
+---
+
+## 🌟 Previous Milestones (v1.0.3 - v1.0.4 Release)
 1. **Bengali Complex Script Shaping Engine**: Built native HarfBuzz-level text shaping using `rustybuzz 0.20.1` and custom PUA Unicode glyph map in `crates/rapid-gui/src/bengali.rs` + `assets/fonts/kalpurush-pua.ttf`. Unit tested and verified across complex sentences.
 2. **Non-Colliding Glassmorphism Status Bar**: Replaced fragile discrete chip layout with mathematically bounded dual-rectangle partition (`left_rect` + `right_rect`), preventing any text collisions on small screens or DPI scaling.
 3. **Microsoft Store & Windows Runtime Compatibility**: Bundled `libunwind.dll` into MSIX staging and installer directories, fixing runtime dependency errors on end-user machines.

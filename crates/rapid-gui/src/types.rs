@@ -11,6 +11,23 @@ pub enum FilterCategory {
     Completed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskSortColumn {
+    Filename,
+    Size,
+    Status,
+    Progress,
+    Speed,
+    Eta,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastStatus {
+    Loading,
+    Success,
+    Error,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchedulerConfig {
     pub enabled: bool,
@@ -146,6 +163,7 @@ pub struct ActiveTaskUI {
     pub is_youtube: bool,
     pub quality: Option<rapid_core::youtube::DownloadQuality>,
     pub yt_cancel_token: Option<tokio_util::sync::CancellationToken>,
+    pub mega_item: Option<rapid_core::mega::MegaFileItem>,
 }
 
 #[derive(Clone, Debug)]

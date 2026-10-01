@@ -9,7 +9,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST_APP = os.path.join(PROJECT_ROOT, "dist", "RapidDownloadManager")
 MSIX_SRC = os.path.join(PROJECT_ROOT, "msix")
 STAGING_DIR = os.path.join(PROJECT_ROOT, "dist", "msix_staging")
-OUTPUT_MSIX = os.path.join(PROJECT_ROOT, "dist", "installer", "RapidDownloadManager_v1.0.4.msix")
+OUTPUT_MSIX = os.path.join(PROJECT_ROOT, "dist", "installer", "RapidDownloadManager_v1.0.5.msix")
 LOCAL_MAKEAPPX = os.path.join(MSIX_SRC, "tools", "x64", "makeappx.exe")
 
 print("1. Preparing MSIX staging directory...")

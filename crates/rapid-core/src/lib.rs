@@ -11,14 +11,18 @@ pub mod segment;
 pub mod types;
 pub mod worker;
 
+pub mod mega;
+
 pub use engine::DownloadTask;
 pub use hls::HlsDownloader;
+pub use mega::{MegaDownloader, MegaResolver, MegaResourceType, MegaFileItem};
 pub use youtube::{YoutubeDownloader, YoutubeResolver, YoutubeMetadata, DownloadQuality};
 pub use error::{RapidError, Result};
 pub use probe::Probe;
 pub use segment::SegmentPlanner;
 pub use types::*;
 pub use gdrive::*;
+
 
 pub use paths::AppPaths;
 pub use storage::StorageManager;

@@ -63,10 +63,13 @@ pub const NIM_DELETE: u32 = 0x00000002;
 pub const NIF_MESSAGE: u32 = 0x00000001;
 pub const NIF_ICON: u32 = 0x00000002;
 pub const NIF_TIP: u32 = 0x00000004;
+pub const NIF_INFO: u32 = 0x00000010;
+pub const NIIF_INFO: u32 = 0x00000001;
 
 pub const WM_USER: u32 = 0x0400;
 pub const WM_TRAYICON: u32 = WM_USER + 101;
 pub const WM_UPDATE_TIP: u32 = WM_USER + 102;
+pub const WM_SHOW_BALLOON: u32 = WM_USER + 103;
 pub const WM_DESTROY: u32 = 0x0002;
 
 pub const WM_LBUTTONUP: u32 = 0x0202;
@@ -144,8 +147,10 @@ extern "system" {
 static RESTORE_FLAG: AtomicBool = AtomicBool::new(false);
 static PAUSE_ALL_FLAG: AtomicBool = AtomicBool::new(false);
 static RESUME_ALL_FLAG: AtomicBool = AtomicBool::new(false);
+static EXIT_FLAG: AtomicBool = AtomicBool::new(false);
 static TRAY_HWND: AtomicIsize = AtomicIsize::new(0);
 static CURRENT_TIP: Mutex<Option<String>> = Mutex::new(None);
+static BALLOON_INFO: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 unsafe extern "system" fn tray_window_proc(
     h_wnd: isize,
@@ -172,10 +177,10 @@ unsafe extern "system" fn tray_window_proc(
                     let mut pt = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut pt);
                     let h_menu = CreatePopupMenu();
-                    let open_text: Vec<u16> = "[RDM] Open Rapid Download Manager\0".encode_utf16().collect();
-                    let pause_text: Vec<u16> = "[||] Pause All\0".encode_utf16().collect();
-                    let resume_text: Vec<u16> = "[>] Resume All\0".encode_utf16().collect();
-                    let exit_text: Vec<u16> = "[X] Exit Application\0".encode_utf16().collect();
+                    let open_text: Vec<u16> = "Open Rapid Download Manager\0".encode_utf16().collect();
+                    let pause_text: Vec<u16> = "Pause All Downloads\0".encode_utf16().collect();
+                    let resume_text: Vec<u16> = "Resume All Downloads\0".encode_utf16().collect();
+                    let exit_text: Vec<u16> = "Exit\0".encode_utf16().collect();
 
                     AppendMenuW(h_menu, MF_STRING, 1, open_text.as_ptr());
                     AppendMenuW(h_menu, MF_SEPARATOR, 0, std::ptr::null());
@@ -210,7 +215,7 @@ unsafe extern "system" fn tray_window_proc(
                     } else if cmd == 4 {
                         RESUME_ALL_FLAG.store(true, Ordering::Relaxed);
                     } else if cmd == 2 {
-                        std::process::exit(0);
+                        EXIT_FLAG.store(true, Ordering::Relaxed);
                     }
                 }
                 _ => {}
@@ -234,6 +239,31 @@ unsafe extern "system" fn tray_window_proc(
             }
             0
         }
+        WM_SHOW_BALLOON => {
+            if let Ok(guard) = BALLOON_INFO.lock() {
+                if let Some((ref title, ref msg_text)) = *guard {
+                    let mut nid = std::mem::zeroed::<NOTIFYICONDATAW>();
+                    nid.cb_size = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+                    nid.h_wnd = h_wnd;
+                    nid.u_id = 1;
+                    nid.u_flags = NIF_INFO;
+                    nid.dw_info_flags = NIIF_INFO;
+
+                    let title_u16: Vec<u16> = format!("{}\0", title).encode_utf16().collect();
+                    for (idx, &c) in title_u16.iter().enumerate().take(63) {
+                        nid.sz_info_title[idx] = c;
+                    }
+
+                    let msg_u16: Vec<u16> = format!("{}\0", msg_text).encode_utf16().collect();
+                    for (idx, &c) in msg_u16.iter().enumerate().take(255) {
+                        nid.sz_info[idx] = c;
+                    }
+
+                    Shell_NotifyIconW(NIM_MODIFY, &nid);
+                }
+            }
+            0
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             0
@@ -246,6 +276,7 @@ pub struct TrayHandle {
     pub restore_signal: Arc<AtomicBool>,
     pub pause_all_signal: Arc<AtomicBool>,
     pub resume_all_signal: Arc<AtomicBool>,
+    pub exit_signal: Arc<AtomicBool>,
 }
 
 impl TrayHandle {
@@ -253,10 +284,12 @@ impl TrayHandle {
         let restore_signal = Arc::new(AtomicBool::new(false));
         let pause_all_signal = Arc::new(AtomicBool::new(false));
         let resume_all_signal = Arc::new(AtomicBool::new(false));
+        let exit_signal = Arc::new(AtomicBool::new(false));
 
         let restore_clone = Arc::clone(&restore_signal);
         let pause_clone = Arc::clone(&pause_all_signal);
         let resume_clone = Arc::clone(&resume_all_signal);
+        let exit_clone = Arc::clone(&exit_signal);
 
         thread::spawn(move || unsafe {
             let class_name: Vec<u16> = "RapidDownloadManagerTrayClass\0".encode_utf16().collect();
@@ -344,6 +377,9 @@ impl TrayHandle {
                 if RESUME_ALL_FLAG.swap(false, Ordering::Relaxed) {
                     resume_clone.store(true, Ordering::Relaxed);
                 }
+                if EXIT_FLAG.swap(false, Ordering::Relaxed) {
+                    exit_clone.store(true, Ordering::Relaxed);
+                }
             }
 
             Shell_NotifyIconW(NIM_DELETE, &nid);
@@ -354,6 +390,7 @@ impl TrayHandle {
             restore_signal,
             pause_all_signal,
             resume_all_signal,
+            exit_signal,
         }
     }
 
@@ -367,6 +404,22 @@ impl TrayHandle {
 
     pub fn should_resume_all(&self) -> bool {
         self.resume_all_signal.swap(false, Ordering::Relaxed)
+    }
+
+    pub fn should_exit(&self) -> bool {
+        self.exit_signal.swap(false, Ordering::Relaxed)
+    }
+
+    pub fn show_balloon(&self, title: &str, message: &str) {
+        if let Ok(mut guard) = BALLOON_INFO.lock() {
+            *guard = Some((title.to_string(), message.to_string()));
+        }
+        let hwnd = TRAY_HWND.load(Ordering::SeqCst);
+        if hwnd != 0 {
+            unsafe {
+                PostMessageW(hwnd, WM_SHOW_BALLOON, 0, 0);
+            }
+        }
     }
 
     pub fn update_tooltip(&self, text: &str) {

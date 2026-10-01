@@ -31,7 +31,7 @@ Answer the IARC questionnaire:
 
 ## Step 5: Packages
 Upload the certified package:
-* `dist\installer\RapidDownloadManager_v1.0.4.msix`
+* `dist\installer\RapidDownloadManager_v1.0.5.msix`
 * Wait for automatic Cloud WACK (Windows App Certification Kit) validation to complete.
 
 ## Step 6: Store Listings (Upload Assets)

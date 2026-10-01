@@ -9,7 +9,7 @@ use rapid_core::{DownloadConfig, DownloadStatus, DownloadTask};
 use std::path::PathBuf;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
@@ -61,10 +61,14 @@ struct RapidApp {
     has_requested_initial_focus: bool,
     show_browser_integration_modal: bool,
     pub show_about_modal: bool,
+    pub show_integration_helper_modal: bool,
+    pub integration_helper_loading: bool,
     pub update_status: Arc<std::sync::Mutex<UpdateStatus>>,
     browser_integration_msg: Option<(String, bool)>,
     pub speed_limit_bps: Arc<AtomicU64>,
     pub selected_speed_limit_idx: usize,
+    pub sort_column: Option<TaskSortColumn>,
+    pub sort_ascending: bool,
 
     // Browser Extension Incoming Downloads
     pending_browser_queue: Arc<std::sync::Mutex<VecDeque<PendingBrowserDownload>>>,
@@ -74,6 +78,7 @@ struct RapidApp {
 
     #[cfg(windows)]
     tray_handle: Option<tray::TrayHandle>,
+    has_shown_minimize_balloon: AtomicBool,
 }
 
 
@@ -199,6 +204,7 @@ impl RapidApp {
         let tx = self.filename_resolver_tx.clone();
         let url_clone = url.to_string();
         let ctx_clone = ctx.clone();
+        let is_mega = url.contains("mega.nz") || url.contains("mega.co.nz");
         let is_gd = url.contains("drive.google.com")
             || url.contains("googleusercontent.com")
             || url.contains("docs.google.com");
@@ -209,7 +215,24 @@ impl RapidApp {
                 .redirect(reqwest::redirect::Policy::limited(10));
 
             if let Ok(client) = cb.build() {
-                let detected_name = if is_gd {
+                let detected_name = if is_mega {
+                    let mega_res = rapid_core::mega::MegaResolver::parse_resource_type(&url_clone);
+                    match mega_res {
+                        rapid_core::mega::MegaResourceType::Folder { folder_id, folder_key } => {
+                            rapid_core::mega::MegaResolver::resolve_folder_name(&folder_id, &folder_key)
+                                .await
+                                .ok()
+                                .or_else(|| Some("MEGA Folder".to_string()))
+                        }
+                        rapid_core::mega::MegaResourceType::File { file_id, file_key } => {
+                            rapid_core::mega::MegaResolver::resolve_single_file(&file_id, &file_key)
+                                .await
+                                .ok()
+                                .map(|item| item.name)
+                        }
+                        rapid_core::mega::MegaResourceType::Unknown => None,
+                    }
+                } else if is_gd {
                     let res_type = rapid_core::gdrive::GDriveResolver::parse_resource_type(&url_clone);
                     if let rapid_core::gdrive::GDriveResourceType::File(file_id) = res_type {
                         rapid_core::gdrive::GDriveResolver::resolve_file_download_url(&client, &file_id)
@@ -337,6 +360,7 @@ impl RapidApp {
                                     is_youtube: is_yt,
                                     quality: None,
                                     yt_cancel_token: None,
+                                    mega_item: None,
                                 };
                                 initial_tasks.push(ui);
                             }
@@ -372,6 +396,7 @@ impl RapidApp {
                     is_youtube: is_yt,
                     quality: None,
                     yt_cancel_token: None,
+                    mega_item: None,
                 });
             }
         }
@@ -420,7 +445,7 @@ impl RapidApp {
             selected_filter: FilterCategory::All,
             search_query: String::new(),
             splash_start: Instant::now(),
-            splash_duration: Duration::from_millis(2400),
+            splash_duration: Duration::ZERO,
             splash_logo,
             titlebar_logo,
             show_add_dialog: false,
@@ -439,18 +464,23 @@ impl RapidApp {
             scheduler: load_scheduler_config(),
             tasks_to_delete: HashSet::new(),
             has_requested_initial_focus: false,
-            show_browser_integration_modal: false,
+            show_browser_integration_modal: true,
             show_about_modal: false,
+            show_integration_helper_modal: false,
+            integration_helper_loading: false,
             update_status: Arc::new(std::sync::Mutex::new(UpdateStatus::Idle)),
             browser_integration_msg: None,
             speed_limit_bps: Arc::new(AtomicU64::new(0)),
             selected_speed_limit_idx: 0,
+            sort_column: None,
+            sort_ascending: true,
             pending_browser_queue,
             current_browser_prompt: None,
             filename_resolver_rx,
             filename_resolver_tx,
             #[cfg(windows)]
             tray_handle,
+            has_shown_minimize_balloon: AtomicBool::new(false),
         }
     }
 
@@ -469,21 +499,17 @@ impl RapidApp {
     }
 
     fn resume_all(&mut self) {
-        let indices_to_resume: Vec<usize> = {
-            if let Ok(list) = self.tasks.try_lock() {
-                list.iter()
-                    .enumerate()
-                    .filter(|(_, t)| matches!(t.status, DownloadStatus::Paused | DownloadStatus::Failed(_)))
-                    .map(|(i, _)| i)
-                    .collect()
-            } else {
-                Vec::new()
+        let tasks_arc = Arc::clone(&self.tasks);
+        self.tokio_rt.spawn(async move {
+            let mut list = tasks_arc.lock().await;
+            for t in list.iter_mut() {
+                if matches!(t.status, DownloadStatus::Paused | DownloadStatus::Failed(_)) {
+                    t.status = DownloadStatus::Queued;
+                    t.speed_bps = 0;
+                    t.eta_seconds = None;
+                }
             }
-        };
-
-        for idx in indices_to_resume {
-            self.resume_download(idx);
-        }
+        });
     }
 
     fn start_new_download(
@@ -497,6 +523,81 @@ impl RapidApp {
         if url.trim().starts_with("blob:") {
             self.add_error = Some("Invalid URL: 'blob:' URLs are internal browser memory objects. Please play the video in your browser so Rapid captures the real stream, or use a direct HTTP/HTTPS link.".to_string());
             return;
+        }
+
+        let mega_res = rapid_core::mega::MegaResolver::parse_resource_type(&url);
+        match mega_res {
+            rapid_core::mega::MegaResourceType::Folder { folder_id, folder_key } => {
+                let rt_crawl = Arc::clone(&self.tokio_rt);
+                let tasks_crawl = Arc::clone(&self.tasks);
+                let dest_crawl = dest_dir.clone();
+                let rt_inner = Arc::clone(&rt_crawl);
+                let speed_limit = Some(Arc::clone(&self.speed_limit_bps));
+                let custom_folder = custom_filename.clone().filter(|s| !s.trim().is_empty() && !rapid_core::engine::is_generic_placeholder(s));
+                rt_crawl.spawn(async move {
+                    if let Ok(files) = rapid_core::mega::MegaResolver::crawl_folder(&folder_id, &folder_key).await {
+                        for (idx, mut file) in files.into_iter().enumerate() {
+                            if let Some(ref cf) = custom_folder {
+                                let mut parts: Vec<&str> = file.relative_path.split('/').collect();
+                                if parts.len() > 1 {
+                                    parts[0] = cf.as_str();
+                                    file.relative_path = parts.join("/");
+                                } else {
+                                    file.relative_path = format!("{}/{}", cf, file.relative_path);
+                                }
+                            }
+                            let target_path = dest_crawl.join(&file.relative_path);
+                            spawn_mega_download_task(
+                                file,
+                                target_path,
+                                speed_limit.clone(),
+                                idx,
+                                Arc::clone(&rt_inner),
+                                Arc::clone(&tasks_crawl),
+                            ).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                        }
+                    }
+                });
+                self.show_add_dialog = false;
+                self.input_url.clear();
+                self.input_filename.clear();
+                self.input_quality = rapid_core::youtube::DownloadQuality::Best;
+                return;
+            }
+            rapid_core::mega::MegaResourceType::File { file_id, file_key } => {
+                let rt_crawl = Arc::clone(&self.tokio_rt);
+                let tasks_crawl = Arc::clone(&self.tasks);
+                let dest_crawl = dest_dir.clone();
+                let rt_inner = Arc::clone(&rt_crawl);
+                let speed_limit = Some(Arc::clone(&self.speed_limit_bps));
+                let custom_fn = custom_filename.clone();
+                rt_crawl.spawn(async move {
+                    if let Ok(mut item) = rapid_core::mega::MegaResolver::resolve_single_file(&file_id, &file_key).await {
+                        if let Some(cf) = custom_fn {
+                            if !cf.trim().is_empty() && !rapid_core::engine::is_generic_placeholder(&cf) {
+                                item.name = cf.trim().to_string();
+                                item.relative_path = cf.trim().to_string();
+                            }
+                        }
+                        let target_path = dest_crawl.join(&item.name);
+                        spawn_mega_download_task(
+                            item,
+                            target_path,
+                            speed_limit,
+                            0,
+                            Arc::clone(&rt_inner),
+                            Arc::clone(&tasks_crawl),
+                        ).await;
+                    }
+                });
+                self.show_add_dialog = false;
+                self.input_url.clear();
+                self.input_filename.clear();
+                self.input_quality = rapid_core::youtube::DownloadQuality::Best;
+                return;
+            }
+            rapid_core::mega::MegaResourceType::Unknown => {}
         }
 
         let res_type = rapid_core::GDriveResolver::parse_resource_type(&url);
@@ -566,33 +667,129 @@ impl RapidApp {
     fn resume_download(&mut self, task_index: usize) {
         let rt = Arc::clone(&self.tokio_rt);
         let tasks_arc = Arc::clone(&self.tasks);
+        let speed_limit_bps = Arc::clone(&self.speed_limit_bps);
 
-        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent, is_yt, quality) = {
-            let Ok(mut list) = self.tasks.try_lock() else { return; };
-            if task_index >= list.len() { return; }
-            let task = &mut list[task_index];
-            if task.status == DownloadStatus::Downloading {
+        rt.spawn(async move {
+            let task_info = {
+                let mut list = tasks_arc.lock().await;
+                if task_index >= list.len() { return; }
+                let task = &mut list[task_index];
+                if task.status == DownloadStatus::Downloading {
+                    return;
+                }
+                task.status = DownloadStatus::Downloading;
+                task.speed_bps = 0;
+                (
+                    task.id.clone(),
+                    task.url.clone(),
+                    task.target_file.clone(),
+                    task.filename.clone(),
+                    task.num_segments,
+                    task.cookies.clone(),
+                    task.referrer.clone(),
+                    task.user_agent.clone(),
+                    task.is_youtube || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&task.url),
+                    task.quality,
+                    task.mega_item.clone(),
+                )
+            };
+
+            let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent, is_yt, quality, mega_item) = task_info;
+
+            let is_mega = url.contains("mega.nz") || url.contains("mega.co.nz") || mega_item.is_some();
+            if is_mega {
+                let item = match mega_item {
+                    Some(it) => it,
+                    None => {
+                        match rapid_core::mega::MegaResolver::resolve_item_for_task(&url, &target_file, &filename).await {
+                            Ok(resolved) => {
+                                let mut list = tasks_arc.lock().await;
+                                if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                                    entry.mega_item = Some(resolved.clone());
+                                    entry.total_bytes = Some(resolved.size);
+                                }
+                                resolved
+                            }
+                            Err(e) => {
+                                eprintln!("[Rapid] Failed to resolve MEGA item on resume: {}", e);
+                                let mut list = tasks_arc.lock().await;
+                                if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                                    entry.status = DownloadStatus::Failed(e.to_string());
+                                }
+                                return;
+                            }
+                        }
+                    }
+                };
+
+                let cancel_token = tokio_util::sync::CancellationToken::new();
+                {
+                    let mut list = tasks_arc.lock().await;
+                    if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                        entry.status = DownloadStatus::Downloading;
+                        entry.yt_cancel_token = Some(cancel_token.clone());
+                    }
+                }
+
+                let (progress_tx, mut rx) = tokio::sync::broadcast::channel::<rapid_core::DownloadProgress>(100);
+                let downloader = rapid_core::mega::MegaDownloader::new(
+                    task_id.clone(),
+                    item.handle.clone(),
+                    item.name.clone(),
+                    target_file.clone(),
+                    item.size,
+                    item.key,
+                    item.initial_counter,
+                    item.folder_id.clone(),
+                    Some(speed_limit_bps),
+                    cancel_token,
+                );
+
+                let tasks_for_progress = Arc::clone(&tasks_arc);
+                let task_id_for_progress = task_id.clone();
+
+                tokio::spawn(async move {
+                    while let Ok(prog) = rx.recv().await {
+                        let mut list = tasks_for_progress.lock().await;
+                        if let Some(entry) = list.iter_mut().find(|t| t.id == task_id_for_progress) {
+                            entry.downloaded_bytes = prog.downloaded_bytes;
+                            entry.progress_percent = prog.progress_percent;
+                            entry.speed_bps = prog.speed_bps;
+                            entry.eta_seconds = prog.eta_seconds;
+                            entry.status = prog.status.clone();
+                            entry.segments = prog.segments;
+                            if let Some(tot) = prog.total_bytes {
+                                entry.total_bytes = Some(tot);
+                            }
+                        }
+                    }
+                });
+
+                let res = downloader.run(progress_tx).await;
+                let mut list = tasks_arc.lock().await;
+                if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                    match res {
+                        Ok(_) => {
+                            entry.status = DownloadStatus::Completed;
+                            entry.progress_percent = 100.0;
+                            entry.speed_bps = 0;
+                            entry.eta_seconds = None;
+                            save_task_to_history(entry);
+                        }
+                        Err(e) => {
+                            if !matches!(e, rapid_core::RapidError::Cancelled) {
+                                entry.status = DownloadStatus::Failed(e.to_string());
+                            }
+                            entry.speed_bps = 0;
+                            entry.eta_seconds = None;
+                        }
+                    }
+                }
                 return;
             }
-            task.status = DownloadStatus::Downloading;
-            task.speed_bps = 0;
-            (
-                task.id.clone(),
-                task.url.clone(),
-                task.target_file.clone(),
-                task.filename.clone(),
-                task.num_segments,
-                task.cookies.clone(),
-                task.referrer.clone(),
-                task.user_agent.clone(),
-                task.is_youtube || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&task.url),
-                task.quality,
-            )
-        };
 
-        if is_yt {
-            let speed_limit_for_yt = Arc::clone(&self.speed_limit_bps);
-            rt.spawn(async move {
+            if is_yt {
+                let speed_limit_for_yt = Arc::clone(&speed_limit_bps);
                 let cancel_token = tokio_util::sync::CancellationToken::new();
                 {
                     let mut list = tasks_arc.lock().await;
@@ -668,23 +865,21 @@ impl RapidApp {
                         }
                     }
                 }
-            });
-            return;
-        }
+                return;
+            }
 
-        let dest_dir = target_file
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
+            let dest_dir = target_file
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
 
-        let is_gd = url.contains("drive.google.com")
-            || url.contains("googleusercontent.com")
-            || url.contains("usercontent.google.com")
-            || url.contains("docs.google.com")
-            || url.contains("takeout-download-drive");
+            let is_gd = url.contains("drive.google.com")
+                || url.contains("googleusercontent.com")
+                || url.contains("usercontent.google.com")
+                || url.contains("docs.google.com")
+                || url.contains("takeout-download-drive");
 
-        let speed_limit_arc = Arc::clone(&self.speed_limit_bps);
-        rt.spawn(async move {
+            let speed_limit_arc = Arc::clone(&speed_limit_bps);
             let config = DownloadConfig {
                 url: url.clone(),
                 output_dir: dest_dir,
@@ -757,43 +952,148 @@ impl RapidApp {
     fn redownload(&mut self, task_index: usize) {
         let rt = Arc::clone(&self.tokio_rt);
         let tasks_arc = Arc::clone(&self.tasks);
+        let speed_limit = Arc::clone(&self.speed_limit_bps);
 
-        let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent, is_yt, quality) = {
-            let Ok(mut list) = self.tasks.try_lock() else { return; };
-            if task_index >= list.len() { return; }
-            let task = &mut list[task_index];
+        rt.spawn(async move {
+            let task_info = {
+                let mut list = tasks_arc.lock().await;
+                if task_index >= list.len() { return; }
+                let task = &mut list[task_index];
 
-            if let Some(ref handle) = task.task_handle {
-                handle.pause();
+                if let Some(ref handle) = task.task_handle {
+                    handle.pause();
+                }
+                if let Some(ref cancel) = task.yt_cancel_token {
+                    cancel.cancel();
+                }
+
+                task.downloaded_bytes = 0;
+                task.progress_percent = 0.0;
+                task.speed_bps = 0;
+                task.eta_seconds = None;
+                task.status = DownloadStatus::Downloading;
+                task.segments.clear();
+
+                (
+                    task.id.clone(),
+                    task.url.clone(),
+                    task.target_file.clone(),
+                    task.filename.clone(),
+                    task.num_segments,
+                    task.cookies.clone(),
+                    task.referrer.clone(),
+                    task.user_agent.clone(),
+                    task.is_youtube || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&task.url),
+                    task.quality,
+                    task.mega_item.clone(),
+                )
+            };
+
+            let (task_id, url, target_file, filename, segments_count, cookies, referrer, user_agent, is_yt, quality, mega_item) = task_info;
+
+            let is_mega = url.contains("mega.nz") || url.contains("mega.co.nz") || mega_item.is_some();
+            if is_mega {
+                let _ = tokio::fs::remove_file(&target_file).await;
+                let manifest = rapid_core::DownloadTaskState::manifest_path(&target_file);
+                let _ = tokio::fs::remove_file(&manifest).await;
+
+                // Resolve MegaFileItem dynamically if not present
+                let item = match mega_item {
+                    Some(it) => it,
+                    None => {
+                        match rapid_core::mega::MegaResolver::resolve_item_for_task(&url, &target_file, &filename).await {
+                            Ok(resolved) => {
+                                let mut list = tasks_arc.lock().await;
+                                if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                                    entry.mega_item = Some(resolved.clone());
+                                    entry.total_bytes = Some(resolved.size);
+                                }
+                                resolved
+                            }
+                            Err(e) => {
+                                eprintln!("[Rapid] Failed to resolve MEGA item on redownload: {}", e);
+                                let mut list = tasks_arc.lock().await;
+                                if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                                    entry.status = DownloadStatus::Failed(e.to_string());
+                                }
+                                return;
+                            }
+                        }
+                    }
+                };
+
+                let cancel_token = tokio_util::sync::CancellationToken::new();
+                {
+                    let mut list = tasks_arc.lock().await;
+                    if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                        entry.status = DownloadStatus::Downloading;
+                        entry.downloaded_bytes = 0;
+                        entry.progress_percent = 0.0;
+                        entry.speed_bps = 0;
+                        entry.eta_seconds = None;
+                        entry.yt_cancel_token = Some(cancel_token.clone());
+                    }
+                }
+
+                let (progress_tx, mut rx) = tokio::sync::broadcast::channel::<rapid_core::DownloadProgress>(100);
+                let downloader = rapid_core::mega::MegaDownloader::new(
+                    task_id.clone(),
+                    item.handle.clone(),
+                    item.name.clone(),
+                    target_file.clone(),
+                    item.size,
+                    item.key,
+                    item.initial_counter,
+                    item.folder_id.clone(),
+                    Some(speed_limit),
+                    cancel_token,
+                );
+
+                let tasks_for_progress = Arc::clone(&tasks_arc);
+                let task_id_for_progress = task_id.clone();
+
+                tokio::spawn(async move {
+                    while let Ok(prog) = rx.recv().await {
+                        let mut list = tasks_for_progress.lock().await;
+                        if let Some(entry) = list.iter_mut().find(|t| t.id == task_id_for_progress) {
+                            entry.downloaded_bytes = prog.downloaded_bytes;
+                            entry.progress_percent = prog.progress_percent;
+                            entry.speed_bps = prog.speed_bps;
+                            entry.eta_seconds = prog.eta_seconds;
+                            entry.status = prog.status.clone();
+                            entry.segments = prog.segments;
+                            if let Some(tot) = prog.total_bytes {
+                                entry.total_bytes = Some(tot);
+                            }
+                        }
+                    }
+                });
+
+                let res = downloader.run(progress_tx).await;
+                let mut list = tasks_arc.lock().await;
+                if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+                    match res {
+                        Ok(_) => {
+                            entry.status = DownloadStatus::Completed;
+                            entry.progress_percent = 100.0;
+                            entry.speed_bps = 0;
+                            entry.eta_seconds = None;
+                            save_task_to_history(entry);
+                        }
+                        Err(e) => {
+                            if !matches!(e, rapid_core::RapidError::Cancelled) {
+                                entry.status = DownloadStatus::Failed(e.to_string());
+                            }
+                            entry.speed_bps = 0;
+                            entry.eta_seconds = None;
+                        }
+                    }
+                }
+                return;
             }
-            if let Some(ref cancel) = task.yt_cancel_token {
-                cancel.cancel();
-            }
 
-            task.downloaded_bytes = 0;
-            task.progress_percent = 0.0;
-            task.speed_bps = 0;
-            task.eta_seconds = None;
-            task.status = DownloadStatus::Downloading;
-            task.segments.clear();
-
-            (
-                task.id.clone(),
-                task.url.clone(),
-                task.target_file.clone(),
-                task.filename.clone(),
-                task.num_segments,
-                task.cookies.clone(),
-                task.referrer.clone(),
-                task.user_agent.clone(),
-                task.is_youtube || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&task.url),
-                task.quality,
-            )
-        };
-
-        if is_yt {
-            let speed_limit_for_yt = Arc::clone(&self.speed_limit_bps);
-            rt.spawn(async move {
+            if is_yt {
+                let speed_limit_for_yt = Arc::clone(&speed_limit);
                 let _ = tokio::fs::remove_file(&target_file).await;
                 if let Some(stem) = target_file.file_stem().and_then(|s| s.to_str()) {
                     if let Some(parent) = target_file.parent() {
@@ -889,29 +1189,26 @@ impl RapidApp {
                         }
                     }
                 }
-            });
-            return;
-        }
+                return;
+            }
 
-        let dest_dir = target_file
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
+            let dest_dir = target_file
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
 
-        let is_gd = url.contains("drive.google.com")
-            || url.contains("googleusercontent.com")
-            || url.contains("usercontent.google.com")
-            || url.contains("docs.google.com")
-            || url.contains("takeout-download-drive");
+            let is_gd = url.contains("drive.google.com")
+                || url.contains("googleusercontent.com")
+                || url.contains("usercontent.google.com")
+                || url.contains("docs.google.com")
+                || url.contains("takeout-download-drive");
 
-        let effective_cookies = if is_gd {
-            load_google_cookies().or(cookies)
-        } else {
-            cookies
-        };
+            let effective_cookies = if is_gd {
+                load_google_cookies().or(cookies)
+            } else {
+                cookies
+            };
 
-        let speed_limit_arc = Arc::clone(&self.speed_limit_bps);
-        rt.spawn(async move {
             let _ = tokio::fs::remove_file(&target_file).await;
             let manifest = rapid_core::DownloadTaskState::manifest_path(&target_file);
             let _ = tokio::fs::remove_file(&manifest).await;
@@ -925,7 +1222,7 @@ impl RapidApp {
                 referrer,
                 user_agent,
                 is_gdrive: is_gd,
-                speed_limit: Some(speed_limit_arc),
+                speed_limit: Some(speed_limit),
             };
 
             match DownloadTask::create(task_id.clone(), config).await {
@@ -1054,6 +1351,40 @@ impl RapidApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(VELVET_BLACK))
             .show(ctx, |ui| {
+                // Top-right window controls during splash
+                let top_right_rect = egui::Rect::from_min_size(
+                    egui::pos2(ui.clip_rect().max.x - 96.0, ui.clip_rect().min.y),
+                    Vec2::new(96.0, 32.0),
+                );
+                ui.allocate_ui_at_rect(top_right_rect, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        let btn_size = Vec2::new(48.0, 32.0);
+                        if window_caption_button(
+                            ui,
+                            ModernIcon::WinClose,
+                            btn_size,
+                            GLASS_MUTED,
+                            Color32::WHITE,
+                            Color32::from_rgb(232, 17, 35),
+                            "Close (Minimizes to System Tray)",
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        }
+                        if window_caption_button(
+                            ui,
+                            ModernIcon::WinMinimize,
+                            btn_size,
+                            GLASS_MUTED,
+                            GLASS_TEXT,
+                            Color32::from_rgba_unmultiplied(255, 255, 255, 20),
+                            "Minimize Window",
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    });
+                });
+
                 // Dimensions of authentic master logo (aspect ratio: 2.3467)
                 let base_w = 440.0_f32;
                 let base_h = (base_w / 2.3467_f32).round();
@@ -1213,6 +1544,13 @@ impl RapidApp {
                             .size(11.5)
                             .color(Color32::from_rgb(140, 160, 185)),
                     );
+
+                    ui.add_space(14.0);
+                    ui.label(
+                        RichText::new("Press any key or click to skip")
+                            .size(10.5)
+                            .color(Color32::from_rgba_unmultiplied(148, 163, 184, 150)),
+                    );
                 });
             });
     }
@@ -1252,6 +1590,15 @@ impl RapidApp {
                         "Close (Minimizes to System Tray)",
                     ) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        #[cfg(windows)]
+                        if !self.has_shown_minimize_balloon.swap(true, Ordering::Relaxed) {
+                            if let Some(ref tray) = self.tray_handle {
+                                tray.show_balloon(
+                                    "Rapid Download Manager",
+                                    "Rapid Download Manager is running in the background. Access it from the system tray icon.",
+                                );
+                            }
+                        }
                     }
 
                     // 2. Maximize / Restore Button
@@ -1290,7 +1637,16 @@ impl RapidApp {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         let logo_h: f32 = 38.0;
                         let logo_w: f32 = (logo_h * 5.0167_f32).round();
-                        let (logo_rect, _) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::hover());
+                        let (logo_rect, logo_resp) = ui.allocate_exact_size(Vec2::new(logo_w, logo_h), egui::Sense::click_and_drag());
+                        let logo_resp = logo_resp.on_hover_cursor(egui::CursorIcon::Grab);
+                        if logo_resp.drag_started_by(egui::PointerButton::Primary) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                        }
+                        if logo_resp.double_clicked() {
+                            let is_max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
+                        }
+
                         ui.painter().image(
                             self.titlebar_logo.id(),
                             logo_rect,
@@ -1367,6 +1723,7 @@ fn rdm_setup_screenshots(app: &mut RapidApp, _ctx: &egui::Context) {
                 is_youtube: false,
                 quality: None,
                 yt_cancel_token: None,
+                mega_item: None,
             });
 
             tasks.push(ActiveTaskUI {
@@ -1390,6 +1747,7 @@ fn rdm_setup_screenshots(app: &mut RapidApp, _ctx: &egui::Context) {
                 is_youtube: false,
                 quality: None,
                 yt_cancel_token: None,
+                mega_item: None,
             });
 
             tasks.push(ActiveTaskUI {
@@ -1413,6 +1771,7 @@ fn rdm_setup_screenshots(app: &mut RapidApp, _ctx: &egui::Context) {
                 is_youtube: false,
                 quality: None,
                 yt_cancel_token: None,
+                mega_item: None,
             });
         }
     }
@@ -1510,9 +1869,20 @@ impl eframe::App for RapidApp {
         // Handle animated splash screen on startup (No title bar during splash, full center-center window)
         let elapsed = self.splash_start.elapsed();
         if elapsed < self.splash_duration {
-            ctx.request_repaint();
-            self.render_splash_screen(ctx, elapsed);
-            return;
+            let skip_splash = ctx.input(|i| {
+                i.pointer.any_pressed()
+                    || i.key_pressed(egui::Key::Escape)
+                    || i.key_pressed(egui::Key::Space)
+                    || i.key_pressed(egui::Key::Enter)
+                    || !i.keys_down.is_empty()
+            });
+            if skip_splash {
+                self.splash_duration = Duration::ZERO;
+            } else {
+                ctx.request_repaint();
+                self.render_splash_screen(ctx, elapsed);
+                return;
+            }
         }
 
         // Render custom frameless title bar at the top of the main window
@@ -1761,8 +2131,8 @@ impl eframe::App for RapidApp {
             }
         }
 
-        let mut action_resume: Option<usize> = None;
-        let mut action_pause: Option<usize> = None;
+        let mut action_resume: Vec<usize> = Vec::new();
+        let mut action_pause: Vec<usize> = Vec::new();
         let mut action_redownload: Option<usize> = None;
         let mut action_remove_ids: Vec<String> = Vec::new();
         let mut action_open_folder: Option<usize> = None;
@@ -1802,6 +2172,11 @@ impl eframe::App for RapidApp {
         // System Tray synchronization
         #[cfg(windows)]
         if let Some(ref tray) = self.tray_handle {
+            if tray.should_exit() {
+                self.pause_all();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                std::process::exit(0);
+            }
             if tray.should_restore() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -1825,6 +2200,15 @@ impl eframe::App for RapidApp {
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            #[cfg(windows)]
+            if !self.has_shown_minimize_balloon.swap(true, Ordering::Relaxed) {
+                if let Some(ref tray) = self.tray_handle {
+                    tray.show_balloon(
+                        "Rapid Download Manager",
+                        "Rapid Download Manager is running in the background. Access it from the system tray icon.",
+                    );
+                }
+            }
         }
 
         // =========================================================================
@@ -1838,14 +2222,18 @@ impl eframe::App for RapidApp {
                     .inner_margin(Margin::symmetric(14.0, 10.0)),
             )
             .show(ctx, |ui| {
+                let screen_w = ctx.screen_rect().width();
+                let is_compact_topbar = screen_w < 950.0;
+                let is_tiny_topbar = screen_w < 820.0;
+
                 ui.horizontal(|ui| {
                     // 1. High-Precision Segmented Filter Control (All Downloads, Downloading, Paused, Completed)
                     let total_tasks_count = if let Ok(ref t) = self.tasks.try_lock() { t.len() } else { 0 };
                     let filter_tabs = [
-                        (FilterCategory::All, "All Downloads", total_tasks_count, "Show all downloads"),
-                        (FilterCategory::Active, "Downloading", active_count, "Show actively downloading files"),
+                        (FilterCategory::All, if is_compact_topbar { "All" } else { "All Downloads" }, total_tasks_count, "Show all downloads"),
+                        (FilterCategory::Active, if is_compact_topbar { "Active" } else { "Downloading" }, active_count, "Show actively downloading files"),
                         (FilterCategory::Paused, "Paused", paused_count, "Show paused and interrupted downloads"),
-                        (FilterCategory::Completed, "Completed", finished_count, "Show completed downloads"),
+                        (FilterCategory::Completed, if is_compact_topbar { "Done" } else { "Completed" }, finished_count, "Show completed downloads"),
                     ];
 
                     egui::Frame::none()
@@ -1885,6 +2273,8 @@ impl eframe::App for RapidApp {
 
                     // 2. Search Filter Box
                     ui.add_space(8.0);
+                    let search_w = if is_tiny_topbar { 90.0 } else if is_compact_topbar { 120.0 } else { 170.0 };
+                    let hint_text = if is_compact_topbar { "Search..." } else { "Search downloads (name, URL)..." };
                     egui::Frame::none()
                         .fill(GLASS_BG)
                         .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
@@ -1897,11 +2287,11 @@ impl eframe::App for RapidApp {
                                 ui.add_space(4.0);
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.search_query)
-                                        .hint_text("Search downloads (name, URL)...")
-                                        .desired_width(170.0)
+                                        .hint_text(hint_text)
+                                        .desired_width(search_w)
                                         .frame(false)
                                 );
-                                if !self.search_query.is_empty() && ui.small_button("✕").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                if !self.search_query.is_empty() && ui.small_button("×").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                     self.search_query.clear();
                                 }
                             });
@@ -1910,20 +2300,22 @@ impl eframe::App for RapidApp {
                     // 3. Right-side action controls
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Primary Action Button: "Add Download"
-                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(130.0, 32.0), egui::Sense::click());
+                        let btn_w = if is_tiny_topbar { 76.0 } else if is_compact_topbar { 90.0 } else { 130.0 };
+                        let btn_label = if is_compact_topbar { "Add" } else { "Add Download" };
+                        let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(btn_w, 32.0), egui::Sense::click());
                         let btn_resp = btn_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                         let is_btn_h = btn_resp.hovered();
                         let btn_bg = if is_btn_h { GLASS_PRIMARY_HOVER } else { GLASS_PRIMARY };
                         ui.painter().rect_filled(btn_rect, 7.0, btn_bg);
                         let plus_rect = egui::Rect::from_center_size(
-                            egui::pos2(btn_rect.min.x + 18.0, btn_rect.center().y),
+                            egui::pos2(btn_rect.min.x + 14.0, btn_rect.center().y),
                             Vec2::new(12.0, 12.0),
                         );
                         draw_modern_icon(ui.painter(), ModernIcon::Plus, plus_rect, Color32::WHITE);
                         ui.painter().text(
-                            egui::pos2(btn_rect.min.x + 32.0, btn_rect.center().y),
+                            egui::pos2(btn_rect.min.x + 28.0, btn_rect.center().y),
                             egui::Align2::LEFT_CENTER,
-                            "Add Download",
+                            btn_label,
                             egui::FontId::proportional(12.5),
                             Color32::WHITE,
                         );
@@ -1944,12 +2336,23 @@ impl eframe::App for RapidApp {
                             do_resume_all = true;
                         }
 
+                        // Scheduler Modal Button
+                        let sched_color = if self.scheduler.enabled { Color32::from_rgb(16, 185, 129) } else { GLASS_MUTED };
+                        let sched_tip = if self.scheduler.enabled {
+                            format!("Scheduler: ACTIVE ({:02}:{:02} - {:02}:{:02})\nClick to configure", self.scheduler.start_hour, self.scheduler.start_minute, self.scheduler.stop_hour, self.scheduler.stop_minute)
+                        } else {
+                            "Download Scheduler (Disabled)\nClick to configure automated queue times".to_string()
+                        };
+                        if modern_icon_button(ui, ModernIcon::Clock, Vec2::new(32.0, 30.0), sched_color, GLASS_SECONDARY, &sched_tip) {
+                            self.show_scheduler_modal = true;
+                        }
+
                         // Minimize to System Tray
                         if modern_icon_button(ui, ModernIcon::MinimizeTray, Vec2::new(32.0, 30.0), GLASS_MUTED, GLASS_SECONDARY, "Minimize to Windows System Tray") {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                         }
 
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
 
                         // Bandwidth Speed Limiter Dropdown
                         let speed_options = [
@@ -1962,10 +2365,11 @@ impl eframe::App for RapidApp {
                         ];
 
                         let current_limit_label = speed_options[self.selected_speed_limit_idx.min(speed_options.len() - 1)].0;
+                        let combo_w = if is_compact_topbar { 90.0 } else { 105.0 };
                         egui::ComboBox::from_id_source("toolbar_speed_limiter")
                             .selected_text(RichText::new(current_limit_label).size(11.5).color(GLASS_SECONDARY).strong())
                             .height(180.0)
-                            .width(105.0)
+                            .width(combo_w)
                             .show_ui(ui, |ui| {
                                 for (idx, (label, val)) in speed_options.iter().enumerate() {
                                     let is_sel = self.selected_speed_limit_idx == idx;
@@ -2039,18 +2443,41 @@ impl eframe::App for RapidApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Selected:").size(11.0).color(Color32::from_rgb(160, 140, 170)));
-                        let shaped_display = shape_bengali(&display_name);
-                        ui.label(RichText::new(&shaped_display).size(11.5).strong().color(PINK_PASTEL));
+                        let max_chars = if screen_w < 850.0 { 24 } else { 38 };
+                        let truncated_name = if display_name.chars().count() > max_chars {
+                            let prefix: String = display_name.chars().take(max_chars.saturating_sub(3)).collect();
+                            format!("{}...", prefix)
+                        } else {
+                            display_name.clone()
+                        };
+                        let shaped_display = shape_bengali(&truncated_name);
+                        ui.label(RichText::new(&shaped_display).size(11.5).strong().color(PINK_PASTEL)).on_hover_text(&display_name);
 
                         ui.add_space(10.0);
                         if is_resumable && modern_icon_button(ui, ModernIcon::Play, Vec2::new(26.0, 22.0), STATUS_COMPLETED, PINK_NEON, if is_multi { "Resume selected" } else { "Resume download" }) {
-                            if let Some(idx) = effective_selected_idx {
-                                action_resume = Some(idx);
+                            if let Ok(ref tasks) = self.tasks.try_lock() {
+                                if is_multi {
+                                    for (pos, task) in tasks.iter().enumerate() {
+                                        if self.selected_tasks.contains(&task.id) && matches!(task.status, DownloadStatus::Paused | DownloadStatus::Failed(_)) {
+                                            action_resume.push(pos);
+                                        }
+                                    }
+                                } else if let Some(idx) = effective_selected_idx {
+                                    action_resume.push(idx);
+                                }
                             }
                         }
                         if is_downloading && modern_icon_button(ui, ModernIcon::Pause, Vec2::new(26.0, 22.0), STATUS_PAUSED, PINK_NEON, if is_multi { "Pause selected" } else { "Pause download" }) {
-                            if let Some(idx) = effective_selected_idx {
-                                action_pause = Some(idx);
+                            if let Ok(ref tasks) = self.tasks.try_lock() {
+                                if is_multi {
+                                    for (pos, task) in tasks.iter().enumerate() {
+                                        if self.selected_tasks.contains(&task.id) && task.status == DownloadStatus::Downloading {
+                                            action_pause.push(pos);
+                                        }
+                                    }
+                                } else if let Some(idx) = effective_selected_idx {
+                                    action_pause.push(idx);
+                                }
                             }
                         }
                         if !is_multi {
@@ -2082,28 +2509,28 @@ impl eframe::App for RapidApp {
 
         // Ultra-Clean, Non-Colliding Modern Status Bar (VS Code / Arc Inspired)
         egui::TopBottomPanel::bottom("custom_status_bar")
-            .exact_height(28.0)
+            .exact_height(34.0)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(9, 12, 22))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(148, 163, 184, 35)))
-                    .inner_margin(Margin::symmetric(12.0, 4.0)),
+                    .inner_margin(Margin::symmetric(14.0, 5.0)),
             )
             .show(ctx, |ui| {
                 let (full_rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 20.0),
+                    Vec2::new(ui.available_width(), 24.0),
                     egui::Sense::hover(),
                 );
                 let total_w = full_rect.width();
                 let bar_h = full_rect.height();
 
-                // Determine if we are in compact mode (< 600px width)
-                let is_compact = total_w < 600.0;
+                // Determine if we are in compact mode (< 720px width)
+                let is_compact = total_w < 720.0;
 
                 // Right action dock width:
-                // 3 action buttons (Downloads, Browser, About) + 1 status indicator (Tray)
-                let right_w = if is_compact { 115.0_f32 } else { 255.0_f32 }.min(total_w * 0.55);
-                let left_w = (total_w - right_w - 16.0).max(0.0);
+                // 4 action buttons (Downloads, Scheduler, Browser, About) + 1 status indicator (Tray)
+                let right_w = if is_compact { 140.0_f32 } else { 410.0_f32 }.min(total_w * 0.70);
+                let left_w = (total_w - right_w - 12.0).max(0.0);
 
                 let left_rect = egui::Rect::from_min_size(full_rect.min, Vec2::new(left_w, bar_h));
                 let right_rect = egui::Rect::from_min_size(
@@ -2111,9 +2538,17 @@ impl eframe::App for RapidApp {
                     Vec2::new(right_w, bar_h),
                 );
 
-                // 1. LEFT REGION: Single-line Status & Metrics (Mathematically bounded and clipped to left_rect)
+                // Helper for drawing clean 1px vector vertical separator (avoids unicode tofu boxes)
+                let draw_footer_sep = |ui: &mut egui::Ui, color: Color32| {
+                    let (sep_r, _) = ui.allocate_exact_size(Vec2::new(8.0, 14.0), egui::Sense::hover());
+                    ui.painter().line_segment(
+                        [egui::pos2(sep_r.center().x, sep_r.min.y + 2.0), egui::pos2(sep_r.center().x, sep_r.max.y - 2.0)],
+                        Stroke::new(1.0_f32, color),
+                    );
+                };
+
+                // 1. LEFT REGION: Single-line Status & Metrics
                 ui.allocate_ui_at_rect(left_rect, |ui| {
-                    ui.set_clip_rect(left_rect);
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
 
@@ -2164,7 +2599,7 @@ impl eframe::App for RapidApp {
 
                         // Engine HTTP listener info (if at least 130px remain)
                         if ui.available_width() >= 130.0 {
-                            ui.label(RichText::new("│").size(10.0).color(sep_color));
+                            draw_footer_sep(ui, sep_color);
                             let (b_rect, _) = ui.allocate_exact_size(Vec2::new(9.0, 9.0), egui::Sense::hover());
                             draw_modern_icon(ui.painter(), ModernIcon::PulseBeacon, b_rect, GLASS_PRIMARY);
                             ui.add_space(-2.0);
@@ -2174,7 +2609,7 @@ impl eframe::App for RapidApp {
 
                         // Completed tasks info (if at least 95px remain)
                         if finished_count > 0 && ui.available_width() >= 95.0 {
-                            ui.label(RichText::new("│").size(10.0).color(sep_color));
+                            draw_footer_sep(ui, sep_color);
                             let (c_rect, _) = ui.allocate_exact_size(Vec2::new(9.0, 9.0), egui::Sense::hover());
                             draw_modern_icon(ui.painter(), ModernIcon::Check, c_rect, STATUS_COMPLETED);
                             ui.add_space(-2.0);
@@ -2184,7 +2619,7 @@ impl eframe::App for RapidApp {
 
                         // Total downloaded session data (if at least 110px remain)
                         if total_downloaded > 0 && ui.available_width() >= 110.0 {
-                            ui.label(RichText::new("│").size(10.0).color(sep_color));
+                            draw_footer_sep(ui, sep_color);
                             ui.label(
                                 RichText::new(format!("{} total", format_bytes(total_downloaded)))
                                     .size(10.5)
@@ -2196,12 +2631,13 @@ impl eframe::App for RapidApp {
 
                 // 2. RIGHT REGION: Quick Action Dock & System Tray indicator (Anchored to right)
                 ui.allocate_ui_at_rect(right_rect, |ui| {
-                    ui.set_clip_rect(right_rect);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
 
-                        // Tray Status (Far Right)
-                        render_status_tray_pill(ui, is_compact);
+                        // Tray Status (Far Right - Clickable to minimize to tray)
+                        if render_status_tray_pill(ui, is_compact) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        }
 
                         // About Modal Action Button
                         if render_status_action_btn(
@@ -2233,6 +2669,23 @@ impl eframe::App for RapidApp {
                             self.browser_integration_msg = None;
                         }
 
+                        // Scheduler Action Button
+                        let sched_label = if is_compact { "Sched" } else { "Scheduler" };
+                        let sched_tip = if self.scheduler.enabled {
+                            format!("Scheduler: ACTIVE ({:02}:{:02} - {:02}:{:02}) - Click to configure", self.scheduler.start_hour, self.scheduler.start_minute, self.scheduler.stop_hour, self.scheduler.stop_minute)
+                        } else {
+                            "Download Scheduler (Disabled) - Click to configure automated queue times".to_string()
+                        };
+                        if render_status_action_btn(
+                            ui,
+                            ModernIcon::Clock,
+                            sched_label,
+                            &sched_tip,
+                            is_compact,
+                        ) {
+                            self.show_scheduler_modal = true;
+                        }
+
                         // Downloads Directory Action Button
                         if render_status_action_btn(
                             ui,
@@ -2247,7 +2700,7 @@ impl eframe::App for RapidApp {
                 });
             });
 
-        // Bottom Details Panel (Connection / Segment Progress - only when an active task is selected and visible)
+        // Bottom Details Panel (Connection / Segment Progress & Universal Metadata Inspector)
         let effective_details_idx = {
             if let Ok(tasks) = self.tasks.try_lock() {
                 if let Some(first_checked) = self.selected_tasks.iter().next() {
@@ -2266,32 +2719,19 @@ impl eframe::App for RapidApp {
             }
         };
 
-        let has_segments_to_show = {
-            if let Some(idx) = effective_details_idx {
-                if let Ok(tasks) = self.tasks.try_lock() {
-                    idx < tasks.len() && !tasks[idx].segments.is_empty()
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-
-        if has_segments_to_show {
+        if let Some(idx) = effective_details_idx {
             egui::TopBottomPanel::bottom("bottom_panel")
                 .frame(
                     egui::Frame::none()
                         .fill(GLASS_SURFACE)
                         .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .inner_margin(Margin::symmetric(14.0, 10.0)),
+                        .inner_margin(Margin::symmetric(14.0, 8.0)),
                 )
                 .show(ctx, |ui| {
                     if let Ok(tasks) = self.tasks.try_lock() {
-                        if let Some(idx) = effective_details_idx {
-                            if idx < tasks.len() {
-                                let task = &tasks[idx];
-
+                        if idx < tasks.len() {
+                            let task = &tasks[idx];
+                            if !task.segments.is_empty() {
                                 // Header row: Title + Task info badge + Speed
                                 ui.horizontal(|ui| {
                                     let (beacon_rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), egui::Sense::hover());
@@ -2345,7 +2785,7 @@ impl eframe::App for RapidApp {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("⏸ Download paused").color(STATUS_PAUSED).strong());
                                                 if ui.button(RichText::new("▶ Resume Download").strong()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                    action_resume = Some(idx);
+                                                    action_resume.push(idx);
                                                 }
                                             });
                                         });
@@ -2408,6 +2848,73 @@ impl eframe::App for RapidApp {
                                             ui.add_space(4.0);
                                         }
                                     });
+                            } else {
+                                // Universal Metadata Inspector for Completed / Paused / Single-connection tasks
+                                ui.horizontal(|ui| {
+                                    let (beacon_rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), egui::Sense::hover());
+                                    let is_done = task.status == DownloadStatus::Completed;
+                                    draw_modern_icon(
+                                        ui.painter(),
+                                        if is_done { ModernIcon::Check } else { ModernIcon::PulseBeacon },
+                                        beacon_rect,
+                                        if is_done { STATUS_COMPLETED } else { GLASS_SECONDARY },
+                                    );
+                                    ui.add_space(4.0);
+                                    let shaped_fn = shape_bengali(&task.filename);
+                                    let display_fn = if shaped_fn.chars().count() > 36 {
+                                        format!("{}...", shaped_fn.chars().take(33).collect::<String>())
+                                    } else {
+                                        shaped_fn
+                                    };
+                                    ui.label(RichText::new(&display_fn).strong().color(GLASS_TEXT).size(12.0)).on_hover_text(&task.filename);
+
+                                    ui.add_space(8.0);
+                                    let sz_str = task.total_bytes.map(format_bytes).unwrap_or_else(|| format_bytes(task.downloaded_bytes));
+                                    ui.label(RichText::new(format!("•  {}", sz_str)).size(11.0).color(GLASS_MUTED));
+
+                                    ui.add_space(8.0);
+                                    let (stat_color, stat_str) = match &task.status {
+                                        DownloadStatus::Completed => (STATUS_COMPLETED, "Completed"),
+                                        DownloadStatus::Downloading => (STATUS_DOWNLOADING, "Downloading"),
+                                        DownloadStatus::Paused => (STATUS_PAUSED, "Paused"),
+                                        DownloadStatus::Failed(_) => (STATUS_FAILED, "Failed"),
+                                        _ => (PINK_MUTED, "Queued"),
+                                    };
+                                    ui.label(RichText::new(format!("•  {}", stat_str)).size(11.0).color(stat_color).strong());
+
+                                    let target_str = task.target_file.to_string_lossy().to_string();
+                                    if ui.available_width() > 320.0 {
+                                        ui.add_space(8.0);
+                                        let short_path = if target_str.chars().count() > 35 {
+                                            format!("...{}", target_str.chars().rev().take(32).collect::<String>().chars().rev().collect::<String>())
+                                        } else {
+                                            target_str.clone()
+                                        };
+                                        ui.label(RichText::new(format!("•  {}", short_path)).size(10.5).color(Color32::from_rgb(148, 163, 184))).on_hover_text(&target_str);
+                                    }
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
+                                        if is_done {
+                                            let open_btn = egui::Button::new(RichText::new("▶ Open File").size(11.0).strong().color(Color32::WHITE))
+                                                .fill(GLASS_PRIMARY)
+                                                .rounding(egui::Rounding::same(4.0));
+                                            if ui.add(open_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                action_open_file = Some(idx);
+                                            }
+                                        }
+                                        let folder_btn = egui::Button::new(RichText::new("📁 Open Folder").size(11.0).color(GLASS_TEXT))
+                                            .fill(GLASS_CARD)
+                                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                            .rounding(egui::Rounding::same(4.0));
+                                        if ui.add(folder_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                            action_open_folder = Some(idx);
+                                        }
+                                        if ui.button(RichText::new("🔗 Copy URL").size(10.5).color(GLASS_MUTED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                            action_copy_url = Some(task.url.clone());
+                                        }
+                                    });
+                                });
                             }
                         }
                     }
@@ -2425,7 +2932,7 @@ impl eframe::App for RapidApp {
                 let mut selected = self.selected_task_index;
 
                 if let Ok(tasks) = self.tasks.try_lock() {
-                    let filtered_indices: Vec<usize> = tasks.iter().enumerate().filter(|(_, task)| {
+                    let mut filtered_indices: Vec<usize> = tasks.iter().enumerate().filter(|(_, task)| {
                         // Category filter
                         let cat_ok = match self.selected_filter {
                             FilterCategory::All => true,
@@ -2441,6 +2948,91 @@ impl eframe::App for RapidApp {
                         }
                         true
                     }).map(|(i, _)| i).collect();
+
+                    // Apply Column Sorting if selected
+                    if let Some(col) = self.sort_column {
+                        filtered_indices.sort_by(|&a, &b| {
+                            let ta = &tasks[a];
+                            let tb = &tasks[b];
+                            let ord = match col {
+                                TaskSortColumn::Filename => ta.filename.to_lowercase().cmp(&tb.filename.to_lowercase()),
+                                TaskSortColumn::Size => {
+                                    let sa = ta.total_bytes.unwrap_or(ta.downloaded_bytes);
+                                    let sb = tb.total_bytes.unwrap_or(tb.downloaded_bytes);
+                                    sa.cmp(&sb)
+                                }
+                                TaskSortColumn::Status => {
+                                    let rank = |s: &DownloadStatus| match s {
+                                        DownloadStatus::Downloading => 0,
+                                        DownloadStatus::Probing => 1,
+                                        DownloadStatus::Paused => 2,
+                                        DownloadStatus::Queued => 3,
+                                        DownloadStatus::Completed => 4,
+                                        DownloadStatus::Failed(_) => 5,
+                                        DownloadStatus::Cancelled => 6,
+                                    };
+                                    rank(&ta.status).cmp(&rank(&tb.status))
+                                }
+                                TaskSortColumn::Progress => {
+                                    ta.progress_percent.partial_cmp(&tb.progress_percent).unwrap_or(std::cmp::Ordering::Equal)
+                                }
+                                TaskSortColumn::Speed => ta.speed_bps.cmp(&tb.speed_bps),
+                                TaskSortColumn::Eta => {
+                                    let ea = ta.eta_seconds.unwrap_or(u64::MAX);
+                                    let eb = tb.eta_seconds.unwrap_or(u64::MAX);
+                                    ea.cmp(&eb)
+                                }
+                            };
+                            if self.sort_ascending { ord } else { ord.reverse() }
+                        });
+                    }
+
+                    // Keyboard Navigation (Up / Down arrows to change selection, Delete to delete, Space to toggle pause/resume)
+                    let key_up = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
+                    let key_down = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
+                    let key_del = ctx.input(|i| i.key_pressed(egui::Key::Delete));
+                    let key_space = !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space));
+
+                    if key_del {
+                        if !self.selected_tasks.is_empty() {
+                            action_remove_ids = self.selected_tasks.iter().cloned().collect();
+                        } else if let Some(idx) = selected {
+                            if idx < tasks.len() {
+                                action_remove_ids.push(tasks[idx].id.clone());
+                            }
+                        }
+                    }
+
+                    if key_space {
+                        if let Some(idx) = selected {
+                            if idx < tasks.len() {
+                                let t = &tasks[idx];
+                                if t.status == DownloadStatus::Downloading {
+                                    action_pause.push(idx);
+                                } else if matches!(t.status, DownloadStatus::Paused | DownloadStatus::Failed(_)) {
+                                    action_resume.push(idx);
+                                }
+                            }
+                        }
+                    }
+
+                    if !filtered_indices.is_empty() {
+                        if key_up {
+                            let curr_pos = selected.and_then(|s| filtered_indices.iter().position(|&x| x == s)).unwrap_or(0);
+                            let new_pos = if curr_pos > 0 { curr_pos - 1 } else { 0 };
+                            let target_i = filtered_indices[new_pos];
+                            selected = Some(target_i);
+                            self.selected_tasks.clear();
+                            self.selected_tasks.insert(tasks[target_i].id.clone());
+                        } else if key_down {
+                            let curr_pos = selected.and_then(|s| filtered_indices.iter().position(|&x| x == s)).unwrap_or(0);
+                            let new_pos = if curr_pos + 1 < filtered_indices.len() { curr_pos + 1 } else { curr_pos };
+                            let target_i = filtered_indices[new_pos];
+                            selected = Some(target_i);
+                            self.selected_tasks.clear();
+                            self.selected_tasks.insert(tasks[target_i].id.clone());
+                        }
+                    }
 
                     if tasks.is_empty() {
                         selected = None;
@@ -2523,289 +3115,398 @@ impl eframe::App for RapidApp {
                     } else {
                         let total_width = ui.available_width();
                         let total_height = ui.available_height();
-                        let progress_width = (180.0 + (total_width - 1000.0) * 0.12).clamp(160.0, 300.0);
-                        let fixed_columns_sum = 32.0 + 85.0 + 100.0 + progress_width + 90.0 + 70.0 + 135.0;
-                        let filename_width = (total_width - fixed_columns_sum - 10.0).max(220.0);
+                        let show_eta = total_width >= 850.0;
+                        let show_speed = total_width >= 720.0;
+                        let progress_width = (160.0 + (total_width - 900.0) * 0.10).clamp(130.0, 240.0);
+                        let fixed_columns_sum = 32.0 + 80.0 + 90.0 + progress_width + (if show_speed { 85.0 } else { 0.0 }) + (if show_eta { 65.0 } else { 0.0 }) + 130.0;
+                        let filename_width = (total_width - fixed_columns_sum - 10.0).max(180.0);
 
-                        egui_extras::TableBuilder::new(ui)
+                        let mut sort_col_clicked: Option<TaskSortColumn> = None;
+
+                        let mut builder = egui_extras::TableBuilder::new(ui)
                             .striped(true)
                             .max_scroll_height(total_height.max(300.0))
                             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                             .column(egui_extras::Column::exact(32.0)) // Checkbox
                             .column(egui_extras::Column::exact(filename_width).clip(true)) // Filename
-                            .column(egui_extras::Column::exact(85.0))  // Size
-                            .column(egui_extras::Column::exact(100.0)) // Status
-                            .column(egui_extras::Column::exact(progress_width)) // Progress
-                            .column(egui_extras::Column::exact(90.0))  // Speed
-                            .column(egui_extras::Column::exact(70.0))  // ETA
-                            .column(egui_extras::Column::exact(135.0)) // Actions
-                                    .header(26.0, |mut header| {
-                                        header.col(|ui| {
-                                            let all_selected = !filtered_indices.is_empty() && filtered_indices.iter().all(|&i| {
-                                                let id = &tasks[i].id;
-                                                self.selected_tasks.contains(id)
-                                            });
-                                            let mut check = all_selected;
-                                            if ui.checkbox(&mut check, "").clicked() {
-                                                if check {
-                                                    for &i in &filtered_indices {
-                                                        self.selected_tasks.insert(tasks[i].id.clone());
-                                                    }
-                                                    if !filtered_indices.is_empty() {
-                                                        selected = Some(filtered_indices[0]);
-                                                    }
-                                                } else {
-                                                    for &i in &filtered_indices {
-                                                        self.selected_tasks.remove(&tasks[i].id);
-                                                    }
-                                                    selected = None;
+                            .column(egui_extras::Column::exact(80.0))  // Size
+                            .column(egui_extras::Column::exact(90.0)) // Status
+                            .column(egui_extras::Column::exact(progress_width)); // Progress
+
+                        if show_speed {
+                            builder = builder.column(egui_extras::Column::exact(85.0)); // Speed
+                        }
+                        if show_eta {
+                            builder = builder.column(egui_extras::Column::exact(65.0)); // ETA
+                        }
+                        builder = builder.column(egui_extras::Column::exact(130.0)); // Actions
+
+                        builder
+                            .header(26.0, |mut header| {
+                                header.col(|ui| {
+                                    let all_selected = !filtered_indices.is_empty() && filtered_indices.iter().all(|&i| {
+                                        let id = &tasks[i].id;
+                                        self.selected_tasks.contains(id)
+                                    });
+                                    let mut check = all_selected;
+                                    if ui.checkbox(&mut check, "").clicked() {
+                                        if check {
+                                            for &i in &filtered_indices {
+                                                self.selected_tasks.insert(tasks[i].id.clone());
+                                            }
+                                            if !filtered_indices.is_empty() {
+                                                selected = Some(filtered_indices[0]);
+                                            }
+                                        } else {
+                                            for &i in &filtered_indices {
+                                                self.selected_tasks.remove(&tasks[i].id);
+                                            }
+                                            selected = None;
+                                        }
+                                    }
+                                });
+                                header.col(|ui| {
+                                    let arrow = if self.sort_column == Some(TaskSortColumn::Filename) { if self.sort_ascending { " ▲" } else { " ▼" } } else { "" };
+                                    let text = format!("Filename{}", arrow);
+                                    let color = if self.sort_column == Some(TaskSortColumn::Filename) { GLASS_SECONDARY } else { PINK_PASTEL };
+                                    if ui.add(egui::Label::new(RichText::new(text).strong().color(color)).sense(egui::Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Sort by Filename").clicked() {
+                                        sort_col_clicked = Some(TaskSortColumn::Filename);
+                                    }
+                                });
+                                header.col(|ui| {
+                                    let arrow = if self.sort_column == Some(TaskSortColumn::Size) { if self.sort_ascending { " ▲" } else { " ▼" } } else { "" };
+                                    let text = format!("Size{}", arrow);
+                                    let color = if self.sort_column == Some(TaskSortColumn::Size) { GLASS_SECONDARY } else { PINK_PASTEL };
+                                    if ui.add(egui::Label::new(RichText::new(text).strong().color(color)).sense(egui::Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Sort by File Size").clicked() {
+                                        sort_col_clicked = Some(TaskSortColumn::Size);
+                                    }
+                                });
+                                header.col(|ui| {
+                                    let arrow = if self.sort_column == Some(TaskSortColumn::Status) { if self.sort_ascending { " ▲" } else { " ▼" } } else { "" };
+                                    let text = format!("Status{}", arrow);
+                                    let color = if self.sort_column == Some(TaskSortColumn::Status) { GLASS_SECONDARY } else { PINK_PASTEL };
+                                    if ui.add(egui::Label::new(RichText::new(text).strong().color(color)).sense(egui::Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Sort by Status").clicked() {
+                                        sort_col_clicked = Some(TaskSortColumn::Status);
+                                    }
+                                });
+                                header.col(|ui| {
+                                    let arrow = if self.sort_column == Some(TaskSortColumn::Progress) { if self.sort_ascending { " ▲" } else { " ▼" } } else { "" };
+                                    let text = format!("Progress{}", arrow);
+                                    let color = if self.sort_column == Some(TaskSortColumn::Progress) { GLASS_SECONDARY } else { PINK_PASTEL };
+                                    if ui.add(egui::Label::new(RichText::new(text).strong().color(color)).sense(egui::Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Sort by Download Progress").clicked() {
+                                        sort_col_clicked = Some(TaskSortColumn::Progress);
+                                    }
+                                });
+                                if show_speed {
+                                    header.col(|ui| {
+                                        let arrow = if self.sort_column == Some(TaskSortColumn::Speed) { if self.sort_ascending { " ▲" } else { " ▼" } } else { "" };
+                                        let text = format!("Speed{}", arrow);
+                                        let color = if self.sort_column == Some(TaskSortColumn::Speed) { GLASS_SECONDARY } else { PINK_PASTEL };
+                                        if ui.add(egui::Label::new(RichText::new(text).strong().color(color)).sense(egui::Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Sort by Download Speed").clicked() {
+                                            sort_col_clicked = Some(TaskSortColumn::Speed);
+                                        }
+                                    });
+                                }
+                                if show_eta {
+                                    header.col(|ui| {
+                                        let arrow = if self.sort_column == Some(TaskSortColumn::Eta) { if self.sort_ascending { " ▲" } else { " ▼" } } else { "" };
+                                        let text = format!("ETA{}", arrow);
+                                        let color = if self.sort_column == Some(TaskSortColumn::Eta) { GLASS_SECONDARY } else { PINK_PASTEL };
+                                        if ui.add(egui::Label::new(RichText::new(text).strong().color(color)).sense(egui::Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Sort by Estimated Time Left").clicked() {
+                                            sort_col_clicked = Some(TaskSortColumn::Eta);
+                                        }
+                                    });
+                                }
+                                header.col(|ui| { ui.strong(RichText::new("Actions").color(PINK_PASTEL)); });
+                            })
+                            .body(|body| {
+                                body.rows(32.0, filtered_indices.len(), |mut row| {
+                                    let filter_idx = row.index();
+                                    let i = filtered_indices[filter_idx];
+                                    let item = &tasks[i];
+                                    let is_checked = self.selected_tasks.contains(&item.id);
+                                    let is_sel = selected == Some(i) || is_checked;
+                                    let is_downloading = item.status == DownloadStatus::Downloading;
+                                    let is_resumable = matches!(item.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
+                                    let is_complete = item.status == DownloadStatus::Completed;
+
+                                    row.set_selected(is_sel);
+                                    
+                                    // 0. Checkbox column
+                                    row.col(|ui| {
+                                        let mut check = is_checked;
+                                        if ui.checkbox(&mut check, "").clicked() {
+                                            if check {
+                                                self.selected_tasks.insert(item.id.clone());
+                                                selected = Some(i);
+                                            } else {
+                                                self.selected_tasks.remove(&item.id);
+                                                if selected == Some(i) {
+                                                    selected = self.selected_tasks.iter().find_map(|checked_id| {
+                                                        tasks.iter().position(|t| &t.id == checked_id)
+                                                    });
                                                 }
                                             }
-                                        });
-                                        header.col(|ui| { ui.strong(RichText::new("Filename").color(PINK_PASTEL)); });
-                                        header.col(|ui| { ui.strong(RichText::new("Size").color(PINK_PASTEL)); });
-                                        header.col(|ui| { ui.strong(RichText::new("Status").color(PINK_PASTEL)); });
-                                        header.col(|ui| { ui.strong(RichText::new("Progress").color(PINK_PASTEL)); });
-                                        header.col(|ui| { ui.strong(RichText::new("Speed").color(PINK_PASTEL)); });
-                                        header.col(|ui| { ui.strong(RichText::new("ETA").color(PINK_PASTEL)); });
-                                        header.col(|ui| { ui.strong(RichText::new("Actions").color(PINK_PASTEL)); });
-                                    })
-                                    .body(|body| {
-                                        body.rows(32.0, filtered_indices.len(), |mut row| {
-                                            let filter_idx = row.index();
-                                            let i = filtered_indices[filter_idx];
-                                            let item = &tasks[i];
-                                            let is_checked = self.selected_tasks.contains(&item.id);
-                                            let is_sel = selected == Some(i) || is_checked;
-                                            let is_downloading = item.status == DownloadStatus::Downloading;
-                                            let is_resumable = matches!(item.status, DownloadStatus::Paused | DownloadStatus::Failed(_));
-                                            let is_complete = item.status == DownloadStatus::Completed;
+                                        }
+                                    });
 
-                                            row.set_selected(is_sel);
-                                            
-                                            // 0. Checkbox column
-                                            row.col(|ui| {
-                                                let mut check = is_checked;
-                                                if ui.checkbox(&mut check, "").clicked() {
-                                                    if check {
-                                                        self.selected_tasks.insert(item.id.clone());
-                                                        selected = Some(i);
-                                                    } else {
-                                                        self.selected_tasks.remove(&item.id);
-                                                        if selected == Some(i) {
-                                                            selected = self.selected_tasks.iter().find_map(|checked_id| {
-                                                                tasks.iter().position(|t| &t.id == checked_id)
-                                                            });
-                                                        }
-                                                    }
+                                    // 1. Filename column with modern badge + click to select / double-click to open
+                                    row.col(|ui| {
+                                        ui.horizontal(|ui| {
+                                            let ext = item.filename.rsplit('.').next().unwrap_or("").to_lowercase();
+                                            render_file_type_badge(ui, &ext);
+                                            ui.add_space(4.0);
+
+                                            let name_col = if is_sel {
+                                                Color32::WHITE
+                                            } else if is_complete {
+                                                STATUS_COMPLETED
+                                            } else {
+                                                Color32::from_rgb(240, 232, 248)
+                                            };
+                                            let shaped_filename = shape_bengali(&item.filename);
+                                            let label_text = if is_complete {
+                                                RichText::new(&shaped_filename).color(name_col).strong().underline()
+                                            } else {
+                                                RichText::new(&shaped_filename).color(name_col).strong()
+                                            };
+                                            let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()).truncate())
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .on_hover_text(if is_complete { "Click to select, double-click to open file" } else { "Click to select, double-click to open folder" });
+
+                                            if resp.double_clicked() {
+                                                if is_complete {
+                                                    action_open_file = Some(i);
+                                                } else {
+                                                    action_open_folder = Some(i);
                                                 }
-                                            });
+                                            } else if resp.clicked() {
+                                                selected = Some(i);
+                                                self.selected_tasks.clear();
+                                                self.selected_tasks.insert(item.id.clone());
+                                            }
 
-                                            // 1. Filename column with modern badge + click to select / double-click to open
-                                            row.col(|ui| {
-                                                ui.horizontal(|ui| {
-                                                    let ext = item.filename.rsplit('.').next().unwrap_or("").to_lowercase();
-                                                    render_file_type_badge(ui, &ext);
-                                                    ui.add_space(4.0);
-
-                                                    let name_col = if is_sel {
-                                                        Color32::WHITE
-                                                    } else if is_complete {
-                                                        STATUS_COMPLETED
-                                                    } else {
-                                                        Color32::from_rgb(240, 232, 248)
-                                                    };
-                                                    let shaped_filename = shape_bengali(&item.filename);
-                                                    let label_text = if is_complete {
-                                                        RichText::new(&shaped_filename).color(name_col).strong().underline()
-                                                    } else {
-                                                        RichText::new(&shaped_filename).color(name_col).strong()
-                                                    };
-                                                    let resp = ui.add(egui::Label::new(label_text).sense(egui::Sense::click()).truncate())
-                                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                        .on_hover_text(if is_complete { "Click to select, double-click to open file" } else { "Click to select" });
-
-                                                    if is_complete && resp.double_clicked() {
+                                            resp.context_menu(|ui| {
+                                                if is_complete {
+                                                    if ui.button("▶  Open File").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                                         action_open_file = Some(i);
-                                                    } else if resp.clicked() {
-                                                        selected = Some(i);
-                                                        self.selected_tasks.clear();
-                                                        self.selected_tasks.insert(item.id.clone());
+                                                        ui.close_menu();
                                                     }
-
-                                                    resp.context_menu(|ui| {
-                                                        if is_complete {
-                                                            if ui.button("▶  Open File").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_open_file = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                        }
-                                                        if is_downloading {
-                                                            if ui.button("⏸  Pause").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_pause = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                        } else if is_resumable {
-                                                            if ui.button("▶  Resume").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                                action_resume = Some(i);
-                                                                ui.close_menu();
-                                                            }
-                                                        }
-                                                        if ui.button("📁 Open Containing Folder").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                            action_open_folder = Some(i);
-                                                            ui.close_menu();
-                                                        }
-                                                        if ui.button("🔗 Copy URL").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                            action_copy_url = Some(item.url.clone());
-                                                            ui.close_menu();
-                                                        }
-                                                        ui.separator();
-                                                        if ui.button("🔄 Redownload").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                            action_redownload = Some(i);
-                                                            ui.close_menu();
-                                                        }
-                                                        if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                            action_remove_ids.push(item.id.clone());
-                                                            ui.close_menu();
-                                                        }
-                                                    });
-                                                });
-                                            });
-
-                                            // 2. Size column
-                                            row.col(|ui| {
-                                                let sz_text = if let Some(total) = item.total_bytes {
-                                                    format_bytes(total)
-                                                } else if item.downloaded_bytes > 0 {
-                                                    format_bytes(item.downloaded_bytes)
-                                                } else {
-                                                    "--".to_string()
-                                                };
-                                                let resp = ui.add(egui::Label::new(RichText::new(sz_text).color(Color32::from_rgb(226, 232, 240)).strong()).sense(egui::Sense::click()));
-                                                if resp.clicked() {
-                                                    selected = Some(i);
-                                                    self.selected_tasks.clear();
-                                                    self.selected_tasks.insert(item.id.clone());
                                                 }
-                                            });
-
-                                            // 3. Status column
-                                            row.col(|ui| {
-                                                let (color, text, tooltip) = match &item.status {
-                                                    DownloadStatus::Downloading => (STATUS_DOWNLOADING, "Downloading".to_string(), None),
-                                                    DownloadStatus::Completed => (STATUS_COMPLETED, "Completed".to_string(), None),
-                                                    DownloadStatus::Paused => (STATUS_PAUSED, "Paused".to_string(), Some("Download is paused. Click Resume to continue.".to_string())),
-                                                    DownloadStatus::Failed(err) => (STATUS_FAILED, "Failed".to_string(), Some(format!("Failure reason: {}\nClick Resume/Retry to retry.", err))),
-                                                    _ => (PINK_MUTED, "Queued".to_string(), None),
-                                                };
-                                                let mut label = ui.add(egui::Label::new(RichText::new(text).color(color).strong()).sense(egui::Sense::click()));
-                                                if let Some(tip) = tooltip {
-                                                    label = label.on_hover_text(tip);
-                                                }
-                                                if label.clicked() {
-                                                    selected = Some(i);
-                                                    self.selected_tasks.clear();
-                                                    self.selected_tasks.insert(item.id.clone());
-                                                }
-                                            });
-
-                                            // 4. Progress bar with high-contrast text and sleek bar
-                                            row.col(|ui| {
-                                                let ratio = (item.progress_percent / 100.0).clamp(0.0, 1.0);
-                                                let (bar_color, pct_label) = match item.status {
-                                                    DownloadStatus::Completed => (STATUS_COMPLETED, "100%".to_string()),
-                                                    DownloadStatus::Downloading => (STATUS_DOWNLOADING, format!("{:.1}%", item.progress_percent)),
-                                                    DownloadStatus::Paused => (STATUS_PAUSED, format!("{:.1}%", item.progress_percent)),
-                                                    DownloadStatus::Failed(_) => (STATUS_FAILED, format!("{:.0}%", item.progress_percent)),
-                                                    _ => (Color32::from_rgb(80, 50, 80), format!("{:.0}%", item.progress_percent)),
-                                                };
-                                                let resp = ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
-                                                    let bar_width = (ui.available_width() - 50.0).max(40.0);
-                                                    let bar = egui::ProgressBar::new(ratio)
-                                                        .fill(bar_color)
-                                                        .desired_width(bar_width)
-                                                        .desired_height(7.0);
-                                                    ui.add(bar);
-                                                    ui.label(RichText::new(pct_label).color(Color32::WHITE).size(12.0).strong());
-                                                }).response;
-                                                let interact_resp = ui.interact(resp.rect, ui.id().with(("progress_click", i)), egui::Sense::click());
-                                                if interact_resp.clicked() {
-                                                    selected = Some(i);
-                                                    self.selected_tasks.clear();
-                                                    self.selected_tasks.insert(item.id.clone());
-                                                }
-                                            });
-
-                                            // 5. Speed column - Electric Emerald Mint for high contrast
-                                            row.col(|ui| {
-                                                let speed_text = if item.status == DownloadStatus::Downloading {
-                                                    format_speed(item.speed_bps)
-                                                } else {
-                                                    "--".to_string()
-                                                };
-                                                let resp = ui.add(egui::Label::new(RichText::new(speed_text).color(Color32::from_rgb(52, 211, 153)).strong()).sense(egui::Sense::click()));
-                                                if resp.clicked() {
-                                                    selected = Some(i);
-                                                    self.selected_tasks.clear();
-                                                    self.selected_tasks.insert(item.id.clone());
-                                                }
-                                            });
-
-                                            // 6. ETA column - Crisp Light Slate
-                                            row.col(|ui| {
-                                                let eta_text = if item.status == DownloadStatus::Downloading {
-                                                    if let Some(eta) = item.eta_seconds {
-                                                        format_eta(eta)
-                                                    } else {
-                                                        "--".to_string()
+                                                if is_downloading {
+                                                    if ui.button("⏸  Pause").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                        action_pause.push(i);
+                                                        ui.close_menu();
                                                     }
-                                                } else {
-                                                    "--".to_string()
-                                                };
-                                                let resp = ui.add(egui::Label::new(RichText::new(eta_text).color(Color32::from_rgb(203, 213, 225)).strong()).sense(egui::Sense::click()));
-                                                if resp.clicked() {
-                                                    selected = Some(i);
-                                                    self.selected_tasks.clear();
-                                                    self.selected_tasks.insert(item.id.clone());
+                                                } else if is_resumable {
+                                                    if ui.button("▶  Resume").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                        action_resume.push(i);
+                                                        ui.close_menu();
+                                                    }
                                                 }
-                                            });
-
-                                            // 7. Modern Vector Action Buttons
-                                            row.col(|ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
-                                                    if is_downloading {
-                                                        if modern_icon_button(ui, ModernIcon::Pause, Vec2::new(24.0, 22.0), STATUS_PAUSED, Color32::WHITE, "Pause") {
-                                                            action_pause = Some(i);
-                                                        }
-                                                    } else if is_resumable {
-                                                        if modern_icon_button(ui, ModernIcon::Play, Vec2::new(24.0, 22.0), STATUS_COMPLETED, Color32::WHITE, "Resume") {
-                                                            action_resume = Some(i);
-                                                        }
-                                                    }
-
-                                                    if modern_icon_button(ui, ModernIcon::Refresh, Vec2::new(24.0, 22.0), Color32::from_rgb(180, 195, 220), Color32::WHITE, "Redownload") {
-                                                        action_redownload = Some(i);
-                                                    }
-
-                                                    if let DownloadStatus::Failed(_) = &item.status {
-                                                        if item.url.contains("google") || item.url.contains("drive") || item.url.contains("takeout") {
-                                                            if modern_icon_button(ui, ModernIcon::Globe, Vec2::new(24.0, 22.0), Color32::from_rgb(56, 189, 248), Color32::WHITE, "Bypass with Chromium Engine") {
-                                                                launch_chrome_with_extension(Some(&item.url));
-                                                            }
-                                                        }
-                                                    }
-
-                                                    if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(24.0, 22.0), STATUS_FAILED, Color32::WHITE, "Delete") {
-                                                        action_remove_ids.push(item.id.clone());
-                                                    }
-                                                });
+                                                if ui.button("📁 Open Containing Folder").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                    action_open_folder = Some(i);
+                                                    ui.close_menu();
+                                                }
+                                                if ui.button("🔗 Copy URL").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                    action_copy_url = Some(item.url.clone());
+                                                    ui.close_menu();
+                                                }
+                                                ui.separator();
+                                                if ui.button("🔄 Redownload").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                    action_redownload = Some(i);
+                                                    ui.close_menu();
+                                                }
+                                                if ui.button(RichText::new("🗑 Delete").color(STATUS_FAILED)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                    action_remove_ids.push(item.id.clone());
+                                                    ui.close_menu();
+                                                }
                                             });
                                         });
                                     });
+
+                                    // 2. Size column
+                                    row.col(|ui| {
+                                        let sz_text = if let Some(total) = item.total_bytes {
+                                            format_bytes(total)
+                                        } else if item.downloaded_bytes > 0 {
+                                            format_bytes(item.downloaded_bytes)
+                                        } else {
+                                            "--".to_string()
+                                        };
+                                        let resp = ui.add(egui::Label::new(RichText::new(sz_text).color(Color32::from_rgb(226, 232, 240)).strong()).sense(egui::Sense::click()));
+                                        if resp.double_clicked() {
+                                            if is_complete {
+                                                action_open_file = Some(i);
+                                            } else {
+                                                action_open_folder = Some(i);
+                                            }
+                                        } else if resp.clicked() {
+                                            selected = Some(i);
+                                            self.selected_tasks.clear();
+                                            self.selected_tasks.insert(item.id.clone());
+                                        }
+                                    });
+
+                                    // 3. Status column
+                                    row.col(|ui| {
+                                        let (color, text, tooltip) = match &item.status {
+                                            DownloadStatus::Downloading => (STATUS_DOWNLOADING, "Downloading".to_string(), None),
+                                            DownloadStatus::Completed => (STATUS_COMPLETED, "Completed".to_string(), None),
+                                            DownloadStatus::Paused => (STATUS_PAUSED, "Paused".to_string(), Some("Download is paused. Click Resume to continue.".to_string())),
+                                            DownloadStatus::Failed(err) => (STATUS_FAILED, "Failed".to_string(), Some(format!("Failure reason: {}\nClick Resume/Retry to retry.", err))),
+                                            _ => (PINK_MUTED, "Queued".to_string(), None),
+                                        };
+                                        let mut label = ui.add(egui::Label::new(RichText::new(text).color(color).strong()).sense(egui::Sense::click()));
+                                        if let Some(tip) = tooltip {
+                                            label = label.on_hover_text(tip);
+                                        }
+                                        if label.double_clicked() {
+                                            if is_complete {
+                                                action_open_file = Some(i);
+                                            } else {
+                                                action_open_folder = Some(i);
+                                            }
+                                        } else if label.clicked() {
+                                            selected = Some(i);
+                                            self.selected_tasks.clear();
+                                            self.selected_tasks.insert(item.id.clone());
+                                        }
+                                    });
+
+                                    // 4. Progress bar with high-contrast text and sleek bar
+                                    row.col(|ui| {
+                                        let ratio = (item.progress_percent / 100.0).clamp(0.0, 1.0);
+                                        let (bar_color, pct_label) = match item.status {
+                                            DownloadStatus::Completed => (STATUS_COMPLETED, "100%".to_string()),
+                                            DownloadStatus::Downloading => (STATUS_DOWNLOADING, format!("{:.1}%", item.progress_percent)),
+                                            DownloadStatus::Paused => (STATUS_PAUSED, format!("{:.1}%", item.progress_percent)),
+                                            DownloadStatus::Failed(_) => (STATUS_FAILED, format!("{:.0}%", item.progress_percent)),
+                                            _ => (Color32::from_rgb(80, 50, 80), format!("{:.0}%", item.progress_percent)),
+                                        };
+                                        let resp = ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+                                            let bar_width = (ui.available_width() - 50.0).max(40.0);
+                                            let bar = egui::ProgressBar::new(ratio)
+                                                .fill(bar_color)
+                                                .desired_width(bar_width)
+                                                .desired_height(7.0);
+                                            ui.add(bar);
+                                            ui.label(RichText::new(pct_label).color(Color32::WHITE).size(12.0).strong());
+                                        }).response;
+                                        let interact_resp = ui.interact(resp.rect, ui.id().with(("progress_click", i)), egui::Sense::click());
+                                        if interact_resp.double_clicked() {
+                                            if is_complete {
+                                                action_open_file = Some(i);
+                                            } else {
+                                                action_open_folder = Some(i);
+                                            }
+                                        } else if interact_resp.clicked() {
+                                            selected = Some(i);
+                                            self.selected_tasks.clear();
+                                            self.selected_tasks.insert(item.id.clone());
+                                        }
+                                    });
+
+                                    // 5. Speed column - Electric Emerald Mint for high contrast
+                                    if show_speed {
+                                        row.col(|ui| {
+                                            let speed_text = if item.status == DownloadStatus::Downloading {
+                                                format_speed(item.speed_bps)
+                                            } else {
+                                                "--".to_string()
+                                            };
+                                            let resp = ui.add(egui::Label::new(RichText::new(speed_text).color(Color32::from_rgb(52, 211, 153)).strong()).sense(egui::Sense::click()));
+                                            if resp.double_clicked() {
+                                                if is_complete {
+                                                    action_open_file = Some(i);
+                                                } else {
+                                                    action_open_folder = Some(i);
+                                                }
+                                            } else if resp.clicked() {
+                                                selected = Some(i);
+                                                self.selected_tasks.clear();
+                                                self.selected_tasks.insert(item.id.clone());
+                                            }
+                                        });
+                                    }
+
+                                    // 6. ETA column - Crisp Light Slate
+                                    if show_eta {
+                                        row.col(|ui| {
+                                            let eta_text = if item.status == DownloadStatus::Downloading {
+                                                if let Some(eta) = item.eta_seconds {
+                                                    format_eta(eta)
+                                                } else {
+                                                    "--".to_string()
+                                                }
+                                            } else {
+                                                "--".to_string()
+                                            };
+                                            let resp = ui.add(egui::Label::new(RichText::new(eta_text).color(Color32::from_rgb(203, 213, 225)).strong()).sense(egui::Sense::click()));
+                                            if resp.double_clicked() {
+                                                if is_complete {
+                                                    action_open_file = Some(i);
+                                                } else {
+                                                    action_open_folder = Some(i);
+                                                }
+                                            } else if resp.clicked() {
+                                                selected = Some(i);
+                                                self.selected_tasks.clear();
+                                                self.selected_tasks.insert(item.id.clone());
+                                            }
+                                        });
+                                    }
+
+                                    // 7. Modern Vector Action Buttons
+                                    row.col(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+                                            if is_downloading {
+                                                if modern_icon_button(ui, ModernIcon::Pause, Vec2::new(24.0, 22.0), STATUS_PAUSED, Color32::WHITE, "Pause") {
+                                                    action_pause.push(i);
+                                                }
+                                            } else if is_resumable {
+                                                if modern_icon_button(ui, ModernIcon::Play, Vec2::new(24.0, 22.0), STATUS_COMPLETED, Color32::WHITE, "Resume") {
+                                                    action_resume.push(i);
+                                                }
+                                            }
+
+                                            if modern_icon_button(ui, ModernIcon::Refresh, Vec2::new(24.0, 22.0), Color32::from_rgb(180, 195, 220), Color32::WHITE, "Redownload") {
+                                                action_redownload = Some(i);
+                                            }
+
+                                            if let DownloadStatus::Failed(_) = &item.status {
+                                                if item.url.contains("google") || item.url.contains("drive") || item.url.contains("takeout") {
+                                                    if modern_icon_button(ui, ModernIcon::Globe, Vec2::new(24.0, 22.0), Color32::from_rgb(56, 189, 248), Color32::WHITE, "Bypass with Chromium Engine") {
+                                                        launch_chrome_with_extension(Some(&item.url));
+                                                    }
+                                                }
+                                            }
+
+                                            if modern_icon_button(ui, ModernIcon::Trash, Vec2::new(24.0, 22.0), STATUS_FAILED, Color32::WHITE, "Delete") {
+                                                action_remove_ids.push(item.id.clone());
+                                            }
+                                        });
+                                    });
+                                });
+                            });
+
+                        if let Some(col) = sort_col_clicked {
+                            if self.sort_column == Some(col) {
+                                if self.sort_ascending {
+                                    self.sort_ascending = false;
+                                } else {
+                                    self.sort_column = None;
+                                    self.sort_ascending = true;
+                                }
+                            } else {
+                                self.sort_column = Some(col);
+                                self.sort_ascending = true;
                             }
                         }
+                    }
+                }
 
                 self.selected_task_index = selected;
             });
@@ -2928,9 +3629,10 @@ fn render_quality_selector_combobox(
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         if is_selected {
-                            ui.label(RichText::new("✓").size(14.0).color(Color32::from_rgb(56, 189, 248)).strong());
+                            let (chk_r, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+                            draw_modern_icon(ui.painter(), ModernIcon::Check, chk_r, Color32::from_rgb(56, 189, 248));
                         } else {
-                            ui.label(RichText::new(" ").size(14.0));
+                            ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
                         }
                         ui.add_space(4.0);
                         ui.label(RichText::new(icon).size(15.0));
@@ -3105,12 +3807,8 @@ fn render_parallel_connections_combobox(
 
                             if is_selected {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(
-                                        RichText::new("✓")
-                                            .size(13.0)
-                                            .color(Color32::from_rgb(160, 115, 255))
-                                            .strong(),
-                                    );
+                                    let (chk_r, _) = ui.allocate_exact_size(Vec2::splat(13.0), egui::Sense::hover());
+                                    draw_modern_icon(ui.painter(), ModernIcon::Check, chk_r, Color32::from_rgb(160, 115, 255));
                                 });
                             }
                         });
@@ -3147,13 +3845,13 @@ fn render_parallel_connections_combobox(
             painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 248));
 
             let modal_frame = egui::Frame::none()
-                .fill(Color32::from_rgb(11, 17, 32))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
-                .rounding(egui::Rounding::ZERO)
+                .fill(GLASS_SURFACE)
+                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                .rounding(egui::Rounding::same(12.0))
                 .inner_margin(Margin::ZERO)
                 .shadow(egui::epaint::Shadow {
-                    offset: [0.0, 10.0].into(),
-                    blur: 32.0,
+                    offset: [0.0, 12.0].into(),
+                    blur: 36.0,
                     spread: 2.0,
                     color: Color32::from_black_alpha(230),
                 });
@@ -3164,8 +3862,18 @@ fn render_parallel_connections_combobox(
 
             let is_input_yt = rapid_core::youtube::YoutubeResolver::is_youtube(&self.input_url)
                 || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&self.input_url);
-            let add_modal_w = if is_input_yt { 680.0 } else { 600.0 };
-            let add_modal_h = if is_input_yt { 580.0 } else { 365.0 };
+            let screen_size = ctx.screen_rect().size();
+            let add_modal_w = (screen_size.x - 32.0).clamp(320.0, if is_input_yt { 660.0 } else { 580.0 });
+            let add_modal_h = (screen_size.y - 40.0).clamp(280.0, if is_input_yt { 560.0 } else { 395.0 });
+
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_modal = true;
+            }
+
+            let is_blob_input = self.input_url.trim().starts_with("blob:");
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !is_blob_input && !self.input_url.trim().is_empty() {
+                start_download_req = true;
+            }
 
             egui::Window::new("add_download_modal")
                 .title_bar(false)
@@ -3178,254 +3886,256 @@ fn render_parallel_connections_combobox(
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.spacing_mut().window_margin = Margin::ZERO;
 
-                    let win_rect = ui.max_rect();
-                    let close_w = 46.0_f32;
-                    let close_h = 30.0_f32;
+                    let top_bar_h = 38.0_f32;
+                    let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
+                    let close_w = 40.0_f32;
                     let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(win_rect.max.x - close_w, win_rect.min.y),
-                        egui::pos2(win_rect.max.x, win_rect.min.y + close_h),
+                        egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
+                        egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + top_bar_h),
                     );
 
-                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("add_modal_close_btn_top_right"), egui::Sense::click());
-                    let is_close_hovered = close_resp.hovered();
-                    if is_close_hovered {
-                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
-                    }
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("add_modal_close_btn_top_right"), egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Close (Esc)");
                     if close_resp.clicked() {
                         close_modal = true;
                     }
 
-                    // Background: Red (bright red on hover)
-                    let bg_color = if is_close_hovered {
-                        Color32::from_rgb(255, 60, 60)
+                    let close_bg = if close_resp.is_pointer_button_down_on() {
+                        Color32::from_rgb(185, 28, 28)
+                    } else if close_resp.hovered() {
+                        Color32::from_rgb(239, 68, 68)
                     } else {
-                        Color32::from_rgb(220, 38, 38)
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 8)
                     };
 
-                    // Border radius removed as requested: 0.0
-                    ui.painter().rect_filled(close_rect, egui::Rounding::ZERO, bg_color);
+                    ui.painter().rect_filled(close_rect, egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 6.0 }, close_bg);
+                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(10.0)), Color32::WHITE);
 
-                    // Icon: White 'X'
-                    let icon_center = close_rect.center();
-                    let stroke = Stroke::new(1.8_f32, Color32::WHITE);
-                    let sz = 4.5_f32;
-                    ui.painter().line_segment(
-                        [egui::pos2(icon_center.x - sz, icon_center.y - sz), egui::pos2(icon_center.x + sz, icon_center.y + sz)],
-                        stroke,
-                    );
-                    ui.painter().line_segment(
-                        [egui::pos2(icon_center.x + sz, icon_center.y - sz), egui::pos2(icon_center.x - sz, icon_center.y + sz)],
-                        stroke,
+                    let title_text = if is_input_yt { "🎬 Add Accelerated Media Download" } else { "⚡ Add New Download" };
+                    ui.painter().text(
+                        egui::pos2(top_bar_rect.min.x + 20.0, top_bar_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        title_text,
+                        egui::FontId::proportional(14.0),
+                        GLASS_TEXT,
                     );
 
-                    ui.add_space(8.0);
+                    ui.painter().line_segment(
+                        [egui::pos2(top_bar_rect.min.x, top_bar_rect.max.y), egui::pos2(top_bar_rect.max.x, top_bar_rect.max.y)],
+                        Stroke::new(1.0_f32, GLASS_BORDER),
+                    );
 
                     egui::Frame::none()
-                        .inner_margin(Margin { left: 22.0, right: 22.0, top: 4.0, bottom: 20.0 })
+                        .inner_margin(Margin { left: 22.0, right: 22.0, top: 12.0, bottom: 14.0 })
                         .show(ui, |ui| {
-                            // Field 1: Source URL + Copy Button (Right-aligned center)
-                            ui.label(RichText::new("Source URL").size(12.5).color(GLASS_TEXT).strong());
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                egui::Frame::none()
-                                    .fill(GLASS_BG)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .inner_margin(Margin::symmetric(10.0, 7.0))
-                                    .show(ui, |ui| {
-                                        let prev_url = self.input_url.clone();
-                                        let edit = egui::TextEdit::singleline(&mut self.input_url)
-                                            .hint_text("Paste URL here e.g. https://example.com/file.zip")
-                                            .font(egui::TextStyle::Body)
-                                            .frame(false)
-                                            .desired_width(ui.available_width() - 85.0);
-                                        ui.add(edit);
+                            egui::ScrollArea::vertical()
+                                .max_height((add_modal_h - 110.0).max(120.0))
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    // Field 1: Source URL + Copy Button (Right-aligned center)
+                                    ui.label(RichText::new("Source URL").size(12.5).color(GLASS_TEXT).strong());
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        egui::Frame::none()
+                                            .fill(GLASS_BG)
+                                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(Margin::symmetric(10.0, 7.0))
+                                            .show(ui, |ui| {
+                                                let prev_url = self.input_url.clone();
+                                                let edit = egui::TextEdit::singleline(&mut self.input_url)
+                                                    .hint_text("Paste URL here e.g. https://example.com/file.zip")
+                                                    .font(egui::TextStyle::Body)
+                                                    .frame(false)
+                                                    .desired_width(ui.available_width() - 85.0);
+                                                ui.add(edit);
 
-                                        if self.input_url != prev_url {
-                                            if rapid_core::youtube::YoutubeResolver::is_extractable_platform(&self.input_url) {
-                                                self.input_filename = "Resolving video title...".to_string();
-                                                let cat_dest = get_categorized_destination(&self.base_download_dir, "video.mp4");
-                                                self.input_dest = cat_dest.to_string_lossy().to_string();
-                                            } else {
-                                                let candidate = extract_filename_from_url(&self.input_url);
-                                                if !candidate.is_empty() && !rapid_core::engine::is_generic_placeholder(&candidate) {
-                                                    self.input_filename = candidate.clone();
-                                                    let cat_dest = get_categorized_destination(&self.base_download_dir, &candidate);
+                                                if self.input_url != prev_url {
+                                                    if rapid_core::youtube::YoutubeResolver::is_extractable_platform(&self.input_url) {
+                                                        self.input_filename = "Resolving video title...".to_string();
+                                                        let cat_dest = get_categorized_destination(&self.base_download_dir, "video.mp4");
+                                                        self.input_dest = cat_dest.to_string_lossy().to_string();
+                                                    } else {
+                                                        let candidate = extract_filename_from_url(&self.input_url);
+                                                        if !candidate.is_empty() && !rapid_core::engine::is_generic_placeholder(&candidate) {
+                                                            self.input_filename = candidate.clone();
+                                                            let cat_dest = get_categorized_destination(&self.base_download_dir, &candidate);
+                                                            self.input_dest = cat_dest.to_string_lossy().to_string();
+                                                        } else {
+                                                            self.input_filename.clear();
+                                                            self.input_dest = self.base_download_dir.to_string_lossy().to_string();
+                                                        }
+                                                    }
+                                                    if self.input_url.starts_with("http://") || self.input_url.starts_with("https://") {
+                                                        url_to_probe = Some(self.input_url.clone());
+                                                    }
+                                                }
+                                            });
+
+                                        let copy_btn = egui::Button::new(
+                                            RichText::new("Copy")
+                                                .size(12.0)
+                                                .color(GLASS_SECONDARY)
+                                                .strong(),
+                                        )
+                                        .min_size(Vec2::new(75.0, 32.0))
+                                        .fill(GLASS_CARD)
+                                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                        .rounding(egui::Rounding::same(6.0));
+
+                                        if ui.add(copy_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Copy Source URL to clipboard").clicked() {
+                                            ui.output_mut(|o| o.copied_text = self.input_url.clone());
+                                        }
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // Field 2: File Name (Full width) with Bengali Shaping support
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("File Name").size(12.5).color(GLASS_TEXT).strong());
+                                        let ext = std::path::Path::new(&self.input_filename)
+                                            .extension()
+                                            .and_then(|e| e.to_str())
+                                            .unwrap_or("")
+                                            .to_lowercase();
+                                        if !ext.is_empty() && ext != "bin" && ext != "tmp" {
+                                            render_file_type_badge(ui, &ext);
+                                        }
+                                    });
+                                    ui.add_space(4.0);
+                                    egui::Frame::none()
+                                        .fill(GLASS_BG)
+                                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                        .rounding(egui::Rounding::same(6.0))
+                                        .inner_margin(Margin::symmetric(10.0, 7.0))
+                                        .show(ui, |ui| {
+                                            let edit = egui::TextEdit::singleline(&mut self.input_filename)
+                                                .hint_text(if self.input_url.is_empty() { "Enter file name or paste URL" } else { "Resolving original filename..." })
+                                                .font(egui::TextStyle::Body)
+                                                .frame(false)
+                                                .desired_width(ui.available_width());
+                                            if ui.add(edit).changed() {
+                                                if !self.input_filename.trim().is_empty() {
+                                                    let cat_dest = get_categorized_destination(&self.base_download_dir, &self.input_filename);
                                                     self.input_dest = cat_dest.to_string_lossy().to_string();
-                                                } else {
-                                                    self.input_filename.clear();
-                                                    self.input_dest = self.base_download_dir.to_string_lossy().to_string();
                                                 }
                                             }
-                                            if self.input_url.starts_with("http://") || self.input_url.starts_with("https://") {
-                                                url_to_probe = Some(self.input_url.clone());
+                                        });
+
+                                    ui.add_space(10.0);
+
+                                    // Field 3: Save To + Browse Button (Right-aligned center)
+                                    ui.label(RichText::new("Save To").size(12.5).color(GLASS_TEXT).strong());
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        egui::Frame::none()
+                                            .fill(GLASS_BG)
+                                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(Margin::symmetric(10.0, 7.0))
+                                            .show(ui, |ui| {
+                                                let edit = egui::TextEdit::singleline(&mut self.input_dest)
+                                                    .font(egui::TextStyle::Body)
+                                                    .frame(false)
+                                                    .desired_width(ui.available_width() - 85.0);
+                                                ui.add(edit);
+                                            });
+
+                                        let browse_btn = egui::Button::new(
+                                            RichText::new("Browse...")
+                                                .size(12.0)
+                                                .color(GLASS_SECONDARY)
+                                                .strong(),
+                                        )
+                                        .min_size(Vec2::new(75.0, 32.0))
+                                        .fill(GLASS_CARD)
+                                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                        .rounding(egui::Rounding::same(6.0));
+
+                                        if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Select download folder").clicked() {
+                                            let start_dir = PathBuf::from(&self.input_dest);
+                                            let mut dialog = rfd::FileDialog::new();
+                                            if start_dir.exists() {
+                                                dialog = dialog.set_directory(&start_dir);
+                                            }
+                                            if let Some(folder) = dialog.pick_folder() {
+                                                self.input_dest = folder.to_string_lossy().to_string();
                                             }
                                         }
                                     });
 
-                                let copy_btn = egui::Button::new(
-                                    RichText::new("Copy")
-                                        .size(12.0)
-                                        .color(GLASS_SECONDARY)
-                                        .strong(),
-                                )
-                                .min_size(Vec2::new(75.0, 32.0))
-                                .fill(GLASS_CARD)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(6.0));
+                                    if is_input_yt {
+                                        ui.add_space(10.0);
+                                        ui.label(
+                                            RichText::new("Quality / Format")
+                                                .size(12.5)
+                                                .color(GLASS_TEXT)
+                                                .strong(),
+                                        );
+                                        ui.add_space(4.0);
+                                        render_quality_selector_combobox(
+                                            ui,
+                                            "add_modal_quality_select",
+                                            &mut self.input_quality,
+                                            &mut self.input_filename,
+                                            &mut self.input_dest,
+                                            &self.base_download_dir,
+                                        );
+                                    }
 
-                                if ui.add(copy_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Copy Source URL to clipboard").clicked() {
-                                    ui.output_mut(|o| o.copied_text = self.input_url.clone());
-                                }
-                            });
+                                    ui.add_space(10.0);
 
-                            ui.add_space(10.0);
+                                    // Field 4: Parallel Connections (Modern Dropdown Selector)
+                                    let is_gdrive = self.input_url.contains("drive.google.com")
+                                        || self.input_url.contains("googleusercontent.com")
+                                        || self.input_url.contains("docs.google.com");
+                                    ui.label(
+                                        RichText::new("Parallel Connections")
+                                            .size(12.5)
+                                            .color(GLASS_TEXT)
+                                            .strong(),
+                                    );
+                                    ui.add_space(4.0);
+                                    render_parallel_connections_combobox(ui, "add_modal_segments_select", &mut self.input_segments, is_gdrive);
 
-                            // Field 2: File Name (Full width)
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("File Name").size(12.5).color(GLASS_TEXT).strong());
-                                let ext = std::path::Path::new(&self.input_filename)
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or("")
-                                    .to_lowercase();
-                                if !ext.is_empty() && ext != "bin" && ext != "tmp" {
-                                    render_file_type_badge(ui, &ext);
-                                }
-                            });
-                            ui.add_space(4.0);
-                            egui::Frame::none()
-                                .fill(GLASS_BG)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(6.0))
-                                .inner_margin(Margin::symmetric(10.0, 7.0))
-                                .show(ui, |ui| {
-                                    let edit = egui::TextEdit::singleline(&mut self.input_filename)
-                                        .hint_text(if self.input_url.is_empty() { "Enter file name or paste URL" } else { "Resolving original filename..." })
-                                        .font(egui::TextStyle::Body)
-                                        .frame(false)
-                                        .desired_width(ui.available_width());
-                                    if ui.add(edit).changed() {
-                                        if !self.input_filename.trim().is_empty() {
-                                            let cat_dest = get_categorized_destination(&self.base_download_dir, &self.input_filename);
-                                            self.input_dest = cat_dest.to_string_lossy().to_string();
-                                        }
+                                    // Error Message Banner (if any)
+                                    if let Some(ref err) = self.add_error {
+                                        ui.add_space(8.0);
+                                        egui::Frame::none()
+                                            .fill(Color32::from_rgb(45, 18, 24))
+                                            .stroke(Stroke::new(1.0_f32, STATUS_FAILED))
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(Margin::symmetric(10.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("!").color(STATUS_FAILED).strong());
+                                                    ui.label(RichText::new(err).color(Color32::from_rgb(255, 180, 190)).size(12.0));
+                                                });
+                                            });
+                                    }
+
+                                    if is_blob_input {
+                                        ui.add_space(6.0);
+                                        egui::Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 35))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("⚠ Browser Media Stream (blob:)").color(Color32::from_rgb(248, 113, 113)).size(12.0).strong());
+                                                });
+                                                ui.label(RichText::new("Browser memory buffer cannot be downloaded directly. Please play 1-2 seconds of the video in Chrome so Rapid can capture the direct high-speed stream.").color(Color32::from_rgb(252, 165, 165)).size(11.0));
+                                            });
                                     }
                                 });
 
-                            ui.add_space(10.0);
-
-                            // Field 3: Save To + Browse Button (Right-aligned center)
-                            ui.label(RichText::new("Save To").size(12.5).color(GLASS_TEXT).strong());
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                egui::Frame::none()
-                                    .fill(GLASS_BG)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .inner_margin(Margin::symmetric(10.0, 7.0))
-                                    .show(ui, |ui| {
-                                        let edit = egui::TextEdit::singleline(&mut self.input_dest)
-                                            .font(egui::TextStyle::Body)
-                                            .frame(false)
-                                            .desired_width(ui.available_width() - 85.0);
-                                        ui.add(edit);
-                                    });
-
-                                let browse_btn = egui::Button::new(
-                                    RichText::new("Browse...")
-                                        .size(12.0)
-                                        .color(GLASS_SECONDARY)
-                                        .strong(),
-                                )
-                                .min_size(Vec2::new(75.0, 32.0))
-                                .fill(GLASS_CARD)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(6.0));
-
-                                if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Select download folder").clicked() {
-                                    let start_dir = PathBuf::from(&self.input_dest);
-                                    let mut dialog = rfd::FileDialog::new();
-                                    if start_dir.exists() {
-                                        dialog = dialog.set_directory(&start_dir);
-                                    }
-                                    if let Some(folder) = dialog.pick_folder() {
-                                        self.input_dest = folder.to_string_lossy().to_string();
-                                    }
-                                }
-                            });
-
-                            if is_input_yt {
-                                ui.add_space(10.0);
-                                ui.label(
-                                    RichText::new("Quality / Format")
-                                        .size(12.5)
-                                        .color(GLASS_TEXT)
-                                        .strong(),
-                                );
-                                ui.add_space(4.0);
-                                render_quality_selector_combobox(
-                                    ui,
-                                    "add_modal_quality_select",
-                                    &mut self.input_quality,
-                                    &mut self.input_filename,
-                                    &mut self.input_dest,
-                                    &self.base_download_dir,
-                                );
-                            }
-
-                            ui.add_space(10.0);
-
-                            // Field 4: Parallel Connections (Modern Dropdown Selector)
-                            let is_gdrive = self.input_url.contains("drive.google.com")
-                                || self.input_url.contains("googleusercontent.com")
-                                || self.input_url.contains("docs.google.com");
-                            ui.label(
-                                RichText::new("Parallel Connections")
-                                    .size(12.5)
-                                    .color(GLASS_TEXT)
-                                    .strong(),
-                            );
-                            ui.add_space(4.0);
-                            render_parallel_connections_combobox(ui, "add_modal_segments_select", &mut self.input_segments, is_gdrive);
-
-                            // Error Message Banner (if any)
-                            if let Some(ref err) = self.add_error {
-                                ui.add_space(8.0);
-                                egui::Frame::none()
-                                    .fill(Color32::from_rgb(45, 18, 24))
-                                    .stroke(Stroke::new(1.0_f32, STATUS_FAILED))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .inner_margin(Margin::symmetric(10.0, 6.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("!").color(STATUS_FAILED).strong());
-                                            ui.label(RichText::new(err).color(Color32::from_rgb(255, 180, 190)).size(12.0));
-                                        });
-                                    });
-                            }
-
-                            let is_blob_input = self.input_url.trim().starts_with("blob:");
-                            if is_blob_input {
-                                ui.add_space(6.0);
-                                egui::Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 35))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("⚠ Browser Media Stream (blob:)").color(Color32::from_rgb(248, 113, 113)).size(12.0).strong());
-                                        });
-                                        ui.label(RichText::new("Browser memory buffer cannot be downloaded directly. Please play 1-2 seconds of the video in Chrome so Rapid can capture the direct high-speed stream.").color(Color32::from_rgb(252, 165, 165)).size(11.0));
-                                    });
-                            }
-
-                            ui.add_space(14.0);
+                            ui.add_space(8.0);
                             ui.separator();
-                            ui.add_space(10.0);
+                            ui.add_space(8.0);
 
-                            // Modal Footer - Prominent Start Download Button
+                            // Modal Footer - Primary Start Download + Secondary Cancel Button
                             ui.horizontal(|ui| {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let btn_color = if is_blob_input {
@@ -3439,7 +4149,7 @@ fn render_parallel_connections_combobox(
                                             .color(Color32::WHITE)
                                             .strong(),
                                     )
-                                    .min_size(Vec2::new(140.0, 34.0))
+                                    .min_size(Vec2::new(135.0, 34.0))
                                     .fill(btn_color)
                                     .rounding(egui::Rounding::same(7.0));
 
@@ -3447,9 +4157,23 @@ fn render_parallel_connections_combobox(
                                     if is_blob_input {
                                         resp.on_hover_text("Cannot download internal browser blob memory. Play video in Chrome to capture direct stream.");
                                     } else {
-                                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download (Enter)").clicked() {
                                             start_download_req = true;
                                         }
+                                    }
+
+                                    ui.add_space(8.0);
+
+                                    let cancel_btn = egui::Button::new(
+                                        RichText::new("Cancel").size(12.5).color(GLASS_MUTED).strong(),
+                                    )
+                                    .min_size(Vec2::new(90.0, 34.0))
+                                    .fill(GLASS_CARD)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(7.0));
+
+                                    if ui.add(cancel_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Cancel and close dialog (Esc)").clicked() {
+                                        close_modal = true;
                                     }
                                 });
                             });
@@ -3502,19 +4226,20 @@ fn render_parallel_connections_combobox(
             painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 248));
 
             let modal_frame = egui::Frame::none()
-                .fill(Color32::from_rgb(11, 17, 32))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
-                .rounding(egui::Rounding::ZERO)
+                .fill(GLASS_SURFACE)
+                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                .rounding(egui::Rounding::same(12.0))
                 .inner_margin(Margin::ZERO)
                 .shadow(egui::epaint::Shadow {
-                    offset: [0.0, 10.0].into(),
-                    blur: 32.0,
+                    offset: [0.0, 12.0].into(),
+                    blur: 36.0,
                     spread: 2.0,
                     color: Color32::from_black_alpha(230),
                 });
 
             let mut close_modal = false;
             let mut start_download_req = false;
+            let mut download_later_req = false;
 
             let is_prompt_yt = {
                 let p = self.current_browser_prompt.as_ref().unwrap();
@@ -3522,8 +4247,18 @@ fn render_parallel_connections_combobox(
                     || rapid_core::youtube::YoutubeResolver::is_youtube(&p.url)
                     || rapid_core::youtube::YoutubeResolver::is_extractable_platform(&p.url)
             };
-            let browser_modal_w = if is_prompt_yt { 680.0 } else { 600.0 };
-            let browser_modal_h = if is_prompt_yt { 580.0 } else { 355.0 };
+            let screen_size = ctx.screen_rect().size();
+            let browser_modal_w = (screen_size.x - 32.0).clamp(320.0, if is_prompt_yt { 660.0 } else { 580.0 });
+            let browser_modal_h = (screen_size.y - 40.0).clamp(280.0, if is_prompt_yt { 560.0 } else { 395.0 });
+
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_modal = true;
+            }
+
+            let is_prompt_blob = self.current_browser_prompt.as_ref().map(|p| p.url.starts_with("blob:")).unwrap_or(false);
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !is_prompt_blob {
+                start_download_req = true;
+            }
 
             egui::Window::new("browser_download_prompt_modal")
                 .title_bar(false)
@@ -3538,211 +4273,215 @@ fn render_parallel_connections_combobox(
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.spacing_mut().window_margin = Margin::ZERO;
 
-                    let win_rect = ui.max_rect();
-                    let close_w = 46.0_f32;
-                    let close_h = 30.0_f32;
+                    let top_bar_h = 38.0_f32;
+                    let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
+                    let close_w = 40.0_f32;
                     let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(win_rect.max.x - close_w, win_rect.min.y),
-                        egui::pos2(win_rect.max.x, win_rect.min.y + close_h),
+                        egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
+                        egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + top_bar_h),
                     );
 
-                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("modal_close_btn_top_right"), egui::Sense::click());
-                    let is_close_hovered = close_resp.hovered();
-                    if is_close_hovered {
-                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
-                    }
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("modal_close_btn_top_right"), egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Close / Cancel (Esc)");
                     if close_resp.clicked() {
                         close_modal = true;
                     }
 
-                    // Background: Red (bright red on hover)
-                    let bg_color = if is_close_hovered {
-                        Color32::from_rgb(255, 60, 60)
+                    let close_bg = if close_resp.is_pointer_button_down_on() {
+                        Color32::from_rgb(185, 28, 28)
+                    } else if close_resp.hovered() {
+                        Color32::from_rgb(239, 68, 68)
                     } else {
-                        Color32::from_rgb(220, 38, 38)
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 8)
                     };
 
-                    // Border radius removed: 0.0
-                    ui.painter().rect_filled(close_rect, egui::Rounding::ZERO, bg_color);
+                    ui.painter().rect_filled(close_rect, egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 6.0 }, close_bg);
+                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(10.0)), Color32::WHITE);
 
-                    // Icon: White 'X'
-                    let icon_center = close_rect.center();
-                    let stroke = Stroke::new(1.8_f32, Color32::WHITE);
-                    let sz = 4.5_f32;
-                    ui.painter().line_segment(
-                        [egui::pos2(icon_center.x - sz, icon_center.y - sz), egui::pos2(icon_center.x + sz, icon_center.y + sz)],
-                        stroke,
-                    );
-                    ui.painter().line_segment(
-                        [egui::pos2(icon_center.x + sz, icon_center.y - sz), egui::pos2(icon_center.x - sz, icon_center.y + sz)],
-                        stroke,
+                    let title_text = if is_prompt_yt { "🎬 Browser Media Stream Intercepted" } else { "🌐 Browser Download Intercepted" };
+                    ui.painter().text(
+                        egui::pos2(top_bar_rect.min.x + 20.0, top_bar_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        title_text,
+                        egui::FontId::proportional(14.0),
+                        GLASS_TEXT,
                     );
 
-                    ui.add_space(8.0);
+                    ui.painter().line_segment(
+                        [egui::pos2(top_bar_rect.min.x, top_bar_rect.max.y), egui::pos2(top_bar_rect.max.x, top_bar_rect.max.y)],
+                        Stroke::new(1.0_f32, GLASS_BORDER),
+                    );
+
                     egui::Frame::none()
-                        .inner_margin(Margin { left: 22.0, right: 22.0, top: 4.0, bottom: 20.0 })
+                        .inner_margin(Margin { left: 22.0, right: 22.0, top: 12.0, bottom: 14.0 })
                         .show(ui, |ui| {
-                            // Field 1: Source URL + Copy Button (Right-aligned center)
-                            ui.label(RichText::new("Source URL").size(12.5).color(GLASS_TEXT).strong());
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                egui::Frame::none()
-                                    .fill(GLASS_BG)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .inner_margin(Margin::symmetric(10.0, 7.0))
-                                    .show(ui, |ui| {
-                                        let edit = egui::TextEdit::singleline(&mut prompt.url)
-                                            .font(egui::TextStyle::Body)
-                                            .frame(false)
-                                            .desired_width(ui.available_width() - 85.0);
-                                        ui.add(edit);
+                            egui::ScrollArea::vertical()
+                                .max_height((browser_modal_h - 110.0).max(120.0))
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    // Field 1: Source URL + Copy Button (Right-aligned center)
+                                    ui.label(RichText::new("Source URL").size(12.5).color(GLASS_TEXT).strong());
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        egui::Frame::none()
+                                            .fill(GLASS_BG)
+                                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(Margin::symmetric(10.0, 7.0))
+                                            .show(ui, |ui| {
+                                                let edit = egui::TextEdit::singleline(&mut prompt.url)
+                                                    .font(egui::TextStyle::Body)
+                                                    .frame(false)
+                                                    .desired_width(ui.available_width() - 85.0);
+                                                ui.add(edit);
+                                            });
+
+                                        let copy_btn = egui::Button::new(
+                                            RichText::new("Copy")
+                                                .size(12.0)
+                                                .color(GLASS_SECONDARY)
+                                                .strong(),
+                                        )
+                                        .min_size(Vec2::new(75.0, 32.0))
+                                        .fill(GLASS_CARD)
+                                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                        .rounding(egui::Rounding::same(6.0));
+
+                                        if ui.add(copy_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Copy Source URL to clipboard").clicked() {
+                                            ui.output_mut(|o| o.copied_text = prompt.url.clone());
+                                        }
                                     });
 
-                                let copy_btn = egui::Button::new(
-                                    RichText::new("Copy")
-                                        .size(12.0)
-                                        .color(GLASS_SECONDARY)
-                                        .strong(),
-                                )
-                                .min_size(Vec2::new(75.0, 32.0))
-                                .fill(GLASS_CARD)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(6.0));
+                                    ui.add_space(10.0);
 
-                                if ui.add(copy_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Copy Source URL to clipboard").clicked() {
-                                    ui.output_mut(|o| o.copied_text = prompt.url.clone());
-                                }
-                            });
-
-                            ui.add_space(10.0);
-
-                            // Field 2: File Name (Full width)
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("File Name").size(12.5).color(GLASS_TEXT).strong());
-                                let ext = std::path::Path::new(&prompt.filename)
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or("")
-                                    .to_lowercase();
-                                if !ext.is_empty() && ext != "bin" && ext != "tmp" {
-                                    render_file_type_badge(ui, &ext);
-                                }
-                            });
-                            ui.add_space(4.0);
-                            egui::Frame::none()
-                                .fill(GLASS_BG)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(6.0))
-                                .inner_margin(Margin::symmetric(10.0, 7.0))
-                                .show(ui, |ui| {
-                                    let edit = egui::TextEdit::singleline(&mut prompt.filename)
-                                        .hint_text("Resolving original filename...")
-                                        .font(egui::TextStyle::Body)
-                                        .frame(false)
-                                        .desired_width(ui.available_width());
-                                    if ui.add(edit).changed() {
-                                        if !prompt.filename.trim().is_empty() {
-                                            let cat_dest = get_categorized_destination(&self.base_download_dir, &prompt.filename);
-                                            prompt.dest_dir = cat_dest.to_string_lossy().to_string();
+                                    // Field 2: File Name (Full width) with Bengali Shaping support
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("File Name").size(12.5).color(GLASS_TEXT).strong());
+                                        let ext = std::path::Path::new(&prompt.filename)
+                                            .extension()
+                                            .and_then(|e| e.to_str())
+                                            .unwrap_or("")
+                                            .to_lowercase();
+                                        if !ext.is_empty() && ext != "bin" && ext != "tmp" {
+                                            render_file_type_badge(ui, &ext);
                                         }
+                                    });
+                                    ui.add_space(4.0);
+                                    egui::Frame::none()
+                                        .fill(GLASS_BG)
+                                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                        .rounding(egui::Rounding::same(6.0))
+                                        .inner_margin(Margin::symmetric(10.0, 7.0))
+                                        .show(ui, |ui| {
+                                            let edit = egui::TextEdit::singleline(&mut prompt.filename)
+                                                .hint_text("Resolving original filename...")
+                                                .font(egui::TextStyle::Body)
+                                                .frame(false)
+                                                .desired_width(ui.available_width());
+                                            if ui.add(edit).changed() {
+                                                if !prompt.filename.trim().is_empty() {
+                                                    let cat_dest = get_categorized_destination(&self.base_download_dir, &prompt.filename);
+                                                    prompt.dest_dir = cat_dest.to_string_lossy().to_string();
+                                                }
+                                            }
+                                        });
+
+                                    ui.add_space(10.0);
+
+                                    // Field 3: Save To + Browse Button (Right-aligned center)
+                                    ui.label(RichText::new("Save To").size(12.5).color(GLASS_TEXT).strong());
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        egui::Frame::none()
+                                            .fill(GLASS_BG)
+                                            .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(Margin::symmetric(10.0, 7.0))
+                                            .show(ui, |ui| {
+                                                let edit = egui::TextEdit::singleline(&mut prompt.dest_dir)
+                                                    .font(egui::TextStyle::Body)
+                                                    .frame(false)
+                                                    .desired_width(ui.available_width() - 85.0);
+                                                ui.add(edit);
+                                            });
+
+                                        let browse_btn = egui::Button::new(
+                                            RichText::new("Browse...")
+                                                .size(12.0)
+                                                .color(GLASS_SECONDARY)
+                                                .strong(),
+                                        )
+                                        .min_size(Vec2::new(75.0, 32.0))
+                                        .fill(GLASS_CARD)
+                                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                        .rounding(egui::Rounding::same(6.0));
+
+                                        if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Select download folder").clicked() {
+                                            let start_dir = PathBuf::from(&prompt.dest_dir);
+                                            let mut dialog = rfd::FileDialog::new();
+                                            if start_dir.exists() {
+                                                dialog = dialog.set_directory(&start_dir);
+                                            }
+                                            if let Some(folder) = dialog.pick_folder() {
+                                                prompt.dest_dir = folder.to_string_lossy().to_string();
+                                            }
+                                        }
+                                    });
+
+                                    if is_prompt_yt {
+                                        ui.add_space(10.0);
+                                        ui.label(
+                                            RichText::new("Quality / Format")
+                                                .size(12.5)
+                                                .color(GLASS_TEXT)
+                                                .strong(),
+                                        );
+                                        ui.add_space(4.0);
+                                        render_quality_selector_combobox(
+                                            ui,
+                                            "browser_prompt_quality_select",
+                                            &mut prompt.quality,
+                                            &mut prompt.filename,
+                                            &mut prompt.dest_dir,
+                                            &self.base_download_dir,
+                                        );
+                                    }
+
+                                    ui.add_space(10.0);
+
+                                    // Field 4: Parallel Connections (Modern Dropdown Selector)
+                                    ui.label(
+                                        RichText::new("Parallel Connections")
+                                            .size(12.5)
+                                            .color(GLASS_TEXT)
+                                            .strong(),
+                                    );
+                                    ui.add_space(4.0);
+                                    render_parallel_connections_combobox(ui, "browser_prompt_segments_select", &mut prompt.segments, prompt.is_gdrive);
+
+                                    let is_prompt_blob = prompt.url.starts_with("blob:");
+                                    if is_prompt_blob {
+                                        ui.add_space(6.0);
+                                        egui::Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 35))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("⚠ Browser Media Stream (blob:)").color(Color32::from_rgb(248, 113, 113)).size(12.0).strong());
+                                                });
+                                                ui.label(RichText::new("Browser memory buffer cannot be downloaded directly. Please play 1-2 seconds of the video in Chrome so Rapid can capture the direct high-speed stream.").color(Color32::from_rgb(252, 165, 165)).size(11.0));
+                                            });
                                     }
                                 });
 
-                            ui.add_space(10.0);
-
-                            // Field 3: Save To + Browse Button (Right-aligned center)
-                            ui.label(RichText::new("Save To").size(12.5).color(GLASS_TEXT).strong());
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                egui::Frame::none()
-                                    .fill(GLASS_BG)
-                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .inner_margin(Margin::symmetric(10.0, 7.0))
-                                    .show(ui, |ui| {
-                                        let edit = egui::TextEdit::singleline(&mut prompt.dest_dir)
-                                            .font(egui::TextStyle::Body)
-                                            .frame(false)
-                                            .desired_width(ui.available_width() - 85.0);
-                                        ui.add(edit);
-                                    });
-
-                                let browse_btn = egui::Button::new(
-                                    RichText::new("Browse...")
-                                        .size(12.0)
-                                        .color(GLASS_SECONDARY)
-                                        .strong(),
-                                )
-                                .min_size(Vec2::new(75.0, 32.0))
-                                .fill(GLASS_CARD)
-                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                                .rounding(egui::Rounding::same(6.0));
-
-                                if ui.add(browse_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Select download folder").clicked() {
-                                    let start_dir = PathBuf::from(&prompt.dest_dir);
-                                    let mut dialog = rfd::FileDialog::new();
-                                    if start_dir.exists() {
-                                        dialog = dialog.set_directory(&start_dir);
-                                    }
-                                    if let Some(folder) = dialog.pick_folder() {
-                                        prompt.dest_dir = folder.to_string_lossy().to_string();
-                                    }
-                                }
-                            });
-
-                            if is_prompt_yt {
-                                ui.add_space(10.0);
-                                ui.label(
-                                    RichText::new("Quality / Format")
-                                        .size(12.5)
-                                        .color(GLASS_TEXT)
-                                        .strong(),
-                                );
-                                ui.add_space(4.0);
-                                render_quality_selector_combobox(
-                                    ui,
-                                    "browser_prompt_quality_select",
-                                    &mut prompt.quality,
-                                    &mut prompt.filename,
-                                    &mut prompt.dest_dir,
-                                    &self.base_download_dir,
-                                );
-                            }
-
-                            ui.add_space(10.0);
-
-                            // Field 4: Parallel Connections (Modern Dropdown Selector)
-                            ui.label(
-                                RichText::new("Parallel Connections")
-                                    .size(12.5)
-                                    .color(GLASS_TEXT)
-                                    .strong(),
-                            );
-                            ui.add_space(4.0);
-                            render_parallel_connections_combobox(ui, "browser_prompt_segments_select", &mut prompt.segments, prompt.is_gdrive);
-
-                            let is_prompt_blob = prompt.url.starts_with("blob:");
-                            if is_prompt_blob {
-                                ui.add_space(6.0);
-                                egui::Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 35))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
-                                    .rounding(egui::Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("⚠ Browser Media Stream (blob:)").color(Color32::from_rgb(248, 113, 113)).size(12.0).strong());
-                                        });
-                                        ui.label(RichText::new("Browser memory buffer cannot be downloaded directly. Please play 1-2 seconds of the video in Chrome so Rapid can capture the direct high-speed stream.").color(Color32::from_rgb(252, 165, 165)).size(11.0));
-                                    });
-                            }
-
-                            ui.add_space(14.0);
+                            ui.add_space(8.0);
                             ui.separator();
-                            ui.add_space(10.0);
+                            ui.add_space(8.0);
 
-                            // Modal Footer - Prominent Start Download Button
+                            // Modal Footer - Start Download, Download Later, and Cancel Buttons
                             ui.horizontal(|ui| {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let btn_color = if is_prompt_blob {
@@ -3756,7 +4495,7 @@ fn render_parallel_connections_combobox(
                                             .color(Color32::WHITE)
                                             .strong(),
                                     )
-                                    .min_size(Vec2::new(140.0, 34.0))
+                                    .min_size(Vec2::new(135.0, 34.0))
                                     .fill(btn_color)
                                     .rounding(egui::Rounding::same(7.0));
 
@@ -3764,9 +4503,40 @@ fn render_parallel_connections_combobox(
                                     if is_prompt_blob {
                                         resp.on_hover_text("Cannot download internal browser blob memory. Play video in Chrome to capture direct stream.");
                                     } else {
-                                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download").clicked() {
+                                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Start multi-threaded accelerated download now (Enter)").clicked() {
                                             start_download_req = true;
                                         }
+                                    }
+
+                                    ui.add_space(8.0);
+
+                                    let later_btn = egui::Button::new(
+                                        RichText::new("Download Later").size(12.5).color(GLASS_SECONDARY).strong(),
+                                    )
+                                    .min_size(Vec2::new(115.0, 34.0))
+                                    .fill(GLASS_CARD)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(7.0));
+
+                                    if ui.add_enabled(!is_prompt_blob, later_btn)
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text("Add to queue and download later / via scheduler")
+                                        .clicked() {
+                                        download_later_req = true;
+                                    }
+
+                                    ui.add_space(8.0);
+
+                                    let cancel_btn = egui::Button::new(
+                                        RichText::new("Cancel").size(12.5).color(GLASS_MUTED).strong(),
+                                    )
+                                    .min_size(Vec2::new(85.0, 34.0))
+                                    .fill(GLASS_CARD)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(7.0));
+
+                                    if ui.add(cancel_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Cancel and discard download (Esc)").clicked() {
+                                        close_modal = true;
                                     }
                                 });
                             });
@@ -3782,6 +4552,66 @@ fn render_parallel_connections_combobox(
                 }
                 self.current_browser_prompt = None;
                 ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                ctx.request_repaint();
+            }
+
+            if download_later_req {
+                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                if let Some(prompt) = self.current_browser_prompt.take() {
+                    let prompt_url = prompt.url.clone();
+                    let url = prompt.url;
+                    let dest = PathBuf::from(&prompt.dest_dir);
+                    let segs = prompt.segments;
+                    let custom_fn = if prompt.filename.trim().is_empty()
+                        || prompt.filename == "Downloading..."
+                        || prompt.filename == "Resolving filename..."
+                        || prompt.filename == "Resolving original filename..."
+                        || prompt.filename == "Detecting filename..."
+                        || rapid_core::engine::is_generic_placeholder(&prompt.filename) {
+                        None
+                    } else {
+                        Some(prompt.filename.trim().to_string())
+                    };
+                    let cookies = prompt.cookies;
+                    let ua = prompt.user_agent;
+                    let referrer = prompt.referrer;
+                    let quality = prompt.quality;
+
+                    if let Ok(mut q) = self.pending_browser_queue.lock() {
+                        q.retain(|item| item.url != prompt_url);
+                    }
+
+                    let task_id = format!("task-{}", Utc::now().timestamp_millis());
+                    let resolved_fn = custom_fn.clone().unwrap_or_else(|| extract_filename_from_url(&url));
+                    let target_file = dest.join(&resolved_fn);
+                    let ui_entry = ActiveTaskUI {
+                        id: task_id,
+                        filename: resolved_fn,
+                        url,
+                        target_file,
+                        total_bytes: None,
+                        downloaded_bytes: 0,
+                        progress_percent: 0.0,
+                        speed_bps: 0,
+                        eta_seconds: None,
+                        status: DownloadStatus::Paused,
+                        segments: Vec::new(),
+                        task_handle: None,
+                        num_segments: segs,
+                        is_resuming: false,
+                        cookies,
+                        referrer,
+                        user_agent: ua,
+                        is_youtube: prompt.is_youtube,
+                        quality: Some(quality),
+                        yt_cancel_token: None,
+                        mega_item: None,
+                    };
+                    if let Ok(mut list) = self.tasks.try_lock() {
+                        list.push(ui_entry);
+                    }
+                }
+                self.current_browser_prompt = None;
                 ctx.request_repaint();
             }
 
@@ -3836,10 +4666,10 @@ fn render_parallel_connections_combobox(
         }
 
         // Execute deferred actions outside of lock
-        if let Some(idx) = action_resume {
+        for idx in action_resume {
             self.resume_download(idx);
         }
-        if let Some(idx) = action_pause {
+        for idx in action_pause {
             self.pause_download(idx);
         }
         if let Some(idx) = action_redownload {
@@ -3873,10 +4703,25 @@ fn render_parallel_connections_combobox(
             let mut close_modal = false;
             let mut do_history_delete = false;
             let mut do_permanent_delete = false;
+
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_modal = true;
+            }
+
+            let single_filename = if self.tasks_to_delete.len() == 1 {
+                if let Ok(list) = self.tasks.try_lock() {
+                    let tid = self.tasks_to_delete.iter().next().unwrap();
+                    list.iter().find(|t| &t.id == tid).map(|t| t.filename.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             
             let modal_frame = egui::Frame::none()
                 .fill(GLASS_SURFACE)
-                .stroke(Stroke::NONE)
+                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                 .rounding(egui::Rounding::same(12.0))
                 .inner_margin(Margin::same(0.0)); // No inner margin so close btn can be at edge
 
@@ -3887,7 +4732,7 @@ fn render_parallel_connections_combobox(
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.allocate_ui(Vec2::new(400.0, 240.0), |ui| {
+                    ui.allocate_ui(Vec2::new(480.0, 250.0), |ui| {
                         // Absolute positioned Close button at top right
                         let rect = ui.max_rect();
                         let close_rect = egui::Rect::from_min_size(
@@ -3902,7 +4747,7 @@ fn render_parallel_connections_combobox(
 
                         // Main Content (Centered vertically & horizontally)
                         ui.vertical_centered(|ui| {
-                            ui.add_space(25.0);
+                            ui.add_space(24.0);
                             
                             // Trash Icon inside a subtle circle
                             let (icon_rect, _) = ui.allocate_exact_size(Vec2::new(48.0, 48.0), egui::Sense::hover());
@@ -3910,18 +4755,27 @@ fn render_parallel_connections_combobox(
                             let trash_rect = egui::Rect::from_center_size(icon_rect.center(), Vec2::new(24.0, 24.0));
                             draw_modern_icon(ui.painter(), ModernIcon::Trash, trash_rect, Color32::from_rgb(255, 80, 80));
                             
-                            ui.add_space(15.0);
+                            ui.add_space(14.0);
                             ui.label(RichText::new("Confirm Delete").size(20.0).strong().color(Color32::WHITE));
                             ui.add_space(8.0);
-                            ui.label(RichText::new(format!("Are you sure you want to delete {} download(s)?", self.tasks_to_delete.len())).size(14.0).color(GLASS_MUTED));
+                            if let Some(ref fname) = single_filename {
+                                let display_name = if fname.chars().count() > 42 {
+                                    format!("{}...", fname.chars().take(40).collect::<String>())
+                                } else {
+                                    fname.clone()
+                                };
+                                ui.label(RichText::new(shape_bengali(&format!("Are you sure you want to delete \"{}\"?", display_name))).size(14.0).color(GLASS_MUTED));
+                            } else {
+                                ui.label(RichText::new(format!("Are you sure you want to delete {} download(s)?", self.tasks_to_delete.len())).size(14.0).color(GLASS_MUTED));
+                            }
                             
-                            ui.add_space(35.0);
+                            ui.add_space(30.0);
                         });
                         
                         // Bottom Action Buttons aligned to Bottom Right
                         ui.horizontal(|ui| {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.add_space(24.0); // right padding
+                                ui.add_space(20.0); // right padding
                                 
                                 // Permanent Delete Button
                                 let perm_btn = egui::Button::new(RichText::new("Permanent Delete").size(13.0).strong().color(Color32::WHITE))
@@ -3933,16 +4787,28 @@ fn render_parallel_connections_combobox(
                                     close_modal = true;
                                 }
                                 
-                                ui.add_space(12.0);
+                                ui.add_space(10.0);
                                 
                                 // History Only Button
                                 let hist_btn = egui::Button::new(RichText::new("Remove from History").size(13.0).strong().color(Color32::WHITE))
-                                    .min_size(Vec2::new(140.0, 36.0))
+                                    .min_size(Vec2::new(150.0, 36.0))
                                     .fill(GLASS_CARD)
                                     .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                                     .rounding(egui::Rounding::same(6.0));
                                 if ui.add(hist_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Keep files on disk").clicked() {
                                     do_history_delete = true;
+                                    close_modal = true;
+                                }
+
+                                ui.add_space(10.0);
+
+                                // Cancel Button
+                                let cancel_btn = egui::Button::new(RichText::new("Cancel").size(13.0).color(GLASS_MUTED))
+                                    .min_size(Vec2::new(80.0, 36.0))
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(6.0));
+                                if ui.add(cancel_btn).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Keep downloads intact").clicked() {
                                     close_modal = true;
                                 }
                             });
@@ -4002,9 +4868,16 @@ fn render_parallel_connections_combobox(
             let mut close_modal = false;
             let mut save_schedule = false;
 
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_modal = true;
+            }
+
+            let screen_size = ctx.screen_rect().size();
+            let max_modal_h = (screen_size.y - 40.0).clamp(260.0, 420.0);
+
             let modal_frame = egui::Frame::none()
                 .fill(GLASS_SURFACE)
-                .stroke(Stroke::NONE)
+                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
                 .rounding(egui::Rounding::same(12.0))
                 .inner_margin(Margin::same(0.0))
                 .shadow(egui::epaint::Shadow {
@@ -4019,141 +4892,176 @@ fn render_parallel_connections_combobox(
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(540.0, 380.0))
+                .fixed_size(Vec2::new(540.0, max_modal_h))
                 .frame(modal_frame)
                 .show(ctx, |ui| {
-                    let top_bar_h = 34.0_f32;
+                    let top_bar_h = 40.0_f32;
                     let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
+                    ui.painter().rect_filled(
+                        top_bar_rect,
+                        egui::Rounding { nw: 12.0, ne: 12.0, sw: 0.0, se: 0.0 },
+                        Color32::from_rgba_unmultiplied(20, 28, 48, 220),
+                    );
+                    ui.painter().line_segment(
+                        [egui::pos2(top_bar_rect.min.x, top_bar_rect.max.y), egui::pos2(top_bar_rect.max.x, top_bar_rect.max.y)],
+                        Stroke::new(1.0_f32, GLASS_BORDER),
+                    );
+
                     let close_w = 42.0_f32;
                     let close_rect = egui::Rect::from_min_max(
                         egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
                         egui::pos2(top_bar_rect.max.x, top_bar_rect.min.y + top_bar_h),
                     );
-                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("sched_close_btn"), egui::Sense::click());
-                    if close_resp.hovered() {
-                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
-                    }
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("sched_close_btn"), egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Close (Esc)");
                     if close_resp.clicked() {
                         close_modal = true;
                     }
-                    let bg_color = if close_resp.hovered() { Color32::from_rgb(255, 60, 60) } else { Color32::from_rgb(220, 38, 38) };
+                    let bg_color = if close_resp.is_pointer_button_down_on() {
+                        Color32::from_rgb(185, 28, 28)
+                    } else if close_resp.hovered() {
+                        Color32::from_rgb(255, 60, 60)
+                    } else {
+                        Color32::from_rgb(220, 38, 38)
+                    };
                     ui.painter().rect_filled(close_rect, egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 0.0 }, bg_color);
-                    ui.painter().text(close_rect.center(), egui::Align2::CENTER_CENTER, "✕", egui::FontId::proportional(14.0), Color32::WHITE);
+                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(11.0)), Color32::WHITE);
 
+                    let icon_box = egui::Rect::from_center_size(
+                        egui::pos2(top_bar_rect.min.x + 22.0, top_bar_rect.center().y),
+                        Vec2::splat(16.0),
+                    );
+                    draw_modern_icon(ui.painter(), ModernIcon::Clock, icon_box, GLASS_SECONDARY);
                     ui.painter().text(
-                        egui::pos2(top_bar_rect.min.x + 20.0, top_bar_rect.center().y),
+                        egui::pos2(top_bar_rect.min.x + 40.0, top_bar_rect.center().y),
                         egui::Align2::LEFT_CENTER,
-                        "⏰ Download Scheduler",
-                        egui::FontId::proportional(15.0),
-                        GLASS_SECONDARY,
+                        "Download Scheduler",
+                        egui::FontId::proportional(14.0),
+                        Color32::WHITE,
                     );
 
-                    ui.add_space(14.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(max_modal_h - top_bar_h)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            egui::Frame::none().inner_margin(Margin::symmetric(24.0, 14.0)).show(ui, |ui| {
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 200))
+                                    .stroke(Stroke::new(1.0_f32, if self.scheduler.enabled { GLASS_SECONDARY } else { GLASS_BORDER }))
+                                    .rounding(egui::Rounding::same(8.0))
+                                    .inner_margin(Margin::symmetric(14.0, 10.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let (dot_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
+                                            let dot_color = if self.scheduler.enabled { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(100, 116, 139) };
+                                            ui.painter().circle_filled(dot_r.center(), 4.0, dot_color);
+                                            ui.add_space(4.0);
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("Automated Queue Scheduler").size(13.5).strong().color(Color32::WHITE));
+                                                ui.label(RichText::new("Start and stop download queues automatically at preset hours").size(11.0).color(GLASS_MUTED));
+                                            });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let toggle_text = if self.scheduler.enabled { "ACTIVE (ON)" } else { "DISABLED (OFF)" };
+                                                let toggle_color = if self.scheduler.enabled { Color32::from_rgb(16, 185, 129) } else { GLASS_MUTED };
+                                                if ui.button(RichText::new(toggle_text).strong().size(11.5).color(toggle_color)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                    self.scheduler.enabled = !self.scheduler.enabled;
+                                                    save_schedule = true;
+                                                }
+                                            });
+                                        });
+                                    });
 
-                    egui::Frame::none().inner_margin(Margin::symmetric(24.0, 10.0)).show(ui, |ui| {
-                        egui::Frame::none()
-                            .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 200))
-                            .stroke(Stroke::new(1.0_f32, if self.scheduler.enabled { GLASS_SECONDARY } else { GLASS_BORDER }))
-                            .rounding(egui::Rounding::same(8.0))
-                            .inner_margin(Margin::symmetric(14.0, 10.0))
-                            .show(ui, |ui| {
+                                ui.add_space(12.0);
+
                                 ui.horizontal(|ui| {
-                                    let status_dot = if self.scheduler.enabled { "🟢" } else { "⚪" };
-                                    ui.label(RichText::new(status_dot).size(16.0));
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("Automated Queue Scheduler").size(13.5).strong().color(Color32::WHITE));
-                                        ui.label(RichText::new("Start and stop download queues automatically at preset hours").size(11.0).color(GLASS_MUTED));
-                                    });
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let toggle_text = if self.scheduler.enabled { "ACTIVE (ON)" } else { "DISABLED (OFF)" };
-                                        let toggle_color = if self.scheduler.enabled { Color32::from_rgb(16, 185, 129) } else { GLASS_MUTED };
-                                        if ui.button(RichText::new(toggle_text).strong().size(11.5).color(toggle_color)).clicked() {
-                                            self.scheduler.enabled = !self.scheduler.enabled;
-                                            save_schedule = true;
-                                        }
-                                    });
+                                    ui.label(RichText::new("Presets:").size(11.5).color(GLASS_MUTED));
+                                    if ui.button(RichText::new("Night Hours (23:00 - 06:00)").size(11.0)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                        self.scheduler.start_hour = 23;
+                                        self.scheduler.start_minute = 0;
+                                        self.scheduler.stop_hour = 6;
+                                        self.scheduler.stop_minute = 0;
+                                        self.scheduler.enabled = true;
+                                        save_schedule = true;
+                                    }
+                                    if ui.button(RichText::new("Daytime (09:00 - 18:00)").size(11.0)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                        self.scheduler.start_hour = 9;
+                                        self.scheduler.start_minute = 0;
+                                        self.scheduler.stop_hour = 18;
+                                        self.scheduler.stop_minute = 0;
+                                        self.scheduler.enabled = true;
+                                        save_schedule = true;
+                                    }
+                                });
+
+                                ui.add_space(14.0);
+
+                                ui.horizontal(|ui| {
+                                    let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(13.0), egui::Sense::hover());
+                                    draw_modern_icon(ui.painter(), ModernIcon::Play, icon_r, GLASS_SECONDARY);
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new("Start Downloads at:").size(13.0).strong().color(GLASS_TEXT));
+                                    ui.add_space(10.0);
+                                    let mut sh = self.scheduler.start_hour as i32;
+                                    let mut sm = self.scheduler.start_minute as i32;
+                                    ui.label("Hour:");
+                                    if ui.add(egui::DragValue::new(&mut sh).range(0..=23)).changed() {
+                                        self.scheduler.start_hour = sh as u32;
+                                        save_schedule = true;
+                                    }
+                                    ui.label("Min:");
+                                    if ui.add(egui::DragValue::new(&mut sm).range(0..=59)).changed() {
+                                        self.scheduler.start_minute = sm as u32;
+                                        save_schedule = true;
+                                    }
+                                    ui.label(RichText::new(format!("({:02}:{:02})", self.scheduler.start_hour, self.scheduler.start_minute)).color(GLASS_SECONDARY).strong());
+                                });
+
+                                ui.add_space(10.0);
+
+                                ui.horizontal(|ui| {
+                                    let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(13.0), egui::Sense::hover());
+                                    draw_modern_icon(ui.painter(), ModernIcon::Pause, icon_r, STATUS_PAUSED);
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new("Stop Downloads at:").size(13.0).strong().color(GLASS_TEXT));
+                                    ui.add_space(10.0);
+                                    let mut eh = self.scheduler.stop_hour as i32;
+                                    let mut em = self.scheduler.stop_minute as i32;
+                                    ui.label("Hour:");
+                                    if ui.add(egui::DragValue::new(&mut eh).range(0..=23)).changed() {
+                                        self.scheduler.stop_hour = eh as u32;
+                                        save_schedule = true;
+                                    }
+                                    ui.label("Min:");
+                                    if ui.add(egui::DragValue::new(&mut em).range(0..=59)).changed() {
+                                        self.scheduler.stop_minute = em as u32;
+                                        save_schedule = true;
+                                    }
+                                    ui.label(RichText::new(format!("({:02}:{:02})", self.scheduler.stop_hour, self.scheduler.stop_minute)).color(STATUS_PAUSED).strong());
+                                });
+
+                                ui.add_space(14.0);
+
+                                ui.checkbox(&mut self.scheduler.auto_shutdown, RichText::new("Auto-shutdown PC when schedule finishes").size(12.0).color(GLASS_TEXT));
+
+                                ui.add_space(16.0);
+
+                                // Bottom-Right aligned "Save Schedule" button (no bottom cancel button)
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn_w = 140.0_f32;
+                                    let btn_h = 36.0_f32;
+
+                                    let done_btn = egui::Button::new(RichText::new("Save Schedule").size(13.0).strong().color(Color32::WHITE))
+                                        .min_size(Vec2::new(btn_w, btn_h))
+                                        .fill(GLASS_PRIMARY)
+                                        .rounding(egui::Rounding::same(6.0));
+                                    if ui.add(done_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                        save_schedule = true;
+                                        close_modal = true;
+                                    }
                                 });
                             });
-
-                        ui.add_space(12.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Presets:").size(11.5).color(GLASS_MUTED));
-                            if ui.button(RichText::new("🌙 Night Hours (23:00 - 06:00)").size(11.0)).clicked() {
-                                self.scheduler.start_hour = 23;
-                                self.scheduler.start_minute = 0;
-                                self.scheduler.stop_hour = 6;
-                                self.scheduler.stop_minute = 0;
-                                self.scheduler.enabled = true;
-                                save_schedule = true;
-                            }
-                            if ui.button(RichText::new("☀️ Daytime (09:00 - 18:00)").size(11.0)).clicked() {
-                                self.scheduler.start_hour = 9;
-                                self.scheduler.start_minute = 0;
-                                self.scheduler.stop_hour = 18;
-                                self.scheduler.stop_minute = 0;
-                                self.scheduler.enabled = true;
-                                save_schedule = true;
-                            }
                         });
-
-                        ui.add_space(14.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("▶ Start Downloads at:").size(13.0).strong().color(GLASS_TEXT));
-                            ui.add_space(10.0);
-                            let mut sh = self.scheduler.start_hour as i32;
-                            let mut sm = self.scheduler.start_minute as i32;
-                            ui.label("Hour:");
-                            if ui.add(egui::DragValue::new(&mut sh).range(0..=23)).changed() {
-                                self.scheduler.start_hour = sh as u32;
-                                save_schedule = true;
-                            }
-                            ui.label("Min:");
-                            if ui.add(egui::DragValue::new(&mut sm).range(0..=59)).changed() {
-                                self.scheduler.start_minute = sm as u32;
-                                save_schedule = true;
-                            }
-                            ui.label(RichText::new(format!("({:02}:{:02})", self.scheduler.start_hour, self.scheduler.start_minute)).color(GLASS_SECONDARY).strong());
-                        });
-
-                        ui.add_space(10.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("⏸ Stop Downloads at:").size(13.0).strong().color(GLASS_TEXT));
-                            ui.add_space(10.0);
-                            let mut eh = self.scheduler.stop_hour as i32;
-                            let mut em = self.scheduler.stop_minute as i32;
-                            ui.label("Hour:");
-                            if ui.add(egui::DragValue::new(&mut eh).range(0..=23)).changed() {
-                                self.scheduler.stop_hour = eh as u32;
-                                save_schedule = true;
-                            }
-                            ui.label("Min:");
-                            if ui.add(egui::DragValue::new(&mut em).range(0..=59)).changed() {
-                                self.scheduler.stop_minute = em as u32;
-                                save_schedule = true;
-                            }
-                            ui.label(RichText::new(format!("({:02}:{:02})", self.scheduler.stop_hour, self.scheduler.stop_minute)).color(STATUS_PAUSED).strong());
-                        });
-
-                        ui.add_space(14.0);
-
-                        ui.checkbox(&mut self.scheduler.auto_shutdown, RichText::new("🔌 Auto-shutdown PC when schedule finishes").size(12.0).color(GLASS_TEXT));
-
-                        ui.add_space(16.0);
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let done_btn = egui::Button::new(RichText::new("✓ Done").size(13.0).strong().color(Color32::WHITE))
-                                .min_size(Vec2::new(100.0, 32.0))
-                                .fill(GLASS_PRIMARY)
-                                .rounding(egui::Rounding::same(6.0));
-                            if ui.add(done_btn).clicked() {
-                                save_schedule = true;
-                                close_modal = true;
-                            }
-                        });
-                    });
                 });
 
             if save_schedule {
@@ -4171,27 +5079,27 @@ fn render_parallel_connections_combobox(
             painter.rect_filled(screen_rect, 0.0, Color32::from_rgba_unmultiplied(2, 6, 23, 220));
 
             let mut close_modal = false;
-            let mut run_auto_integrate = false;
             let mut export_zip = false;
-            let mut launch_browser_url: Option<String> = None;
+            let mut launch_browser_action: Option<(String, Option<String>)> = None;
 
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 close_modal = true;
             }
 
-            // Spacious, pixel-perfect modal window with full-table browser list
+            let max_modal_h = 450.0_f32;
+            let max_modal_w = 640.0_f32;
+
             egui::Window::new("browser_integration_modal_window")
                 .title_bar(false)
                 .resizable(false)
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .fixed_size(Vec2::new(720.0, 500.0))
+                .fixed_size(Vec2::new(max_modal_w, max_modal_h))
                 .frame(
                     egui::Frame::none()
-                        // Transparent glassmorphic obsidian background
-                        .fill(Color32::from_rgba_unmultiplied(12, 18, 34, 240))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)))
-                        .rounding(egui::Rounding::ZERO)
+                        .fill(Color32::from_rgba_unmultiplied(12, 18, 34, 245))
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                        .rounding(egui::Rounding::same(12.0))
                         .shadow(egui::epaint::Shadow {
                             offset: egui::vec2(0.0, 16.0),
                             blur: 36.0_f32,
@@ -4202,479 +5110,533 @@ fn render_parallel_connections_combobox(
                 )
                 .show(ctx, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
-                    ui.spacing_mut().window_margin = Margin::ZERO;
 
-                    let win_rect = ui.clip_rect();
-
-                    // Absolute Top-Right Corner Close Button (Position 0,0 - flush with top-right corner)
-                    let btn_w = 42.0_f32;
-                    let btn_h = 30.0_f32;
-                    let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(win_rect.max.x - btn_w, win_rect.min.y),
-                        egui::pos2(win_rect.max.x, win_rect.min.y + btn_h),
+                    // 1. Top Glassmorphic Header Bar (Height 42px)
+                    let header_h = 42.0_f32;
+                    let (header_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), header_h), egui::Sense::hover());
+                    ui.painter().rect_filled(
+                        header_rect,
+                        egui::Rounding { nw: 12.0, ne: 12.0, sw: 0.0, se: 0.0 },
+                        Color32::from_rgba_unmultiplied(20, 28, 48, 220),
+                    );
+                    ui.painter().line_segment(
+                        [egui::pos2(header_rect.min.x, header_rect.max.y), egui::pos2(header_rect.max.x, header_rect.max.y)],
+                        Stroke::new(1.0_f32, GLASS_BORDER),
                     );
 
-                    let close_resp = ui.interact(close_rect, ui.id().with("browser_corner_00_close_btn"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    // Header Icon & Title
+                    let icon_box = egui::Rect::from_center_size(
+                        egui::pos2(header_rect.min.x + 22.0, header_rect.center().y),
+                        Vec2::splat(16.0),
+                    );
+                    draw_modern_icon(ui.painter(), ModernIcon::Globe, icon_box, GLASS_SECONDARY);
+                    ui.painter().text(
+                        egui::pos2(header_rect.min.x + 40.0, header_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "Browser Extension Setup & Downloads",
+                        egui::FontId::proportional(14.0),
+                        Color32::WHITE,
+                    );
+
+                    // Header Close Button - matches app's standard modal corner close button
+                    let close_w = 42.0_f32;
+                    let close_rect = egui::Rect::from_min_max(
+                        egui::pos2(header_rect.max.x - close_w, header_rect.min.y),
+                        egui::pos2(header_rect.max.x, header_rect.max.y),
+                    );
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("browser_modal_corner_close_x"), egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Close (Esc)");
+
                     let close_bg = if close_resp.is_pointer_button_down_on() {
                         Color32::from_rgb(185, 28, 28)
                     } else if close_resp.hovered() {
-                        Color32::from_rgb(239, 68, 68)
+                        Color32::from_rgb(255, 60, 60)
                     } else {
                         Color32::from_rgb(220, 38, 38)
                     };
 
-                    ui.painter().rect_filled(close_rect, egui::Rounding::ZERO, close_bg);
-                    draw_modern_icon(
-                        ui.painter(),
-                        ModernIcon::Close,
-                        egui::Rect::from_center_size(close_rect.center(), Vec2::splat(10.0)),
-                        Color32::WHITE,
-                    );
+                    ui.painter().rect_filled(close_rect, egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 0.0 }, close_bg);
+                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(11.0)), Color32::WHITE);
                     if close_resp.clicked() {
                         close_modal = true;
                     }
 
-                    // Header Section with generous 28px outer padding
-                    ui.add_space(20.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(28.0);
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("Browser Integration & Auto-Hook").size(16.5).strong().color(Color32::WHITE));
-                            ui.add_space(4.0);
-                            ui.label(RichText::new("Auto-detect and register Rapid Extension across all installed browsers like IDM").size(11.5).color(GLASS_MUTED));
-                        });
-                    });
+                    // 2. Scrollable Body
+                    egui::ScrollArea::vertical()
+                        .max_height(max_modal_h - header_h - 68.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(0.0, 10.0);
+                            ui.add_space(8.0);
 
-                    ui.add_space(16.0);
-
-                    let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
-                    let prog_files = std::env::var("ProgramFiles").unwrap_or_default();
-                    let prog_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
-
-                    let is_chrome = [
-                        format!("{}/Google/Chrome/Application/chrome.exe", local_appdata),
-                        format!("{}/Google/Chrome/Application/chrome.exe", prog_files),
-                        format!("{}/Google/Chrome/Application/chrome.exe", prog_files_x86),
-                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
-
-                    let is_edge = [
-                        format!("{}/Microsoft/Edge/Application/msedge.exe", prog_files_x86),
-                        format!("{}/Microsoft/Edge/Application/msedge.exe", prog_files),
-                        format!("{}/Microsoft/Edge/Application/msedge.exe", local_appdata),
-                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
-
-                    let is_brave = [
-                        format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", prog_files),
-                        format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", prog_files_x86),
-                        format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", local_appdata),
-                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
-
-                    let is_opera = [
-                        format!("{}/Programs/Opera/launcher.exe", local_appdata),
-                        format!("{}/Programs/Opera GX/launcher.exe", local_appdata),
-                        format!("{}/Opera/launcher.exe", prog_files),
-                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
-
-                    let is_firefox = [
-                        format!("{}/Mozilla Firefox/firefox.exe", prog_files),
-                        format!("{}/Mozilla Firefox/firefox.exe", prog_files_x86),
-                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
-
-                    let is_vivaldi = [
-                        format!("{}/Vivaldi/Application/vivaldi.exe", local_appdata),
-                        format!("{}/Vivaldi/Application/vivaldi.exe", prog_files),
-                    ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
-
-                    // Structured Table Rows: Google, Edge, Firefox, Brave, Opera, Vivaldi
-                    let browser_items: [(&str, &str, bool); 6] = [
-                        ("Google Chrome", "chrome://extensions", is_chrome),
-                        ("Microsoft Edge", "edge://extensions", is_edge),
-                        ("Mozilla Firefox", "about:addons", is_firefox),
-                        ("Brave Browser", "brave://extensions", is_brave),
-                        ("Opera / Opera GX", "opera://extensions", is_opera),
-                        ("Vivaldi", "vivaldi://extensions", is_vivaldi),
-                    ];
-
-                    let table_w = 664.0_f32; // Total width between left 28px and right 28px margins
-
-                    // Render Browser Table Container (NO separate boxes - clean unified modern table)
-                    ui.horizontal(|ui| {
-                        ui.add_space(28.0);
-                        egui::Frame::none()
-                            .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 180))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)))
-                            .rounding(egui::Rounding::same(6.0))
-                            .inner_margin(Margin::ZERO)
-                            .show(ui, |ui| {
-                                ui.set_width(table_w);
-
-                                // 1. Table Header Row (Height 32px)
-                                let (h_rect, _) = ui.allocate_exact_size(Vec2::new(table_w, 32.0), egui::Sense::hover());
-                                ui.painter().rect_filled(
-                                    h_rect,
-                                    egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 },
-                                    Color32::from_rgba_unmultiplied(30, 41, 59, 160),
-                                );
-                                ui.painter().line_segment(
-                                    [egui::pos2(h_rect.min.x, h_rect.max.y), egui::pos2(h_rect.max.x, h_rect.max.y)],
-                                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
-                                );
-
-                                // Column Header Labels
-                                let col_header_color = Color32::from_rgb(148, 163, 184);
-                                let font_h = egui::FontId::proportional(11.0);
-                                ui.painter().text(
-                                    egui::pos2(h_rect.min.x + 18.0, h_rect.center().y),
-                                    egui::Align2::LEFT_CENTER,
-                                    "BROWSER NAME",
-                                    font_h.clone(),
-                                    col_header_color,
-                                );
-                                ui.painter().text(
-                                    egui::pos2(h_rect.min.x + 220.0, h_rect.center().y),
-                                    egui::Align2::LEFT_CENTER,
-                                    "STATUS",
-                                    font_h.clone(),
-                                    col_header_color,
-                                );
-                                ui.painter().text(
-                                    egui::pos2(h_rect.min.x + 360.0, h_rect.center().y),
-                                    egui::Align2::LEFT_CENTER,
-                                    "REGISTRY HOOK",
-                                    font_h.clone(),
-                                    col_header_color,
-                                );
-                                ui.painter().text(
-                                    egui::pos2(h_rect.max.x - 56.0, h_rect.center().y),
-                                    egui::Align2::CENTER_CENTER,
-                                    "ACTION",
-                                    font_h.clone(),
-                                    col_header_color,
-                                );
-
-                                // 2. Table Data Rows (Height 36px per browser row)
-                                for (idx, (name, ext_url, is_detected)) in browser_items.iter().enumerate() {
-                                    let (row_rect, row_resp) = ui.allocate_exact_size(Vec2::new(table_w, 36.0), egui::Sense::hover());
-
-                                    // Subtle row hover effect
-                                    if row_resp.hovered() {
-                                        let row_rounding = if idx == browser_items.len() - 1 {
-                                            egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 }
-                                        } else {
-                                            egui::Rounding::ZERO
-                                        };
-                                        ui.painter().rect_filled(row_rect, row_rounding, Color32::from_rgba_unmultiplied(255, 255, 255, 8));
-                                    }
-
-                                    // Row divider line
-                                    if idx < browser_items.len() - 1 {
-                                        ui.painter().line_segment(
-                                            [egui::pos2(row_rect.min.x, row_rect.max.y), egui::pos2(row_rect.max.x, row_rect.max.y)],
-                                            Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)),
-                                        );
-                                    }
-
-                                    // Column 1: Browser Dot & Name
-                                    let dot_center = egui::pos2(row_rect.min.x + 22.0, row_rect.center().y);
-                                    if *is_detected {
-                                        ui.painter().circle_filled(dot_center, 3.5, Color32::from_rgb(16, 185, 129));
-                                    } else {
-                                        ui.painter().circle_filled(dot_center, 3.0, Color32::from_rgb(100, 116, 139));
-                                    }
-
-                                    ui.painter().text(
-                                        egui::pos2(row_rect.min.x + 36.0, row_rect.center().y),
-                                        egui::Align2::LEFT_CENTER,
-                                        *name,
-                                        egui::FontId::proportional(12.5),
-                                        if *is_detected { Color32::WHITE } else { Color32::from_rgb(148, 163, 184) },
-                                    );
-
-                                    // Column 2: Status Badge (Detected vs Not Installed)
-                                    let status_x = row_rect.min.x + 220.0;
-                                    if *is_detected {
-                                        let badge_rect = egui::Rect::from_center_size(
-                                            egui::pos2(status_x + 46.0, row_rect.center().y),
-                                            Vec2::new(92.0, 22.0),
-                                        );
-                                        ui.painter().rect_filled(
-                                            badge_rect,
-                                            egui::Rounding::same(4.0),
-                                            Color32::from_rgba_unmultiplied(16, 185, 129, 25),
-                                        );
-                                        // Check icon + text
-                                        let check_r = egui::Rect::from_center_size(
-                                            egui::pos2(badge_rect.min.x + 14.0, badge_rect.center().y),
-                                            Vec2::splat(9.0),
-                                        );
-                                        draw_modern_icon(ui.painter(), ModernIcon::Check, check_r, Color32::from_rgb(16, 185, 129));
-                                        ui.painter().text(
-                                            egui::pos2(badge_rect.min.x + 24.0, badge_rect.center().y),
-                                            egui::Align2::LEFT_CENTER,
-                                            "Detected",
-                                            egui::FontId::proportional(10.5),
-                                            Color32::from_rgb(52, 211, 153),
-                                        );
-                                    } else {
-                                        let badge_rect = egui::Rect::from_center_size(
-                                            egui::pos2(status_x + 48.0, row_rect.center().y),
-                                            Vec2::new(96.0, 22.0),
-                                        );
-                                        ui.painter().rect_filled(
-                                            badge_rect,
-                                            egui::Rounding::same(4.0),
-                                            Color32::from_rgba_unmultiplied(148, 163, 184, 15),
-                                        );
-                                        ui.painter().text(
-                                            badge_rect.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            "Not Installed",
-                                            egui::FontId::proportional(10.0),
-                                            Color32::from_rgb(148, 163, 184),
-                                        );
-                                    }
-
-                                    // Column 3: Registry Hook Status
-                                    let hook_x = row_rect.min.x + 360.0;
-                                    if *is_detected {
-                                        ui.painter().circle_filled(
-                                            egui::pos2(hook_x + 4.0, row_rect.center().y),
-                                            3.0,
-                                            Color32::from_rgb(56, 189, 248),
-                                        );
-                                        ui.painter().text(
-                                            egui::pos2(hook_x + 14.0, row_rect.center().y),
-                                            egui::Align2::LEFT_CENTER,
-                                            "Active (HKCU Native Host)",
-                                            egui::FontId::proportional(11.0),
-                                            Color32::from_rgb(56, 189, 248),
-                                        );
-                                    } else {
-                                        ui.painter().circle_filled(
-                                            egui::pos2(hook_x + 4.0, row_rect.center().y),
-                                            2.5,
-                                            Color32::from_rgb(100, 116, 139),
-                                        );
-                                        ui.painter().text(
-                                            egui::pos2(hook_x + 14.0, row_rect.center().y),
-                                            egui::Align2::LEFT_CENTER,
-                                            "Standby (Ready for Install)",
-                                            egui::FontId::proportional(11.0),
-                                            Color32::from_rgb(100, 116, 139),
-                                        );
-                                    }
-
-                                    // Column 4: Action Button ("Open" / "—")
-                                    let act_center_x = h_rect.max.x - 56.0;
-                                    if *is_detected {
-                                        let btn_rect = egui::Rect::from_center_size(
-                                            egui::pos2(act_center_x, row_rect.center().y),
-                                            Vec2::new(76.0, 24.0),
-                                        );
-                                        let open_resp = ui.interact(btn_rect, ui.id().with(("browser_row_btn", idx)), egui::Sense::click())
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .on_hover_text(format!("Open {} extensions management page", name));
-
-                                        let btn_bg = if open_resp.is_pointer_button_down_on() {
-                                            Color32::from_rgb(15, 23, 42)
-                                        } else if open_resp.hovered() {
-                                            Color32::from_rgb(51, 65, 85)
-                                        } else {
-                                            Color32::from_rgb(30, 41, 59)
-                                        };
-
-                                        ui.painter().rect_filled(btn_rect, egui::Rounding::same(4.0), btn_bg);
-                                        ui.painter().rect_stroke(
-                                            btn_rect,
-                                            egui::Rounding::same(4.0),
-                                            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)),
-                                        );
-                                        ui.painter().text(
-                                            btn_rect.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            "Open ↗",
-                                            egui::FontId::proportional(11.0),
-                                            if open_resp.hovered() { Color32::WHITE } else { Color32::from_rgb(226, 232, 240) },
-                                        );
-                                        if open_resp.clicked() {
-                                            launch_browser_url = Some(ext_url.to_string());
-                                        }
-                                    } else {
-                                        ui.painter().text(
-                                            egui::pos2(act_center_x, row_rect.center().y),
-                                            egui::Align2::CENTER_CENTER,
-                                            "—",
-                                            egui::FontId::proportional(12.0),
-                                            Color32::from_rgb(100, 116, 139),
-                                        );
-                                    }
-                                }
+                            // Subtitle description
+                            ui.horizontal(|ui| {
+                                ui.add_space(20.0);
+                                ui.label(RichText::new("Export the official Rapid Extension and load it into your installed Chromium or Gecko browsers").size(11.5).color(GLASS_MUTED));
                             });
-                    });
 
-                    // Optional Integration status message
-                    if let Some((ref msg, is_success)) = self.browser_integration_msg {
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(28.0);
-                            egui::Frame::none()
-                                .fill(if is_success { Color32::from_rgba_unmultiplied(16, 185, 129, 20) } else { Color32::from_rgba_unmultiplied(239, 68, 68, 20) })
-                                .stroke(Stroke::NONE)
-                                .rounding(egui::Rounding::same(6.0))
-                                .inner_margin(Margin::symmetric(14.0, 8.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(table_w - 28.0);
-                                    ui.horizontal(|ui| {
-                                        let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
-                                        draw_modern_icon(ui.painter(), if is_success { ModernIcon::Check } else { ModernIcon::Close }, icon_r, if is_success { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) });
-                                        ui.add_space(6.0);
-                                        ui.label(RichText::new(msg).size(11.5).color(if is_success { Color32::from_rgb(167, 243, 208) } else { Color32::from_rgb(254, 202, 202) }).strong());
+                            let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
+                            let prog_files = std::env::var("ProgramFiles").unwrap_or_default();
+                            let prog_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
+
+                            let chrome_exe = [
+                                format!("{}/Google/Chrome/Application/chrome.exe", local_appdata),
+                                format!("{}/Google/Chrome/Application/chrome.exe", prog_files),
+                                format!("{}/Google/Chrome/Application/chrome.exe", prog_files_x86),
+                            ].into_iter().find(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                            let edge_exe = [
+                                format!("{}/Microsoft/Edge/Application/msedge.exe", prog_files_x86),
+                                format!("{}/Microsoft/Edge/Application/msedge.exe", prog_files),
+                                format!("{}/Microsoft/Edge/Application/msedge.exe", local_appdata),
+                            ].into_iter().find(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                            let brave_exe = [
+                                format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", prog_files),
+                                format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", prog_files_x86),
+                                format!("{}/BraveSoftware/Brave-Browser/Application/brave.exe", local_appdata),
+                            ].into_iter().find(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                            let opera_exe = [
+                                format!("{}/Programs/Opera/launcher.exe", local_appdata),
+                                format!("{}/Programs/Opera GX/launcher.exe", local_appdata),
+                                format!("{}/Opera/launcher.exe", prog_files),
+                            ].into_iter().find(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                            let firefox_exe = [
+                                format!("{}/Mozilla Firefox/firefox.exe", prog_files),
+                                format!("{}/Mozilla Firefox/firefox.exe", prog_files_x86),
+                            ].into_iter().find(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                            let vivaldi_exe = [
+                                format!("{}/Vivaldi/Application/vivaldi.exe", local_appdata),
+                                format!("{}/Vivaldi/Application/vivaldi.exe", prog_files),
+                            ].into_iter().find(|p| !p.is_empty() && std::path::Path::new(p).exists());
+
+                            let browser_items: [(&str, &str, Option<String>); 6] = [
+                                ("Google Chrome", "chrome://extensions", chrome_exe),
+                                ("Microsoft Edge", "edge://extensions", edge_exe),
+                                ("Mozilla Firefox", "about:addons", firefox_exe),
+                                ("Brave Browser", "brave://extensions", brave_exe),
+                                ("Opera / Opera GX", "opera://extensions", opera_exe),
+                                ("Vivaldi", "vivaldi://extensions", vivaldi_exe),
+                            ];
+
+                            // Table frame with vertical flow!
+                            ui.horizontal(|ui| {
+                                ui.add_space(20.0);
+                                let inner_table_w = (ui.available_width() - 20.0).max(300.0);
+
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 180))
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                    .rounding(egui::Rounding::same(8.0))
+                                    .inner_margin(Margin::ZERO)
+                                    .show(ui, |ui| {
+                                        ui.set_width(inner_table_w);
+                                        // VERTICAL FLOW FOR ROWS!
+                                        ui.vertical(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                                            // Table Header
+                                            let (h_rect, _) = ui.allocate_exact_size(Vec2::new(inner_table_w, 32.0), egui::Sense::hover());
+                                            ui.painter().rect_filled(
+                                                h_rect,
+                                                egui::Rounding { nw: 8.0, ne: 8.0, sw: 0.0, se: 0.0 },
+                                                Color32::from_rgba_unmultiplied(30, 41, 59, 180),
+                                            );
+                                            ui.painter().line_segment(
+                                                [egui::pos2(h_rect.min.x, h_rect.max.y), egui::pos2(h_rect.max.x, h_rect.max.y)],
+                                                Stroke::new(1.0_f32, GLASS_BORDER),
+                                            );
+
+                                            let col_header_color = Color32::from_rgb(148, 163, 184);
+                                            let font_h = egui::FontId::proportional(11.0);
+                                            ui.painter().text(egui::pos2(h_rect.min.x + 16.0, h_rect.center().y), egui::Align2::LEFT_CENTER, "BROWSER NAME", font_h.clone(), col_header_color);
+                                            ui.painter().text(egui::pos2(h_rect.min.x + 200.0, h_rect.center().y), egui::Align2::LEFT_CENTER, "STATUS", font_h.clone(), col_header_color);
+                                            ui.painter().text(egui::pos2(h_rect.min.x + 330.0, h_rect.center().y), egui::Align2::LEFT_CENTER, "EXTENSION", font_h.clone(), col_header_color);
+                                            ui.painter().text(egui::pos2(h_rect.max.x - 50.0, h_rect.center().y), egui::Align2::CENTER_CENTER, "ACTION", font_h.clone(), col_header_color);
+
+                                            // Browser Rows (one after another vertically!)
+                                            for (idx, (name, ext_url, maybe_exe)) in browser_items.iter().enumerate() {
+                                                let (row_rect, row_resp) = ui.allocate_exact_size(Vec2::new(inner_table_w, 38.0), egui::Sense::hover());
+                                                let is_last = idx == browser_items.len() - 1;
+                                                let is_detected = maybe_exe.is_some();
+
+                                                if row_resp.hovered() {
+                                                    let rounding = if is_last {
+                                                        egui::Rounding { nw: 0.0, ne: 0.0, sw: 8.0, se: 8.0 }
+                                                    } else {
+                                                        egui::Rounding::ZERO
+                                                    };
+                                                    ui.painter().rect_filled(row_rect, rounding, Color32::from_rgba_unmultiplied(255, 255, 255, 8));
+                                                }
+
+                                                if !is_last {
+                                                    ui.painter().line_segment(
+                                                        [egui::pos2(row_rect.min.x, row_rect.max.y), egui::pos2(row_rect.max.x, row_rect.max.y)],
+                                                        Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)),
+                                                    );
+                                                }
+
+                                                // Col 1: Browser Name
+                                                let dot_c = egui::pos2(row_rect.min.x + 18.0, row_rect.center().y);
+                                                ui.painter().circle_filled(
+                                                    dot_c,
+                                                    3.5,
+                                                    if is_detected { STATUS_COMPLETED } else { Color32::from_rgb(100, 116, 139) },
+                                                );
+                                                ui.painter().text(
+                                                    egui::pos2(row_rect.min.x + 30.0, row_rect.center().y),
+                                                    egui::Align2::LEFT_CENTER,
+                                                    *name,
+                                                    egui::FontId::proportional(12.5),
+                                                    if is_detected { Color32::WHITE } else { Color32::from_rgb(148, 163, 184) },
+                                                );
+
+                                                // Col 2: Status Badge
+                                                let status_x = row_rect.min.x + 200.0;
+                                                let badge_rect = egui::Rect::from_center_size(
+                                                    egui::pos2(status_x + 44.0, row_rect.center().y),
+                                                    Vec2::new(88.0, 22.0),
+                                                );
+                                                if is_detected {
+                                                    ui.painter().rect_filled(badge_rect, egui::Rounding::same(4.0), Color32::from_rgba_unmultiplied(16, 185, 129, 25));
+                                                    let check_r = egui::Rect::from_center_size(egui::pos2(badge_rect.min.x + 12.0, badge_rect.center().y), Vec2::splat(9.0));
+                                                    draw_modern_icon(ui.painter(), ModernIcon::Check, check_r, STATUS_COMPLETED);
+                                                    ui.painter().text(
+                                                        egui::pos2(badge_rect.min.x + 22.0, badge_rect.center().y),
+                                                        egui::Align2::LEFT_CENTER,
+                                                        "Detected",
+                                                        egui::FontId::proportional(10.5),
+                                                        Color32::from_rgb(52, 211, 153),
+                                                    );
+                                                } else {
+                                                    ui.painter().rect_filled(badge_rect, egui::Rounding::same(4.0), Color32::from_rgba_unmultiplied(148, 163, 184, 15));
+                                                    ui.painter().text(badge_rect.center(), egui::Align2::CENTER_CENTER, "Not Installed", egui::FontId::proportional(10.0), Color32::from_rgb(148, 163, 184));
+                                                }
+
+                                                // Col 3: Extension Status
+                                                let hook_x = row_rect.min.x + 330.0;
+                                                ui.painter().circle_filled(
+                                                    egui::pos2(hook_x + 4.0, row_rect.center().y),
+                                                    3.0,
+                                                    if is_detected { Color32::from_rgb(52, 211, 153) } else { Color32::from_rgb(100, 116, 139) },
+                                                );
+                                                ui.painter().text(
+                                                    egui::pos2(hook_x + 14.0, row_rect.center().y),
+                                                    egui::Align2::LEFT_CENTER,
+                                                    if is_detected { "Ready to Load" } else { "Standby" },
+                                                    egui::FontId::proportional(11.0),
+                                                    if is_detected { Color32::from_rgb(52, 211, 153) } else { Color32::from_rgb(100, 116, 139) },
+                                                );
+
+                                                // Col 4: Action Button
+                                                let act_center_x = inner_table_w - 50.0 + row_rect.min.x;
+                                                if is_detected {
+                                                    let btn_rect = egui::Rect::from_center_size(
+                                                        egui::pos2(act_center_x, row_rect.center().y),
+                                                        Vec2::new(72.0, 24.0),
+                                                    );
+                                                    let open_resp = ui.interact(btn_rect, ui.id().with(("browser_btn", idx)), egui::Sense::click())
+                                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                        .on_hover_text(format!("Open {} extensions page & show installation guide", name));
+
+                                                    let btn_bg = if open_resp.hovered() { Color32::from_rgb(51, 65, 85) } else { Color32::from_rgb(30, 41, 59) };
+                                                    ui.painter().rect_filled(btn_rect, egui::Rounding::same(4.0), btn_bg);
+                                                    ui.painter().rect_stroke(btn_rect, egui::Rounding::same(4.0), Stroke::new(1.0_f32, GLASS_BORDER));
+                                                    ui.painter().text(
+                                                        btn_rect.center(),
+                                                        egui::Align2::CENTER_CENTER,
+                                                        "Open ↗",
+                                                        egui::FontId::proportional(11.0),
+                                                        if open_resp.hovered() { Color32::WHITE } else { Color32::from_rgb(226, 232, 240) },
+                                                    );
+                                                    if open_resp.clicked() {
+                                                        launch_browser_action = Some((ext_url.to_string(), maybe_exe.clone()));
+                                                    }
+                                                } else {
+                                                    ui.painter().text(
+                                                        egui::pos2(act_center_x, row_rect.center().y),
+                                                        egui::Align2::CENTER_CENTER,
+                                                        "—",
+                                                        egui::FontId::proportional(12.0),
+                                                        Color32::from_rgb(100, 116, 139),
+                                                    );
+                                                }
+                                            }
+                                        });
                                     });
-                                });
+                            });
+
                         });
-                    }
 
-                    ui.add_space(14.0);
-
-                    // 4 Action Buttons Row: Perfectly aligned across table width (664px)
+                    // 3. Footer Action Button (Clean centered export button)
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(28.0);
-                        ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
-                        let total_spacing = 3.0 * 10.0;
-                        let btn_w = (table_w - total_spacing) / 4.0;
-                        let btn_h = 34.0_f32;
+                        let total_dock_w = 300.0_f32;
+                        let pad_left = ((ui.available_width() - total_dock_w) * 0.5).max(10.0);
+                        ui.add_space(pad_left);
 
-                        // Button 1: Auto-Integrate All Browsers (Ocean Blue)
-                        let (b1_rect, b1_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
-                        let b1_resp = b1_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                        let b1_bg = if b1_resp.is_pointer_button_down_on() {
-                            Color32::from_rgb(12, 74, 96)
-                        } else if b1_resp.hovered() {
-                            Color32::from_rgb(14, 116, 144)
-                        } else {
-                            Color32::from_rgb(8, 90, 115)
-                        };
-                        ui.painter().rect_filled(b1_rect, egui::Rounding::same(6.0), b1_bg);
-                        ui.painter().text(
-                            b1_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Auto-Integrate All",
-                            egui::FontId::proportional(11.5),
-                            Color32::WHITE,
-                        );
-                        if b1_resp.clicked() {
-                            run_auto_integrate = true;
-                        }
+                        let btn_w = 300.0_f32;
+                        let btn_h = 36.0_f32;
 
-                        // Button 2: Launch Chrome Hook (Sky Blue)
-                        let (b2_rect, b2_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
-                        let b2_resp = b2_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                        let b2_bg = if b2_resp.is_pointer_button_down_on() {
-                            Color32::from_rgb(3, 105, 161)
-                        } else if b2_resp.hovered() {
-                            Color32::from_rgb(14, 165, 233)
-                        } else {
-                            Color32::from_rgb(2, 132, 199)
-                        };
-                        ui.painter().rect_filled(b2_rect, egui::Rounding::same(6.0), b2_bg);
-                        ui.painter().text(
-                            b2_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Launch Chrome",
-                            egui::FontId::proportional(11.5),
-                            Color32::WHITE,
-                        );
-                        if b2_resp.on_hover_text("Launch Chrome with Rapid Download Manager hook active").clicked() {
-                            launch_chrome_with_extension(None);
-                        }
-
-                        // Button 3: Export Webstore Zip (Royal Indigo / Violet)
-                        let (b3_rect, b3_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
-                        let b3_resp = b3_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                        let b3_bg = if b3_resp.is_pointer_button_down_on() {
-                            Color32::from_rgb(67, 56, 202)
-                        } else if b3_resp.hovered() {
-                            Color32::from_rgb(99, 102, 241)
-                        } else {
-                            Color32::from_rgb(79, 70, 229)
-                        };
-                        ui.painter().rect_filled(b3_rect, egui::Rounding::same(6.0), b3_bg);
-                        ui.painter().text(
-                            b3_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Export Webstore Zip",
-                            egui::FontId::proportional(11.5),
-                            Color32::WHITE,
-                        );
-                        if b3_resp.clicked() {
+                        let b = egui::Button::new(RichText::new("📦 Download & Export Extension (.zip)").size(12.5).strong().color(Color32::WHITE))
+                            .min_size(Vec2::new(btn_w, btn_h))
+                            .fill(GLASS_PRIMARY)
+                            .rounding(egui::Rounding::same(6.0));
+                        if ui.add(b).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Export extension to Downloads folder and show installation guide").clicked() {
                             export_zip = true;
                         }
-
-                        // Button 4: Close (Slate Dark)
-                        let (b4_rect, b4_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
-                        let b4_resp = b4_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                        let b4_bg = if b4_resp.is_pointer_button_down_on() {
-                            Color32::from_rgb(15, 23, 42)
-                        } else if b4_resp.hovered() {
-                            Color32::from_rgb(51, 65, 85)
-                        } else {
-                            Color32::from_rgb(30, 41, 59)
-                        };
-                        ui.painter().rect_filled(b4_rect, egui::Rounding::same(6.0), b4_bg);
-                        ui.painter().text(
-                            b4_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Close",
-                            egui::FontId::proportional(11.5),
-                            Color32::from_rgb(226, 232, 240),
-                        );
-                        if b4_resp.clicked() {
-                            close_modal = true;
-                        }
                     });
+                    ui.add_space(14.0);
                 });
 
-            if run_auto_integrate {
+            if export_zip {
+                let downloads_dir = rapid_core::AppPaths::default_downloads_dir();
+                let target_file = downloads_dir.join("RapidDownloadManager_Extension.zip");
+                let target_unpacked_dir = downloads_dir.join("RapidDownloadManager_Extension");
+                static EMBEDDED_ZIP: &[u8] = include_bytes!("../../../extension.zip");
+                if let Ok(_) = std::fs::write(&target_file, EMBEDDED_ZIP) {
+                    #[cfg(windows)]
+                    {
+                        let _ = std::fs::create_dir_all(&target_unpacked_dir);
+                        let mut ps_unzip = std::process::Command::new("powershell");
+                        ps_unzip.args(&[
+                            "-NoProfile",
+                            "-Command",
+                            &format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", target_file.display(), target_unpacked_dir.display()),
+                        ]);
+                        std::os::windows::process::CommandExt::creation_flags(&mut ps_unzip, 0x08000000);
+                        let _ = ps_unzip.output();
+
+                        let _ = std::process::Command::new("explorer")
+                            .args(&["/select,", &target_unpacked_dir.to_string_lossy()])
+                            .spawn();
+                    }
+                    self.show_integration_helper_modal = true;
+                    self.integration_helper_loading = false;
+                }
+            }
+
+            if let Some((target_url, target_exe)) = launch_browser_action {
+                let downloads_dir = rapid_core::AppPaths::default_downloads_dir();
+                let target_file = downloads_dir.join("RapidDownloadManager_Extension.zip");
+                let target_unpacked_dir = downloads_dir.join("RapidDownloadManager_Extension");
+                static EMBEDDED_ZIP: &[u8] = include_bytes!("../../../extension.zip");
+                let _ = std::fs::write(&target_file, EMBEDDED_ZIP);
                 #[cfg(windows)]
                 {
-                    let mut cmd = std::process::Command::new("powershell");
-                    cmd.args(&[
-                        "-ExecutionPolicy", "Bypass",
+                    let _ = std::fs::create_dir_all(&target_unpacked_dir);
+                    let mut ps_unzip = std::process::Command::new("powershell");
+                    ps_unzip.args(&[
                         "-NoProfile",
-                        "-File", "auto_integrate_browsers.ps1",
+                        "-Command",
+                        &format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", target_file.display(), target_unpacked_dir.display()),
                     ]);
-                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-                    std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
-                    match cmd.output() {
-                        Ok(out) if out.status.success() => {
-                            self.browser_integration_msg = Some(("Registry keys registered for all browsers! Restart browser to activate.".to_string(), true));
-                        }
-                        Ok(out) => {
-                            let err = String::from_utf8_lossy(&out.stderr);
-                            self.browser_integration_msg = Some((format!("Integration notice: {}", err.trim()), false));
-                        }
-                        Err(e) => {
-                            self.browser_integration_msg = Some((format!("Failed to run script: {}", e), false));
-                        }
-                    }
-                }
-            }
+                    std::os::windows::process::CommandExt::creation_flags(&mut ps_unzip, 0x08000000);
+                    let _ = ps_unzip.output();
 
-            if export_zip {
-                let zip_path = std::path::PathBuf::from("dist").join("RapidExtension_StoreReady.zip");
-                if zip_path.exists() {
-                    let _ = open::that(&zip_path);
+                    let _ = std::process::Command::new("explorer")
+                        .args(&["/select,", &target_unpacked_dir.to_string_lossy()])
+                        .spawn();
+                }
+
+                if let Some(exe) = target_exe {
+                    let _ = std::process::Command::new(exe).arg(&target_url).spawn();
                 } else {
-                    let _ = open::that("extension");
+                    let _ = open::that(&target_url);
                 }
-            }
-
-            if let Some(target) = launch_browser_url {
-                let _ = open::that(&target);
+                self.show_integration_helper_modal = true;
+                self.integration_helper_loading = false;
             }
 
             if close_modal {
                 self.show_browser_integration_modal = false;
+            }
+        }
+
+        // Dedicated Browser Integration Helper Modal (Separate modal, no layout breaking)
+        if self.show_integration_helper_modal {
+            let mut close_modal = false;
+            let mut open_downloads_folder = false;
+            let mut open_chrome_page = false;
+            let mut open_edge_page = false;
+
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_modal = true;
+            }
+
+            egui::Window::new("integration_helper_modal_window")
+                .title_bar(false)
+                .resizable(false)
+                .collapsible(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .fixed_size(Vec2::new(560.0, 360.0))
+                .frame(
+                    egui::Frame::none()
+                        .fill(Color32::from_rgba_unmultiplied(12, 18, 34, 250))
+                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                        .rounding(egui::Rounding::same(12.0))
+                        .shadow(egui::epaint::Shadow {
+                            offset: egui::vec2(0.0, 16.0),
+                            blur: 36.0_f32,
+                            spread: 2.0_f32,
+                            color: Color32::from_rgba_unmultiplied(0, 0, 0, 240),
+                        })
+                        .inner_margin(Margin::ZERO),
+                )
+                .show(ctx, |ui| {
+                    let header_h = 42.0_f32;
+                    let (header_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), header_h), egui::Sense::hover());
+                    ui.painter().rect_filled(
+                        header_rect,
+                        egui::Rounding { nw: 12.0, ne: 12.0, sw: 0.0, se: 0.0 },
+                        Color32::from_rgba_unmultiplied(20, 28, 48, 220),
+                    );
+                    ui.painter().line_segment(
+                        [egui::pos2(header_rect.min.x, header_rect.max.y), egui::pos2(header_rect.max.x, header_rect.max.y)],
+                        Stroke::new(1.0_f32, GLASS_BORDER),
+                    );
+
+                    let icon_box = egui::Rect::from_center_size(
+                        egui::pos2(header_rect.min.x + 22.0, header_rect.center().y),
+                        Vec2::splat(16.0),
+                    );
+                    draw_modern_icon(ui.painter(), ModernIcon::Globe, icon_box, GLASS_SECONDARY);
+                    ui.painter().text(
+                        egui::pos2(header_rect.min.x + 40.0, header_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "Browser Extension Installation Guide",
+                        egui::FontId::proportional(14.0),
+                        Color32::WHITE,
+                    );
+
+                    let close_w = 42.0_f32;
+                    let close_rect = egui::Rect::from_min_max(
+                        egui::pos2(header_rect.max.x - close_w, header_rect.min.y),
+                        egui::pos2(header_rect.max.x, header_rect.max.y),
+                    );
+                    let close_resp = ui.interact(close_rect, ui.make_persistent_id("helper_modal_close_x"), egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text("Close (Esc)");
+                    let close_bg = if close_resp.is_pointer_button_down_on() {
+                        Color32::from_rgb(185, 28, 28)
+                    } else if close_resp.hovered() {
+                        Color32::from_rgb(255, 60, 60)
+                    } else {
+                        Color32::from_rgb(220, 38, 38)
+                    };
+                    ui.painter().rect_filled(close_rect, egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 0.0 }, close_bg);
+                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(11.0)), Color32::WHITE);
+                    if close_resp.clicked() {
+                        close_modal = true;
+                    }
+
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.vertical(|ui| {
+                            // Top banner
+                            ui.horizontal(|ui| {
+                                let (chk_r, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
+                                ui.painter().circle_filled(chk_r.center(), 11.0, Color32::from_rgba_unmultiplied(16, 185, 129, 40));
+                                draw_modern_icon(ui.painter(), ModernIcon::Check, chk_r, Color32::from_rgb(52, 211, 153));
+                                ui.add_space(8.0);
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Extension Ready in Downloads Folder!").size(14.0).strong().color(Color32::WHITE));
+                                    ui.label(RichText::new("Follow these 3 simple steps to load the extension in your browser:").size(11.0).color(GLASS_MUTED));
+                                });
+                            });
+
+                            ui.add_space(12.0);
+
+                            // Step-by-step instruction container
+                            egui::Frame::none()
+                                .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 220))
+                                .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
+                                .rounding(egui::Rounding::same(8.0))
+                                .inner_margin(Margin::symmetric(14.0, 10.0))
+                                .show(ui, |ui| {
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Step 1:").strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("Open Extensions page (chrome://extensions or edge://extensions)").color(Color32::from_rgb(226, 232, 240)));
+                                        });
+                                        ui.add_space(6.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Step 2:").strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("Turn ON the 'Developer mode' toggle in the top-right corner.").color(Color32::from_rgb(226, 232, 240)));
+                                        });
+                                        ui.add_space(6.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Step 3:").strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("Click 'Load unpacked' and select 'RapidDownloadManager_Extension' folder.").color(Color32::from_rgb(226, 232, 240)));
+                                        });
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("💡 Tip: You can also simply Drag & Drop the extracted folder into the extensions page!").size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                    });
+                                });
+
+                            ui.add_space(14.0);
+
+                            // Action Buttons
+                            ui.horizontal(|ui| {
+                                let btn_folder = egui::Button::new(RichText::new("📂 Open Downloads Folder").size(11.5).strong().color(Color32::WHITE))
+                                    .min_size(Vec2::new(170.0, 32.0))
+                                    .fill(GLASS_PRIMARY);
+                                if ui.add(btn_folder).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open Downloads folder where the extension was extracted").clicked() {
+                                    open_downloads_folder = true;
+                                }
+
+                                let btn_chrome = egui::Button::new(RichText::new("🌐 Chrome Extensions").size(11.5).strong().color(Color32::WHITE))
+                                    .min_size(Vec2::new(140.0, 32.0))
+                                    .fill(Color32::from_rgb(79, 70, 229));
+                                if ui.add(btn_chrome).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open chrome://extensions in Google Chrome").clicked() {
+                                    open_chrome_page = true;
+                                }
+
+                                let btn_edge = egui::Button::new(RichText::new("🌐 Edge Extensions").size(11.5).color(Color32::from_rgb(203, 213, 225)))
+                                    .min_size(Vec2::new(125.0, 32.0))
+                                    .fill(Color32::from_rgba_unmultiplied(30, 41, 59, 200))
+                                    .stroke(Stroke::new(1.0_f32, GLASS_BORDER));
+                                if ui.add(btn_edge).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open edge://extensions in Microsoft Edge").clicked() {
+                                    open_edge_page = true;
+                                }
+
+                                let btn_done = egui::Button::new(RichText::new("✓ Got It").size(11.5).color(Color32::from_rgb(52, 211, 153)))
+                                    .min_size(Vec2::new(60.0, 32.0))
+                                    .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 30))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(52, 211, 153)));
+                                if ui.add(btn_done).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    close_modal = true;
+                                }
+                            });
+                        });
+                    });
+                });
+
+            let downloads_dir = rapid_core::AppPaths::default_downloads_dir();
+            let target_unpacked_dir = downloads_dir.join("RapidDownloadManager_Extension");
+
+            if open_downloads_folder {
+                #[cfg(windows)]
+                {
+                    let _ = std::process::Command::new("explorer").args(&["/select,", &target_unpacked_dir.to_string_lossy()]).spawn();
+                }
+            }
+
+            if open_chrome_page {
+                let _ = open::that("chrome://extensions");
+            }
+
+            if open_edge_page {
+                let _ = open::that("edge://extensions");
+            }
+
+            if close_modal {
+                self.show_integration_helper_modal = false;
             }
         }
 
@@ -4751,10 +5713,17 @@ fn render_parallel_connections_combobox(
                                     ui.image((self.titlebar_logo.id(), Vec2::new(180.0, 36.0)));
                                     ui.add_space(5.0);
                                     ui.horizontal(|ui| {
-                                        let full_w = ui.available_width();
-                                        ui.add_space(full_w * 0.5 - 120.0);
+                                        let title_text = "Rapid Download Manager";
+                                        let version_text = format!("v{}", env!("CARGO_PKG_VERSION"));
+                                        let title_font = egui::FontId::proportional(16.0);
+                                        let title_w = ui.fonts(|f| f.layout_no_wrap(title_text.to_string(), title_font, Color32::WHITE).size().x);
+                                        let badge_w = 48.0;
+                                        let total_row_w = title_w + 8.0 + badge_w;
+                                        let pad = ((ui.available_width() - total_row_w) * 0.5).max(0.0);
+                                        ui.add_space(pad);
+
                                         ui.label(
-                                            RichText::new("Rapid Download Manager")
+                                            RichText::new(title_text)
                                                 .size(16.0)
                                                 .color(Color32::WHITE)
                                                 .strong(),
@@ -4767,7 +5736,7 @@ fn render_parallel_connections_combobox(
                                             .inner_margin(Margin::symmetric(6.0, 1.5))
                                             .show(ui, |ui| {
                                                 ui.label(
-                                                    RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                                    RichText::new(&version_text)
                                                         .size(10.5)
                                                         .color(Color32::from_rgb(165, 180, 252))
                                                         .strong(),
@@ -4801,6 +5770,11 @@ fn render_parallel_connections_combobox(
                                         ui.add_space(6.0);
                                         ui.label(
                                             RichText::new("• Up to 32 Parallel Sockets with Dynamic TCP Stream Balancing")
+                                                .size(10.5)
+                                                .color(Color32::from_rgb(226, 232, 240)),
+                                        );
+                                        ui.label(
+                                            RichText::new("• Native MEGA Decrypted Streaming Engine & Recursive Folder Acceleration")
                                                 .size(10.5)
                                                 .color(Color32::from_rgb(226, 232, 240)),
                                         );
@@ -4947,6 +5921,127 @@ fn render_parallel_connections_combobox(
     }
 }
 
+async fn spawn_mega_download_task(
+    item: rapid_core::mega::MegaFileItem,
+    target_file: PathBuf,
+    speed_limit: Option<Arc<AtomicU64>>,
+    index_offset: usize,
+    rt: Arc<Runtime>,
+    tasks_arc: Arc<Mutex<Vec<ActiveTaskUI>>>,
+) {
+    let task_id = format!("task-{}-{}", Utc::now().timestamp_millis(), index_offset);
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let (progress_tx, mut rx) = tokio::sync::broadcast::channel::<rapid_core::DownloadProgress>(100);
+
+    let downloader = rapid_core::mega::MegaDownloader::new(
+        task_id.clone(),
+        item.handle.clone(),
+        item.name.clone(),
+        target_file.clone(),
+        item.size,
+        item.key,
+        item.initial_counter,
+        item.folder_id.clone(),
+        speed_limit,
+        cancel_token.clone(),
+    );
+
+    let mega_url = if let Some(ref fid) = item.folder_id {
+        if let Some(folder_key) = rapid_core::mega::MegaResolver::lookup_folder_key(fid) {
+            format!("https://mega.nz/folder/{}#{}#node={}", fid, folder_key, item.handle)
+        } else {
+            format!("https://mega.nz/folder/{}#node={}", fid, item.handle)
+        }
+    } else {
+        format!("https://mega.nz/file/{}", item.handle)
+    };
+
+    let should_queue = {
+        let mut list = tasks_arc.lock().await;
+        let active_count = list.iter().filter(|t| t.status == DownloadStatus::Downloading).count();
+        let queue = active_count >= 2;
+        let initial_status = if queue {
+            DownloadStatus::Queued
+        } else {
+            DownloadStatus::Downloading
+        };
+
+        let ui_entry = ActiveTaskUI {
+            id: task_id.clone(),
+            filename: item.name.clone(),
+            url: mega_url,
+            target_file: target_file.clone(),
+            total_bytes: if item.size > 0 { Some(item.size) } else { None },
+            downloaded_bytes: 0,
+            progress_percent: 0.0,
+            speed_bps: 0,
+            eta_seconds: None,
+            status: initial_status,
+            segments: vec![rapid_core::Segment::new(0, 0, item.size)],
+            task_handle: None,
+            num_segments: 1,
+            is_resuming: false,
+            cookies: None,
+            referrer: None,
+            user_agent: None,
+            is_youtube: false,
+            quality: None,
+            yt_cancel_token: Some(cancel_token),
+            mega_item: Some(item),
+        };
+
+        list.push(ui_entry);
+        queue
+    };
+
+    if should_queue {
+        return;
+    }
+
+    let tasks_for_progress = Arc::clone(&tasks_arc);
+    let task_id_for_progress = task_id.clone();
+
+    rt.spawn(async move {
+        tokio::spawn(async move {
+            while let Ok(prog) = rx.recv().await {
+                let mut list = tasks_for_progress.lock().await;
+                if let Some(entry) = list.iter_mut().find(|t| t.id == task_id_for_progress) {
+                    entry.downloaded_bytes = prog.downloaded_bytes;
+                    entry.progress_percent = prog.progress_percent;
+                    entry.speed_bps = prog.speed_bps;
+                    entry.eta_seconds = prog.eta_seconds;
+                    entry.status = prog.status.clone();
+                    entry.segments = prog.segments;
+                    if let Some(tot) = prog.total_bytes {
+                        entry.total_bytes = Some(tot);
+                    }
+                }
+            }
+        });
+
+        let res = downloader.run(progress_tx).await;
+        let mut list = tasks_arc.lock().await;
+        if let Some(entry) = list.iter_mut().find(|t| t.id == task_id) {
+            match res {
+                Ok(_) => {
+                    entry.status = DownloadStatus::Completed;
+                    entry.progress_percent = 100.0;
+                    entry.speed_bps = 0;
+                    entry.eta_seconds = None;
+                    save_task_to_history(entry);
+                }
+                Err(e) => {
+                    if !matches!(e, rapid_core::RapidError::Cancelled) {
+                        entry.status = DownloadStatus::Failed(e.to_string());
+                    }
+                    entry.speed_bps = 0;
+                    entry.eta_seconds = None;
+                }
+            }
+        }
+    });
+}
+
 fn spawn_download_task(
     url: String,
     dest_dir: PathBuf,
@@ -5017,6 +6112,7 @@ fn spawn_download_task(
                 is_youtube: false,
                 quality: None,
                 yt_cancel_token: None,
+                mega_item: None,
             };
 
             {
@@ -5163,6 +6259,7 @@ fn spawn_download_task(
                 is_youtube: true,
                 quality: Some(selected_quality),
                 yt_cancel_token: Some(cancel_token),
+                mega_item: None,
             };
 
             {
@@ -5281,6 +6378,7 @@ fn spawn_download_task(
                     is_youtube: false,
                     quality: None,
                     yt_cancel_token: None,
+                    mega_item: None,
                 };
 
                 {
@@ -5359,6 +6457,7 @@ fn spawn_download_task(
                     is_youtube: false,
                     quality: None,
                     yt_cancel_token: None,
+                    mega_item: None,
                 };
                 let mut list = tasks_arc.lock().await;
                 list.push(ui_entry);
@@ -5755,7 +6854,7 @@ fn render_status_action_btn(
         ui.fonts(|f| f.layout_no_wrap(label.to_string(), font_id.clone(), Color32::WHITE).size().x)
     };
     let btn_w = if is_compact { 22.0 } else { (text_w + 24.0).max(46.0) };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(btn_w, 20.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(btn_w, 22.0), egui::Sense::click());
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     let is_h = resp.hovered();
 
@@ -5805,7 +6904,7 @@ fn render_status_action_btn(
         .clicked()
 }
 
-fn render_status_tray_pill(ui: &mut egui::Ui, is_compact: bool) {
+fn render_status_tray_pill(ui: &mut egui::Ui, is_compact: bool) -> bool {
     let font_id = egui::FontId::proportional(10.5);
     let label = if is_compact { "" } else { "Tray" };
     let text_w = if is_compact {
@@ -5813,11 +6912,20 @@ fn render_status_tray_pill(ui: &mut egui::Ui, is_compact: bool) {
     } else {
         ui.fonts(|f| f.layout_no_wrap(label.to_string(), font_id.clone(), Color32::WHITE).size().x) + 4.0
     };
-    let total_w = if is_compact { 18.0 } else { 18.0 + text_w + 6.0 };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(total_w, 20.0), egui::Sense::hover());
+    let total_w = if is_compact { 20.0 } else { 20.0 + text_w + 6.0 };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(total_w, 22.0), egui::Sense::click());
+    let hovered = resp.hovered();
 
-    let bg = Color32::from_rgba_unmultiplied(255, 255, 255, 6);
-    let border = Color32::from_rgba_unmultiplied(148, 163, 184, 25);
+    let bg = if hovered {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 18)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 6)
+    };
+    let border = if hovered {
+        Color32::from_rgb(52, 211, 153)
+    } else {
+        Color32::from_rgba_unmultiplied(148, 163, 184, 25)
+    };
     ui.painter().rect(rect, egui::Rounding::same(4.0), bg, Stroke::new(1.0_f32, border));
 
     let dot_center = if is_compact {
@@ -5833,11 +6941,13 @@ fn render_status_tray_pill(ui: &mut egui::Ui, is_compact: bool) {
             egui::Align2::LEFT_CENTER,
             label,
             font_id,
-            Color32::from_rgb(160, 150, 185),
+            if hovered { Color32::WHITE } else { Color32::from_rgb(160, 150, 185) },
         );
     }
 
-    resp.on_hover_text("Rapid Download Manager is active in Windows Notification Area (System Tray)");
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Rapid Download Manager is active in Windows Notification Area.\nClick to minimize to tray.")
+        .clicked()
 }
 
 

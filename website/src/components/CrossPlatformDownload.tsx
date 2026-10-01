@@ -334,7 +334,7 @@ export default function CrossPlatformDownload() {
                   Native DEB package for Ubuntu, Debian, Pop!_OS, and Linux Mint.
                 </p>
                 <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-rose-300 overflow-x-auto">
-                  <span>sudo dpkg -i rdm_1.0.4_amd64.deb</span>
+                  <span>sudo dpkg -i rdm_1.0.5_amd64.deb</span>
                 </div>
               </div>
               <div className="pt-6">

@@ -221,7 +221,7 @@ export default function Navbar() {
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold shadow-md"
             >
               <Download className="w-4 h-4" />
-              <span>Download v1.0.4</span>
+              <span>Download v1.0.5</span>
             </a>
           </div>
         </div>

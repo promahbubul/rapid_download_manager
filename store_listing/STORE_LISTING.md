@@ -10,7 +10,7 @@ Use these exact fields when submitting to [Microsoft Partner Center](https://par
 * **Publisher Display Name:** promahbubul
 * **Seller ID:** 96219170
 * **Developer Name:** Mahbubul Alam
-* **Quad Version:** 1.0.4.0 (SemVer: 1.0.4)
+* **Quad Version:** 1.0.5.0 (SemVer: 1.0.5)
 * **Category:** Utilities & tools
 * **Subcategory:** File managers / Productivity
 
@@ -53,6 +53,7 @@ KEY CAPABILITIES:
 🎬 ADVANCED STREAM & MEDIA RESOLVER
 • Built-in multi-connection HLS (.m3u8) audio/video segment merger.
 • Seamless Google Drive large file virus-scan bypass handler.
+• Native MEGA.nz folder recursive crawler and on-the-fly AES-128-CTR streaming decrypter.
 
 🎨 SLEEK CYBER-OBSIDIAN GLASSMORPHIC INTERFACE
 • Intuitive dark theme with real-time segment progress visualizers, per-file speed gauges, and ETA calculators.

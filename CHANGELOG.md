@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.5] - 2026-10-01
+
+### Added
+- **Native MEGA.nz Cloud Acceleration Engine (`crates/rapid-core/src/mega.rs`)**:
+  - Recursive folder crawling for public MEGA.nz links (`https://mega.nz/folder/...#...`), discovering all files and nested directory trees.
+  - Preserves exact folder hierarchy locally: automatically constructs parent/subfolder paths on disk.
+  - Real-time on-the-fly AES-128-CTR hardware-accelerated decryption streaming: zero intermediate disk caching overhead.
+  - Full HTTP Range resume capability on encrypted MEGA CDN endpoints.
+  - Accurate MEGA CBC/CTR key derivation, base64 url-safe attribute parsing, and chunk integrity calculation.
+
+### Fixed & Improved
+- **Lock-Safe Redownload & Resume Engine**:
+  - Fixed concurrency deadlocks when redownloading or resuming tasks by deferring task cancellation and file handle release outside critical Mutex locks.
+  - Eliminated UI freezes and guaranteed instantaneous state updates on manual re-download triggers.
+- **Microsoft Store Production Package**:
+  - Bumped package identity to `1.0.5.0` (`RapidDownloadManager_v1.0.5.msix`).
+  - Updated About modal capabilities list with native MEGA decryption and folder acceleration.
+
+---
+
 ## [1.0.4] - 2026-09-29
 
 ### Highlights
