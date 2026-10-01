@@ -76,3 +76,67 @@ impl StorageManager {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    struct SampleData {
+        name: String,
+        score: u32,
+    }
+
+    #[test]
+    fn test_atomic_write_and_read() {
+        let temp_dir = std::env::temp_dir().join(format!("rapid_test_storage_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let file_path = temp_dir.join("test_data.json");
+
+        let original = SampleData {
+            name: "Rapid Test".to_string(),
+            score: 100,
+        };
+
+        let write_res = StorageManager::atomic_write_json(&file_path, &original);
+        assert!(write_res.is_ok(), "Failed to write: {:?}", write_res);
+
+        let loaded: Option<SampleData> = StorageManager::load_json_with_backup(&file_path);
+        assert_eq!(loaded, Some(original));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_recovery_from_backup_on_corruption() {
+        let temp_dir = std::env::temp_dir().join(format!("rapid_test_backup_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let file_path = temp_dir.join("corrupt_test.json");
+
+        let valid_data = SampleData {
+            name: "Persistent Config".to_string(),
+            score: 42,
+        };
+
+        // Write first version
+        assert!(StorageManager::atomic_write_json(&file_path, &valid_data).is_ok());
+
+        // Update it so .bak is created
+        let updated_data = SampleData {
+            name: "Updated Config".to_string(),
+            score: 99,
+        };
+        assert!(StorageManager::atomic_write_json(&file_path, &updated_data).is_ok());
+
+        // Now artificially corrupt the primary file with broken garbage
+        std::fs::write(&file_path, b"{ broken json !@@@").unwrap();
+
+        // Loading should automatically recover from .bak!
+        let recovered: Option<SampleData> = StorageManager::load_json_with_backup(&file_path);
+        assert_eq!(recovered, Some(valid_data));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
+

@@ -183,3 +183,36 @@ pub fn init_production_logging() -> Result<(), SetLoggerError> {
     log::set_max_level(LevelFilter::Info);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_url_credentials() {
+        let input = "Connecting to https://admin:SuperSecret999@api.example.com/data";
+        let clean = RapidLogger::sanitize(input);
+        assert_eq!(clean, "Connecting to https://admin:[REDACTED]@api.example.com/data");
+    }
+
+    #[test]
+    fn test_sanitize_query_tokens() {
+        let input = "GET /v1/file?token=my_secret_token_123&type=video&key=abc_key_456";
+        let clean = RapidLogger::sanitize(input);
+        assert!(clean.contains("token=[REDACTED]"));
+        assert!(clean.contains("key=[REDACTED]"));
+        assert!(clean.contains("type=video"));
+    }
+
+    #[test]
+    fn test_sanitize_bearer_and_basic_auth() {
+        let bearer_input = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+        let clean_bearer = RapidLogger::sanitize(bearer_input);
+        assert_eq!(clean_bearer, "Authorization: Bearer [REDACTED]");
+
+        let basic_input = "Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==";
+        let clean_basic = RapidLogger::sanitize(basic_input);
+        assert_eq!(clean_basic, "Authorization: Basic [REDACTED]");
+    }
+}
+

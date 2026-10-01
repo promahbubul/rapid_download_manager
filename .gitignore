@@ -32,6 +32,8 @@ test*.html
 dev_watch.*
 *.zip
 /yt-dlp.exe
+/scripts/archive_patches/
+/assets/debug_renders/
 
 /ffmpeg.exe
 *.png

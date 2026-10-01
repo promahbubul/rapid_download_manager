@@ -213,36 +213,46 @@ impl YoutubeResolver {
 
     /// Locate yt-dlp binary across common locations
     pub fn find_ytdlp_binary() -> Option<PathBuf> {
-        // 1. Next to current executable
+        // 1. Next to current executable or its ancestor directories (target/debug, workspace root)
         if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(dir) = exe_path.parent() {
-                let candidate = dir.join("yt-dlp.exe");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-                let candidate = dir.join("yt-dlp");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-                if let Some(parent) = dir.parent() {
-                    let candidate = parent.join("yt-dlp.exe");
+            let mut curr = Some(exe_path.as_path());
+            for _ in 0..6 {
+                if let Some(dir) = curr {
+                    let candidate = dir.join("yt-dlp.exe");
                     if candidate.exists() {
                         return Some(candidate);
                     }
+                    let candidate = dir.join("yt-dlp");
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
+                    curr = dir.parent();
                 }
             }
         }
 
-        // 2. User LocalAppData bin directory (%LOCALAPPDATA%\RapidDownloadManager\bin\yt-dlp.exe)
+        // 2. Current working directory and ancestors (e.g., when tests run inside crates/rapid-core)
+        if let Ok(cwd) = std::env::current_dir() {
+            let mut curr = Some(cwd.as_path());
+            for _ in 0..5 {
+                if let Some(dir) = curr {
+                    let candidate = dir.join("yt-dlp.exe");
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
+                    let candidate = dir.join("yt-dlp");
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
+                    curr = dir.parent();
+                }
+            }
+        }
+
+        // 3. User LocalAppData bin directory (%LOCALAPPDATA%\RapidDownloadManager\bin\yt-dlp.exe)
         let bin_candidate = crate::paths::AppPaths::bin_dir().join("yt-dlp.exe");
         if bin_candidate.exists() {
             return Some(bin_candidate);
-        }
-
-        // 3. Current working directory
-        let cwd_candidate = PathBuf::from("yt-dlp.exe");
-        if cwd_candidate.exists() {
-            return Some(cwd_candidate);
         }
 
         // 4. PATH search
@@ -265,19 +275,31 @@ impl YoutubeResolver {
     /// Locate ffmpeg binary or directory
     pub fn find_ffmpeg_location() -> Option<PathBuf> {
         if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(dir) = exe_path.parent() {
-                let candidate = dir.join("ffmpeg.exe");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-                if let Some(parent) = dir.parent() {
-                    let candidate = parent.join("ffmpeg.exe");
+            let mut curr = Some(exe_path.as_path());
+            for _ in 0..6 {
+                if let Some(dir) = curr {
+                    let candidate = dir.join("ffmpeg.exe");
                     if candidate.exists() {
                         return Some(candidate);
                     }
+                    curr = dir.parent();
                 }
             }
         }
+
+        if let Ok(cwd) = std::env::current_dir() {
+            let mut curr = Some(cwd.as_path());
+            for _ in 0..5 {
+                if let Some(dir) = curr {
+                    let candidate = dir.join("ffmpeg.exe");
+                    if candidate.exists() {
+                        return Some(candidate);
+                    }
+                    curr = dir.parent();
+                }
+            }
+        }
+
         let bin_candidate = crate::paths::AppPaths::bin_dir().join("ffmpeg.exe");
         if bin_candidate.exists() {
             return Some(bin_candidate);

@@ -458,3 +458,60 @@ impl GDriveResolver {
         crate::probe::Probe::extract_filename_from_cd(disposition)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_gdrive_folder() {
+        let url = "https://drive.google.com/drive/folders/1aBcDeFgHiJkLmNoPqRsTuVwXyZ?usp=sharing";
+        let res = GDriveResolver::parse_resource_type(url);
+        assert_eq!(
+            res,
+            GDriveResourceType::Folder("1aBcDeFgHiJkLmNoPqRsTuVwXyZ".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_gdrive_file() {
+        let url = "https://drive.google.com/file/d/1X987654321_AbCdEfGhIjKlMnOpQrSt/view";
+        let res = GDriveResolver::parse_resource_type(url);
+        assert_eq!(
+            res,
+            GDriveResourceType::File("1X987654321_AbCdEfGhIjKlMnOpQrSt".to_string())
+        );
+
+        let query_url = "https://drive.google.com/uc?id=1234567890ABCDEF&export=download";
+        let res2 = GDriveResolver::parse_resource_type(query_url);
+        assert_eq!(
+            res2,
+            GDriveResourceType::File("1234567890ABCDEF".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_non_gdrive() {
+        let url = "https://example.com/files/archive.zip";
+        let res = GDriveResolver::parse_resource_type(url);
+        assert_eq!(res, GDriveResourceType::Unknown);
+    }
+
+    #[test]
+    fn test_extract_confirm_form_url() {
+        let html = r#"
+            <form id="download-form" action="https://drive.usercontent.google.com/download" method="get">
+                <input type="hidden" name="id" value="1ABC_DEF_999">
+                <input type="hidden" name="confirm" value="t">
+                <input type="hidden" name="uuid" value="uuid_test_12345">
+                <input type="submit" id="uc-download-link" value="Download anyway">
+            </form>
+        "#;
+        let confirmed = GDriveResolver::extract_confirm_form_url(html, "https://drive.usercontent.google.com/download?id=1ABC_DEF_999");
+        assert!(confirmed.is_some());
+        let url = confirmed.unwrap();
+        assert!(url.contains("id=1ABC_DEF_999"));
+        assert!(url.contains("confirm=t"));
+        assert!(url.contains("uuid=uuid_test_12345"));
+    }
+}

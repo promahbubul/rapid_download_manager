@@ -1,7 +1,6 @@
-﻿#![windows_subsystem = "windows"]
+#![windows_subsystem = "windows"]
 
 use chrono::Timelike;
-use serde::{Deserialize, Serialize};
 
 
 use chrono::Utc;
@@ -18,633 +17,17 @@ use tokio::sync::Mutex;
 #[cfg(windows)]
 mod tray;
 mod bengali;
-use bengali::shape_bengali;
+mod theme;
+mod icons;
+mod types;
+mod server;
 
-// =========================================================================
-// GLASSMORPHISM MASTER PALETTE (Futuristic • Elegant • Premium)
-// =========================================================================
-const GLASS_PRIMARY: Color32 = Color32::from_rgb(139, 92, 246);        // Electric Violet (#8B5CF6)
-const GLASS_PRIMARY_HOVER: Color32 = Color32::from_rgb(167, 139, 250);  // Light Violet Glow (#A78BFA)
-const GLASS_SECONDARY: Color32 = Color32::from_rgb(6, 182, 212);       // Neon Cyan / Electric Aqua (#06B6D4)
-const GLASS_SECONDARY_HOVER: Color32 = Color32::from_rgb(34, 211, 238); // Light Cyan Glow (#22D3EE)
-const GLASS_BG: Color32 = Color32::from_rgb(2, 6, 23);                 // Deep Midnight Slate-950 (#020617)
-const GLASS_SURFACE: Color32 = Color32::from_rgb(11, 18, 36);          // Translucent Dark Glass Surface
-const GLASS_CARD: Color32 = Color32::from_rgb(14, 23, 46);             // Frosted Glass Card Fill
-const GLASS_BORDER: Color32 = Color32::from_rgb(32, 45, 74);           // Glass Rim Border
-const GLASS_TEXT: Color32 = Color32::from_rgb(249, 250, 251);          // Crisp Bright White (#F9FAFB)
-const GLASS_MUTED: Color32 = Color32::from_rgb(156, 163, 175);         // Cool Slate Muted (#9CA3AF)
-const _GLASS_ACCENT_BG: Color32 = Color32::from_rgb(28, 20, 58);       // Violet Aura Pill Fill
-const _GLASS_ACCENT_BORDER: Color32 = Color32::from_rgb(124, 58, 237); // Glowing Violet Rim
+pub use bengali::shape_bengali;
+pub use theme::*;
+pub use icons::*;
+pub use types::*;
+pub use server::*;
 
-// Backward-compatible aliases for seamless rendering
-const PINK_NEON: Color32 = GLASS_PRIMARY;                              // Electric Violet (#8B5CF6)
-const PINK_ROSE: Color32 = GLASS_SECONDARY;                            // Neon Cyan (#06B6D4)
-const PINK_PASTEL: Color32 = GLASS_TEXT;                               // Crisp White (#F9FAFB)
-const PINK_MUTED: Color32 = GLASS_MUTED;                               // Cool Slate Muted (#9CA3AF)
-const _PINK_ACCENT_BG: Color32 = _GLASS_ACCENT_BG;                     // Violet Aura Pill Fill
-const _PINK_ACCENT_BORDER: Color32 = _GLASS_ACCENT_BORDER;             // Glowing Violet Rim
-
-const VELVET_BLACK: Color32 = GLASS_BG;                                // Deep Midnight (#020617)
-const VELVET_SURFACE: Color32 = GLASS_SURFACE;                         // Glass Surface (#0B1224)
-const _VELVET_CARD: Color32 = GLASS_CARD;                              // Frosted Card (#0E172E)
-const VELVET_BORDER: Color32 = GLASS_BORDER;                           // Glass Rim Border (#202D4A)
-
-const STATUS_DOWNLOADING: Color32 = GLASS_SECONDARY;                   // Neon Cyan (#06B6D4)
-const STATUS_COMPLETED: Color32 = Color32::from_rgb(16, 185, 129);     // Emerald Mint (#10B981)
-const STATUS_PAUSED: Color32 = Color32::from_rgb(245, 158, 11);        // Warm Amber (#F59E0B)
-const STATUS_FAILED: Color32 = Color32::from_rgb(244, 63, 94);         // Crimson Rose (#F43F5E)
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FilterCategory {
-    All,
-    Active,
-    Paused,
-    Completed,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ModernIcon {
-    Globe,
-    Close,
-    Play,
-    Pause,
-    Refresh,
-    Trash,
-    Folder,
-    ExternalFile,
-    Plus,
-    Search,
-    MinimizeTray,
-    Check,
-    PulseBeacon,
-    SpeedGauge,
-    WinMinimize,
-    WinMaximize,
-    WinRestore,
-    WinClose,
-    Github,
-}
-
-fn draw_modern_icon(painter: &egui::Painter, icon: ModernIcon, rect: egui::Rect, color: Color32) {
-    let center = rect.center();
-    let stroke = Stroke::new(1.5_f32, color);
-    match icon {
-        ModernIcon::Github => {
-            painter.circle_stroke(center, 5.2, stroke);
-            // Left cat ear
-            painter.line_segment([egui::pos2(center.x - 3.8, center.y - 3.5), egui::pos2(center.x - 2.5, center.y - 6.2)], stroke);
-            painter.line_segment([egui::pos2(center.x - 2.5, center.y - 6.2), egui::pos2(center.x - 1.2, center.y - 5.0)], stroke);
-            // Right cat ear
-            painter.line_segment([egui::pos2(center.x + 1.2, center.y - 5.0), egui::pos2(center.x + 2.5, center.y - 6.2)], stroke);
-            painter.line_segment([egui::pos2(center.x + 2.5, center.y - 6.2), egui::pos2(center.x + 3.8, center.y - 3.5)], stroke);
-            // Branch/stem
-            painter.line_segment([egui::pos2(center.x, center.y - 1.0), egui::pos2(center.x, center.y + 4.2)], Stroke::new(1.3_f32, color));
-            painter.circle_filled(egui::pos2(center.x - 2.0, center.y + 1.5), 1.0, color);
-            painter.circle_filled(egui::pos2(center.x + 2.0, center.y + 1.5), 1.0, color);
-        }
-        ModernIcon::Globe => {
-            painter.circle_stroke(center, 5.0, stroke);
-            painter.line_segment([egui::pos2(center.x - 5.0, center.y), egui::pos2(center.x + 5.0, center.y)], stroke);
-            painter.line_segment([egui::pos2(center.x, center.y - 5.0), egui::pos2(center.x, center.y + 5.0)], stroke);
-        }
-        ModernIcon::Close => {
-            painter.line_segment(
-                [egui::pos2(center.x - 5.0, center.y - 5.0), egui::pos2(center.x + 5.0, center.y + 5.0)],
-                Stroke::new(2.0_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x + 5.0, center.y - 5.0), egui::pos2(center.x - 5.0, center.y + 5.0)],
-                Stroke::new(2.0_f32, color),
-            );
-        }
-        ModernIcon::Play => {
-            let half_h = 5.0_f32;
-            let p1 = egui::pos2(center.x - 3.5, center.y - half_h);
-            let p2 = egui::pos2(center.x - 3.5, center.y + half_h);
-            let p3 = egui::pos2(center.x + 4.5, center.y);
-            painter.add(egui::Shape::convex_polygon(
-                vec![p1, p2, p3],
-                color,
-                Stroke::NONE,
-            ));
-        }
-        ModernIcon::Pause => {
-            let bar_w = 2.5_f32;
-            let bar_h = 10.0_f32;
-            let gap = 2.5_f32;
-            let b1 = egui::Rect::from_center_size(egui::pos2(center.x - gap, center.y), egui::vec2(bar_w, bar_h));
-            let b2 = egui::Rect::from_center_size(egui::pos2(center.x + gap, center.y), egui::vec2(bar_w, bar_h));
-            painter.rect_filled(b1, 1.0, color);
-            painter.rect_filled(b2, 1.0, color);
-        }
-        ModernIcon::Refresh => {
-            let radius = 4.8_f32;
-            let n = 10;
-            for i in 0..n {
-                let a1 = std::f32::consts::PI * 0.25 + (i as f32) * (std::f32::consts::PI * 1.5 / n as f32);
-                let a2 = std::f32::consts::PI * 0.25 + ((i + 1) as f32) * (std::f32::consts::PI * 1.5 / n as f32);
-                let pt1 = egui::pos2(center.x + radius * a1.cos(), center.y + radius * a1.sin());
-                let pt2 = egui::pos2(center.x + radius * a2.cos(), center.y + radius * a2.sin());
-                painter.line_segment([pt1, pt2], stroke);
-            }
-            let end_a = std::f32::consts::PI * 1.75;
-            let tip = egui::pos2(center.x + radius * end_a.cos(), center.y + radius * end_a.sin());
-            painter.line_segment([tip, egui::pos2(tip.x + 2.5, tip.y - 0.5)], stroke);
-            painter.line_segment([tip, egui::pos2(tip.x - 0.5, tip.y - 2.5)], stroke);
-        }
-        ModernIcon::Trash => {
-            let w = 9.0_f32;
-            let h = 10.0_f32;
-            painter.line_segment(
-                [egui::pos2(center.x - w * 0.6, center.y - h * 0.4), egui::pos2(center.x + w * 0.6, center.y - h * 0.4)],
-                Stroke::new(1.4_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x - 2.0, center.y - h * 0.4), egui::pos2(center.x - 2.0, center.y - h * 0.6)],
-                Stroke::new(1.2_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x - 2.0, center.y - h * 0.6), egui::pos2(center.x + 2.0, center.y - h * 0.6)],
-                Stroke::new(1.2_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x + 2.0, center.y - h * 0.6), egui::pos2(center.x + 2.0, center.y - h * 0.4)],
-                Stroke::new(1.2_f32, color),
-            );
-            let body_rect = egui::Rect::from_min_max(
-                egui::pos2(center.x - w * 0.45, center.y - h * 0.25),
-                egui::pos2(center.x + w * 0.45, center.y + h * 0.55),
-            );
-            painter.rect_stroke(body_rect, 1.5, Stroke::new(1.2_f32, color));
-            painter.line_segment(
-                [egui::pos2(center.x - 1.5, center.y - h * 0.1), egui::pos2(center.x - 1.5, center.y + h * 0.4)],
-                Stroke::new(1.0_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x + 1.5, center.y - h * 0.1), egui::pos2(center.x + 1.5, center.y + h * 0.4)],
-                Stroke::new(1.0_f32, color),
-            );
-        }
-        ModernIcon::Folder => {
-            let w = 11.0_f32;
-            let h = 8.5_f32;
-            let top_left = egui::pos2(center.x - w * 0.5, center.y - h * 0.5);
-            let tab_right = egui::pos2(center.x - w * 0.1, center.y - h * 0.5);
-            let tab_down = egui::pos2(center.x + w * 0.05, center.y - h * 0.2);
-            let top_right = egui::pos2(center.x + w * 0.5, center.y - h * 0.2);
-            let bot_right = egui::pos2(center.x + w * 0.5, center.y + h * 0.5);
-            let bot_left = egui::pos2(center.x - w * 0.5, center.y + h * 0.5);
-
-            painter.line_segment([top_left, tab_right], stroke);
-            painter.line_segment([tab_right, tab_down], stroke);
-            painter.line_segment([tab_down, top_right], stroke);
-            painter.line_segment([top_right, bot_right], stroke);
-            painter.line_segment([bot_right, bot_left], stroke);
-            painter.line_segment([bot_left, top_left], stroke);
-        }
-        ModernIcon::ExternalFile => {
-            let w = 8.0_f32;
-            let h = 10.0_f32;
-            let doc_rect = egui::Rect::from_min_max(
-                egui::pos2(center.x - w * 0.5, center.y - h * 0.5),
-                egui::pos2(center.x + w * 0.5, center.y + h * 0.5),
-            );
-            painter.rect_stroke(doc_rect, 1.0, stroke);
-            painter.line_segment(
-                [egui::pos2(center.x + w * 0.1, center.y - h * 0.5), egui::pos2(center.x + w * 0.5, center.y - h * 0.1)],
-                stroke,
-            );
-        }
-        ModernIcon::Plus => {
-            let len = (rect.width().min(rect.height()) * 0.22).max(4.5);
-            let stroke_w = (rect.width().min(rect.height()) * 0.045).max(1.8);
-            painter.line_segment(
-                [egui::pos2(center.x - len, center.y), egui::pos2(center.x + len, center.y)],
-                Stroke::new(stroke_w, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x, center.y - len), egui::pos2(center.x, center.y + len)],
-                Stroke::new(stroke_w, color),
-            );
-        }
-        ModernIcon::Search => {
-            let r = 3.5_f32;
-            let c = egui::pos2(center.x - 1.5, center.y - 1.5);
-            painter.circle_stroke(c, r, Stroke::new(1.4_f32, color));
-            painter.line_segment(
-                [egui::pos2(c.x + 2.5, c.y + 2.5), egui::pos2(c.x + 6.0, c.y + 6.0)],
-                Stroke::new(1.6_f32, color),
-            );
-        }
-        ModernIcon::MinimizeTray => {
-            painter.line_segment(
-                [egui::pos2(center.x - 4.5, center.y - 1.0), egui::pos2(center.x, center.y + 3.0)],
-                Stroke::new(1.6_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x, center.y + 3.0), egui::pos2(center.x + 4.5, center.y - 1.0)],
-                Stroke::new(1.6_f32, color),
-            );
-        }
-        ModernIcon::Check => {
-            painter.line_segment(
-                [egui::pos2(center.x - 4.0, center.y), egui::pos2(center.x - 1.0, center.y + 3.5)],
-                Stroke::new(1.8_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x - 1.0, center.y + 3.5), egui::pos2(center.x + 4.5, center.y - 3.5)],
-                Stroke::new(1.8_f32, color),
-            );
-        }
-        ModernIcon::PulseBeacon => {
-            painter.circle_filled(center, 3.5, color);
-        }
-        ModernIcon::SpeedGauge => {
-            painter.line_segment(
-                [egui::pos2(center.x + 1.0, center.y - 5.0), egui::pos2(center.x - 3.0, center.y)],
-                Stroke::new(1.6_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x - 3.0, center.y), egui::pos2(center.x + 1.0, center.y)],
-                Stroke::new(1.6_f32, color),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x + 1.0, center.y), egui::pos2(center.x - 1.0, center.y + 5.0)],
-                Stroke::new(1.6_f32, color),
-            );
-        }
-        ModernIcon::WinMinimize => {
-            let stroke = Stroke::new(1.2_f32, color);
-            painter.line_segment(
-                [egui::pos2(center.x - 5.0, center.y + 0.5), egui::pos2(center.x + 5.0, center.y + 0.5)],
-                stroke,
-            );
-        }
-        ModernIcon::WinMaximize => {
-            let box_rect = egui::Rect::from_center_size(center, Vec2::new(10.0, 10.0));
-            painter.rect_stroke(box_rect, 0.0, Stroke::new(1.2_f32, color));
-        }
-        ModernIcon::WinRestore => {
-            let stroke = Stroke::new(1.2_f32, color);
-            // Back window (top-right): upper and right borders
-            painter.line_segment(
-                [egui::pos2(center.x - 2.0, center.y - 5.0), egui::pos2(center.x + 5.0, center.y - 5.0)],
-                stroke,
-            );
-            painter.line_segment(
-                [egui::pos2(center.x + 5.0, center.y - 5.0), egui::pos2(center.x + 5.0, center.y + 2.0)],
-                stroke,
-            );
-            // Back window small bottom and left snippets
-            painter.line_segment(
-                [egui::pos2(center.x + 2.0, center.y + 2.0), egui::pos2(center.x + 5.0, center.y + 2.0)],
-                stroke,
-            );
-            painter.line_segment(
-                [egui::pos2(center.x - 2.0, center.y - 5.0), egui::pos2(center.x - 2.0, center.y - 2.0)],
-                stroke,
-            );
-            // Front window (bottom-left)
-            let front_rect = egui::Rect::from_min_max(
-                egui::pos2(center.x - 5.0, center.y - 2.0),
-                egui::pos2(center.x + 2.0, center.y + 5.0),
-            );
-            painter.rect_filled(front_rect, 0.0, GLASS_BG);
-            painter.rect_stroke(front_rect, 0.0, stroke);
-        }
-        ModernIcon::WinClose => {
-            let d = 4.5_f32;
-            let stroke = Stroke::new(1.3_f32, color);
-            painter.line_segment(
-                [egui::pos2(center.x - d, center.y - d), egui::pos2(center.x + d, center.y + d)],
-                stroke,
-            );
-            painter.line_segment(
-                [egui::pos2(center.x + d, center.y - d), egui::pos2(center.x - d, center.y + d)],
-                stroke,
-            );
-        }
-    }
-}
-
-fn window_caption_button(
-    ui: &mut egui::Ui,
-    icon: ModernIcon,
-    size: Vec2,
-    default_color: Color32,
-    hover_icon_color: Color32,
-    hover_bg_color: Color32,
-    tooltip: &str,
-) -> bool {
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    let is_hovered = response.hovered();
-
-    if is_hovered {
-        ui.painter().rect_filled(rect, 0.0, hover_bg_color);
-    }
-
-    let icon_color = if is_hovered {
-        hover_icon_color
-    } else {
-        default_color
-    };
-
-    draw_modern_icon(ui.painter(), icon, rect, icon_color);
-
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(tooltip)
-        .clicked()
-}
-
-fn modern_icon_button(
-    ui: &mut egui::Ui,
-    icon: ModernIcon,
-    size: Vec2,
-    default_color: Color32,
-    hover_color: Color32,
-    tooltip: &str,
-) -> bool {
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    let is_hovered = response.hovered();
-
-    let bg_color = if is_hovered {
-        Color32::from_rgb(26, 36, 62)
-    } else {
-        GLASS_CARD
-    };
-
-    let border_stroke = if is_hovered {
-        Stroke::new(1.2_f32, GLASS_SECONDARY)
-    } else {
-        Stroke::new(1.0_f32, GLASS_BORDER)
-    };
-
-    let icon_color = if is_hovered {
-        hover_color
-    } else {
-        default_color
-    };
-
-    ui.painter().rect(rect, 5.0, bg_color, border_stroke);
-    draw_modern_icon(ui.painter(), icon, rect, icon_color);
-
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(tooltip)
-        .clicked()
-}
-
-fn render_file_type_badge(ui: &mut egui::Ui, ext: &str) {
-    let (tag, color, bg) = match ext {
-        "exe" => ("EXE", Color32::from_rgb(16, 185, 129), Color32::from_rgb(16, 44, 38)),          // Crisp Emerald
-        "msi" => ("MSI", Color32::from_rgb(20, 184, 166), Color32::from_rgb(16, 42, 42)),          // Teal
-        "iso" | "img" => ("ISO", Color32::from_rgb(245, 158, 11), Color32::from_rgb(46, 32, 16)), // Amber
-        "apk" => ("APK", Color32::from_rgb(132, 204, 22), Color32::from_rgb(30, 42, 16)),          // Lime
-        "pdf" | "doc" | "docx" | "txt" => ("DOC", GLASS_PRIMARY, Color32::from_rgb(30, 22, 58)),
-        "mp4" | "mkv" | "avi" | "mov" | "webm" => ("VID", GLASS_SECONDARY, Color32::from_rgb(12, 36, 48)),
-        "zip" | "rar" | "7z" | "tar" | "gz" => ("ZIP", Color32::from_rgb(168, 85, 247), Color32::from_rgb(32, 20, 52)),
-        "mp3" | "wav" | "flac" | "aac" => ("AUD", Color32::from_rgb(56, 189, 248), Color32::from_rgb(14, 34, 52)),
-        "jpg" | "png" | "gif" | "webp" | "svg" => ("IMG", Color32::from_rgb(236, 72, 153), Color32::from_rgb(46, 20, 38)),
-        "bin" => ("BIN", Color32::from_rgb(99, 102, 241), Color32::from_rgb(24, 26, 56)),
-        _ => ("FILE", GLASS_MUTED, Color32::from_rgb(18, 26, 42)),
-    };
-
-    egui::Frame::none()
-        .fill(bg)
-        .stroke(Stroke::new(1.0_f32, color))
-        .rounding(egui::Rounding::same(3.5))
-        .inner_margin(Margin::symmetric(4.5, 2.0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(tag).size(9.5).color(color).strong());
-        });
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchedulerConfig {
-    pub enabled: bool,
-    pub start_hour: u32,
-    pub start_minute: u32,
-    pub stop_hour: u32,
-    pub stop_minute: u32,
-    pub auto_shutdown: bool,
-    #[serde(skip)]
-    pub has_triggered_start: bool,
-    #[serde(skip)]
-    pub has_triggered_stop: bool,
-}
-
-impl Default for SchedulerConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            start_hour: 23,
-            start_minute: 0,
-            stop_hour: 6,
-            stop_minute: 0,
-            auto_shutdown: false,
-            has_triggered_start: false,
-            has_triggered_stop: false,
-        }
-    }
-}
-
-fn get_scheduler_file_path() -> PathBuf {
-    let appdata_file = rapid_core::AppPaths::scheduler_file();
-    let old_file = dirs_or_fallback().join(".rapid_scheduler.json");
-    if old_file.exists() && !appdata_file.exists() {
-        let _ = std::fs::copy(&old_file, &appdata_file);
-        let _ = std::fs::remove_file(&old_file);
-    }
-    appdata_file
-}
-
-fn load_scheduler_config() -> SchedulerConfig {
-    let path = get_scheduler_file_path();
-    rapid_core::StorageManager::load_json_with_backup::<SchedulerConfig>(&path).unwrap_or_default()
-}
-
-fn save_scheduler_config(config: &SchedulerConfig) {
-    let path = get_scheduler_file_path();
-    let _ = rapid_core::StorageManager::atomic_write_json(&path, config);
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct HistoryRecord {
-    pub id: String,
-    pub filename: String,
-    pub url: String,
-    pub target_file: PathBuf,
-    #[serde(default)]
-    pub total_bytes: Option<u64>,
-    #[serde(default = "chrono::Utc::now")]
-    pub completed_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default)]
-    pub category: Option<String>,
-}
-
-fn get_history_file_path() -> PathBuf {
-    let appdata_file = rapid_core::AppPaths::history_file();
-    let old_file = dirs_or_fallback().join(".rapid_history.json");
-    if old_file.exists() && !appdata_file.exists() {
-        let _ = std::fs::copy(&old_file, &appdata_file);
-        let _ = std::fs::remove_file(&old_file);
-    }
-    appdata_file
-}
-
-fn load_history() -> Vec<HistoryRecord> {
-    let path = get_history_file_path();
-    rapid_core::StorageManager::load_json_with_backup::<Vec<HistoryRecord>>(&path).unwrap_or_default()
-}
-
-fn save_task_to_history(item: &ActiveTaskUI) {
-    let path = get_history_file_path();
-    let mut records = load_history();
-    if let Some(existing) = records.iter_mut().find(|r| r.id == item.id || r.target_file == item.target_file) {
-        existing.total_bytes = item.total_bytes;
-        existing.completed_at = chrono::Utc::now();
-    } else {
-        records.push(HistoryRecord {
-            id: item.id.clone(),
-            filename: item.filename.clone(),
-            url: item.url.clone(),
-            target_file: item.target_file.clone(),
-            total_bytes: item.total_bytes,
-            completed_at: chrono::Utc::now(),
-            category: None,
-        });
-    }
-    let _ = rapid_core::StorageManager::atomic_write_json(&path, &records);
-}
-
-fn remove_from_history(id: &str) {
-    let path = get_history_file_path();
-    let mut records = load_history();
-    records.retain(|r| r.id != id);
-    let _ = rapid_core::StorageManager::atomic_write_json(&path, &records);
-}
-
-fn clear_all_history() {
-    let path = get_history_file_path();
-    let _ = std::fs::remove_file(&path);
-}
-
-struct ActiveTaskUI {
-    id: String,
-    filename: String,
-    url: String,
-    target_file: PathBuf,
-    total_bytes: Option<u64>,
-    downloaded_bytes: u64,
-    progress_percent: f32,
-    speed_bps: u64,
-    eta_seconds: Option<u64>,
-    status: DownloadStatus,
-    segments: Vec<rapid_core::Segment>,
-    task_handle: Option<Arc<DownloadTask>>,
-    num_segments: usize,
-    is_resuming: bool,
-    cookies: Option<String>,
-    referrer: Option<String>,
-    user_agent: Option<String>,
-    is_youtube: bool,
-    quality: Option<rapid_core::youtube::DownloadQuality>,
-    yt_cancel_token: Option<tokio_util::sync::CancellationToken>,
-}
-
-#[derive(Clone, Debug)]
-struct PendingBrowserDownload {
-    url: String,
-    filename: String,
-    dest_dir: String,
-    segments: usize,
-    cookies: Option<String>,
-    user_agent: Option<String>,
-    referrer: Option<String>,
-    is_gdrive: bool,
-    is_youtube: bool,
-    quality: rapid_core::youtube::DownloadQuality,
-}
-
-fn extract_filename_from_url(url_str: &str) -> String {
-    let trimmed = url_str.trim();
-    if trimmed.is_empty() || rapid_core::youtube::YoutubeResolver::is_extractable_platform(trimmed) {
-        return String::new();
-    }
-    let base = trimmed.split('?').next().unwrap_or(trimmed);
-    let base = base.split('#').next().unwrap_or(base);
-    let trimmed_base = base.trim_end_matches('/');
-    if let Some(pos) = trimmed_base.rfind('/') {
-        let segment = &trimmed_base[pos + 1..];
-        if !segment.is_empty() {
-            if let Ok(decoded) = urlencoding::decode(segment) {
-                let clean = decoded.trim();
-                if !clean.is_empty() && clean != "/" {
-                    return clean.to_string();
-                }
-            }
-            return segment.to_string();
-        }
-    }
-    String::new()
-}
-
-pub fn categorize_filename(filename: &str) -> &'static str {
-    let ext = std::path::Path::new(filename)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    match ext.as_str() {
-        "exe" | "msi" | "apk" | "bat" | "cmd" | "app" | "dmg" | "deb" | "rpm" => "Programs",
-        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" | "iso" | "img" | "cab" => "Compressed",
-        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "3gp" | "ts" => "Videos",
-        "mp3" | "wav" | "flac" | "aac" | "ogg" | "m4a" | "wma" | "mid" | "opus" => "Music",
-        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "rtf" | "csv" | "epub" => "Documents",
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tiff" => "Images",
-        _ => "",
-    }
-}
-
-pub fn get_categorized_destination(base_dir: &std::path::Path, filename: &str) -> PathBuf {
-    let cat = categorize_filename(filename);
-    if cat.is_empty() {
-        base_dir.to_path_buf()
-    } else {
-        if base_dir.file_name().and_then(|f| f.to_str()) == Some(cat) {
-            base_dir.to_path_buf()
-        } else {
-            base_dir.join(cat)
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum UpdateStatus {
-    Idle,
-    Checking,
-    UpToDate { checked_at: String },
-    Available {
-        version: String,
-        download_url: String,
-        release_notes: String,
-        published_at: String,
-    },
-    Error(String),
-}
-
-fn parse_ver_triplet(v: &str) -> (u32, u32, u32) {
-    let clean = v.trim_start_matches('v').split('-').next().unwrap_or("");
-    let mut parts = clean.split('.').filter_map(|s| s.parse::<u32>().ok());
-    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
-}
-
-fn is_remote_version_newer(remote: &str, current: &str) -> bool {
-    parse_ver_triplet(remote) > parse_ver_triplet(current)
-}
 
 struct RapidApp {
     tokio_rt: Arc<Runtime>,
@@ -693,90 +76,7 @@ struct RapidApp {
     tray_handle: Option<tray::TrayHandle>,
 }
 
-static CACHED_GOOGLE_COOKIES: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
-pub fn save_google_cookies(cookies: &str) {
-    let clean = cookies.trim();
-    if clean.len() > 10 && (clean.contains("SID=") || clean.contains("HSID=") || clean.contains("OSID=") || clean.contains("download_warning_")) {
-        if let Ok(mut lock) = CACHED_GOOGLE_COOKIES.write() {
-            *lock = Some(clean.to_string());
-        }
-        let cookie_file = rapid_core::AppPaths::app_data_dir().join("google_cookies.txt");
-        let _ = std::fs::write(cookie_file, clean);
-    }
-}
-
-pub fn load_google_cookies() -> Option<String> {
-    if let Ok(lock) = CACHED_GOOGLE_COOKIES.read() {
-        if let Some(ref c) = *lock {
-            return Some(c.clone());
-        }
-    }
-    let cookie_file = rapid_core::AppPaths::app_data_dir().join("google_cookies.txt");
-    if let Ok(content) = std::fs::read_to_string(cookie_file) {
-        let trimmed = content.trim().to_string();
-        if !trimmed.is_empty() {
-            if let Ok(mut lock) = CACHED_GOOGLE_COOKIES.write() {
-                *lock = Some(trimmed.clone());
-            }
-            return Some(trimmed);
-        }
-    }
-    None
-}
-
-pub fn launch_chrome_with_extension(target_url: Option<&str>) {
-    let chrome_paths = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    ];
-
-    let mut browser_exe = None;
-    for p in &chrome_paths {
-        if std::path::Path::new(p).exists() {
-            browser_exe = Some(p.to_string());
-            break;
-        }
-    }
-
-    if browser_exe.is_none() {
-        if let Ok(local_app) = std::env::var("LOCALAPPDATA") {
-            let chrome_local = format!(r"{}\Google\Chrome\Application\chrome.exe", local_app);
-            if std::path::Path::new(&chrome_local).exists() {
-                browser_exe = Some(chrome_local);
-            }
-        }
-    }
-
-    let Some(exe) = browser_exe else {
-        if let Some(u) = target_url {
-            let _ = open::that(u);
-        }
-        return;
-    };
-
-    let mut ext_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.join("extension")))
-        .unwrap_or_else(|| std::path::PathBuf::from("extension"));
-
-    if !ext_dir.exists() {
-        let alt = std::path::PathBuf::from(r"D:\mahbub\project\rapid_download_manager\extension");
-        if alt.exists() {
-            ext_dir = alt;
-        }
-    }
-
-    let ext_arg = format!("--load-extension={}", ext_dir.to_string_lossy());
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg(ext_arg);
-    if let Some(u) = target_url {
-        cmd.arg(u);
-    }
-    let _ = cmd.spawn();
-}
 
 impl RapidApp {
     fn check_for_updates(&self) {
@@ -2476,7 +1776,7 @@ impl eframe::App for RapidApp {
         let mut active_count = 0;
         let mut paused_count = 0;
         let mut finished_count = 0;
-        let mut queued_count = 0;
+        let mut _queued_count = 0;
         let mut total_downloaded: u64 = 0;
 
         if let Ok(tasks) = self.tasks.try_lock() {
@@ -2489,7 +1789,7 @@ impl eframe::App for RapidApp {
                     }
                     DownloadStatus::Paused => paused_count += 1,
                     DownloadStatus::Completed => finished_count += 1,
-                    DownloadStatus::Queued => queued_count += 1,
+                    DownloadStatus::Queued => _queued_count += 1,
                     _ => {}
                 }
             }
@@ -4875,72 +4175,77 @@ fn render_parallel_connections_combobox(
             let mut export_zip = false;
             let mut launch_browser_url: Option<String> = None;
 
-            let modal_frame = egui::Frame::none()
-                .fill(GLASS_SURFACE)
-                .stroke(Stroke::NONE)
-                .rounding(egui::Rounding::same(12.0))
-                .inner_margin(Margin::same(0.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: [0.0, 10.0].into(),
-                    blur: 32.0,
-                    spread: 2.0,
-                    color: Color32::from_black_alpha(230),
-                });
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_modal = true;
+            }
 
+            // Spacious, pixel-perfect modal window with full-table browser list
             egui::Window::new("browser_integration_modal_window")
                 .title_bar(false)
-                .collapsible(false)
                 .resizable(false)
+                .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-                .default_width(580.0)
-                .min_width(580.0)
-                .max_width(580.0)
-                .frame(modal_frame)
+                .fixed_size(Vec2::new(720.0, 500.0))
+                .frame(
+                    egui::Frame::none()
+                        // Transparent glassmorphic obsidian background
+                        .fill(Color32::from_rgba_unmultiplied(12, 18, 34, 240))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)))
+                        .rounding(egui::Rounding::ZERO)
+                        .shadow(egui::epaint::Shadow {
+                            offset: egui::vec2(0.0, 16.0),
+                            blur: 36.0_f32,
+                            spread: 2.0_f32,
+                            color: Color32::from_rgba_unmultiplied(0, 0, 0, 240),
+                        })
+                        .inner_margin(Margin::ZERO),
+                )
                 .show(ctx, |ui| {
-                    let top_bar_h = 40.0_f32;
-                    let (top_bar_rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), top_bar_h), egui::Sense::hover());
-                    let close_w = 40.0_f32;
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    ui.spacing_mut().window_margin = Margin::ZERO;
+
+                    let win_rect = ui.clip_rect();
+
+                    // Absolute Top-Right Corner Close Button (Position 0,0 - flush with top-right corner)
+                    let btn_w = 42.0_f32;
+                    let btn_h = 30.0_f32;
                     let close_rect = egui::Rect::from_min_max(
-                        egui::pos2(top_bar_rect.max.x - close_w, top_bar_rect.min.y),
-                        egui::pos2(top_bar_rect.max.x, top_bar_rect.max.y),
+                        egui::pos2(win_rect.max.x - btn_w, win_rect.min.y),
+                        egui::pos2(win_rect.max.x, win_rect.min.y + btn_h),
                     );
 
-                    let close_resp = ui.allocate_rect(close_rect, egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-                    let close_hov = close_resp.hovered();
+                    let close_resp = ui.interact(close_rect, ui.id().with("browser_corner_00_close_btn"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let close_bg = if close_resp.is_pointer_button_down_on() {
+                        Color32::from_rgb(185, 28, 28)
+                    } else if close_resp.hovered() {
+                        Color32::from_rgb(239, 68, 68)
+                    } else {
+                        Color32::from_rgb(220, 38, 38)
+                    };
 
-                    ui.painter().rect_filled(
-                        top_bar_rect,
-                        egui::Rounding { nw: 12.0, ne: 12.0, sw: 0.0, se: 0.0 },
-                        Color32::from_rgba_unmultiplied(15, 23, 42, 245),
-                    );
-
-                    ui.painter().text(
-                        egui::pos2(top_bar_rect.min.x + 18.0, top_bar_rect.center().y),
-                        egui::Align2::LEFT_CENTER,
-                        "Browser Integration & Auto-Hook",
-                        egui::FontId::proportional(14.0),
+                    ui.painter().rect_filled(close_rect, egui::Rounding::ZERO, close_bg);
+                    draw_modern_icon(
+                        ui.painter(),
+                        ModernIcon::Close,
+                        egui::Rect::from_center_size(close_rect.center(), Vec2::splat(10.0)),
                         Color32::WHITE,
                     );
-
-                    if close_hov {
-                        ui.painter().rect_filled(
-                            close_rect,
-                            egui::Rounding { nw: 0.0, ne: 12.0, sw: 0.0, se: 0.0 },
-                            Color32::from_rgb(239, 68, 68),
-                        );
-                    }
-                    draw_modern_icon(ui.painter(), ModernIcon::Close, egui::Rect::from_center_size(close_rect.center(), Vec2::splat(11.0)), if close_hov { Color32::WHITE } else { GLASS_MUTED });
                     if close_resp.clicked() {
                         close_modal = true;
                     }
 
-                    ui.add_space(8.0);
+                    // Header Section with generous 28px outer padding
+                    ui.add_space(20.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(18.0);
-                        ui.label(RichText::new("Auto-detect and register Rapid Extension across all installed browsers like IDM").size(11.5).color(GLASS_MUTED));
+                        ui.add_space(28.0);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("Browser Integration & Auto-Hook").size(16.5).strong().color(Color32::WHITE));
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Auto-detect and register Rapid Extension across all installed browsers like IDM").size(11.5).color(GLASS_MUTED));
+                        });
                     });
 
-                    ui.add_space(10.0);
+                    ui.add_space(16.0);
 
                     let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
                     let prog_files = std::env::var("ProgramFiles").unwrap_or_default();
@@ -4980,167 +4285,350 @@ fn render_parallel_connections_combobox(
                         format!("{}/Vivaldi/Application/vivaldi.exe", prog_files),
                     ].iter().any(|p| !p.is_empty() && std::path::Path::new(p).exists());
 
-                    let browser_items = [
+                    // Structured Table Rows: Google, Edge, Firefox, Brave, Opera, Vivaldi
+                    let browser_items: [(&str, &str, bool); 6] = [
                         ("Google Chrome", "chrome://extensions", is_chrome),
                         ("Microsoft Edge", "edge://extensions", is_edge),
+                        ("Mozilla Firefox", "about:addons", is_firefox),
                         ("Brave Browser", "brave://extensions", is_brave),
                         ("Opera / Opera GX", "opera://extensions", is_opera),
-                        ("Mozilla Firefox", "about:addons", is_firefox),
                         ("Vivaldi", "vivaldi://extensions", is_vivaldi),
                     ];
 
+                    let table_w = 664.0_f32; // Total width between left 28px and right 28px margins
+
+                    // Render Browser Table Container (NO separate boxes - clean unified modern table)
                     ui.horizontal(|ui| {
-                        ui.add_space(16.0);
-                        egui::Grid::new("browser_grid").num_columns(2).spacing(Vec2::new(14.0, 10.0)).show(ui, |ui| {
-                            for (idx, (name, ext_url, is_detected)) in browser_items.iter().enumerate() {
-                                egui::Frame::none()
-                                    .fill(GLASS_CARD)
-                                    .stroke(Stroke::new(1.0_f32, if *is_detected { Color32::from_rgb(30, 58, 86) } else { Color32::from_rgb(30, 41, 59) }))
-                                    .rounding(egui::Rounding::same(8.0))
-                                    .inner_margin(Margin::symmetric(14.0, 10.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(252.0);
-                                        // Top Row: Browser Name + Status Badge
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new(*name).size(13.0).strong().color(if *is_detected { Color32::WHITE } else { GLASS_MUTED }));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if *is_detected {
-                                                    egui::Frame::none()
-                                                        .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 30))
-                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)))
-                                                        .rounding(egui::Rounding::same(4.0))
-                                                        .inner_margin(Margin::symmetric(6.0, 2.0))
-                                                        .show(ui, |ui| {
-                                                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                                let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
-                                                                draw_modern_icon(ui.painter(), ModernIcon::Check, icon_r, Color32::from_rgb(16, 185, 129));
-                                                                ui.add_space(3.0);
-                                                                ui.label(RichText::new("Detected").size(10.5).color(Color32::from_rgb(52, 211, 153)).strong());
-                                                            });
-                                                        });
-                                                } else {
-                                                    egui::Frame::none()
-                                                        .fill(Color32::from_rgba_unmultiplied(71, 85, 105, 30))
-                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
-                                                        .rounding(egui::Rounding::same(4.0))
-                                                        .inner_margin(Margin::symmetric(6.0, 2.0))
-                                                        .show(ui, |ui| {
-                                                            ui.label(RichText::new("Not Installed").size(10.0).color(GLASS_MUTED));
-                                                        });
-                                                }
-                                            });
-                                        });
+                        ui.add_space(28.0);
+                        egui::Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(15, 23, 42, 180))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)))
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(Margin::ZERO)
+                            .show(ui, |ui| {
+                                ui.set_width(table_w);
 
-                                        ui.add_space(6.0);
+                                // 1. Table Header Row (Height 32px)
+                                let (h_rect, _) = ui.allocate_exact_size(Vec2::new(table_w, 32.0), egui::Sense::hover());
+                                ui.painter().rect_filled(
+                                    h_rect,
+                                    egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 },
+                                    Color32::from_rgba_unmultiplied(30, 41, 59, 160),
+                                );
+                                ui.painter().line_segment(
+                                    [egui::pos2(h_rect.min.x, h_rect.max.y), egui::pos2(h_rect.max.x, h_rect.max.y)],
+                                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
+                                );
 
-                                        // Bottom Row: Registry Hook Badge + Action Button
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Registry Hook:").size(10.5).color(GLASS_MUTED));
-                                            ui.label(RichText::new("Active (HKCU)").size(10.5).color(Color32::from_rgb(56, 189, 248)).strong());
+                                // Column Header Labels
+                                let col_header_color = Color32::from_rgb(148, 163, 184);
+                                let font_h = egui::FontId::proportional(11.0);
+                                ui.painter().text(
+                                    egui::pos2(h_rect.min.x + 18.0, h_rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    "BROWSER NAME",
+                                    font_h.clone(),
+                                    col_header_color,
+                                );
+                                ui.painter().text(
+                                    egui::pos2(h_rect.min.x + 220.0, h_rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    "STATUS",
+                                    font_h.clone(),
+                                    col_header_color,
+                                );
+                                ui.painter().text(
+                                    egui::pos2(h_rect.min.x + 360.0, h_rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    "REGISTRY HOOK",
+                                    font_h.clone(),
+                                    col_header_color,
+                                );
+                                ui.painter().text(
+                                    egui::pos2(h_rect.max.x - 56.0, h_rect.center().y),
+                                    egui::Align2::CENTER_CENTER,
+                                    "ACTION",
+                                    font_h.clone(),
+                                    col_header_color,
+                                );
 
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if *is_detected {
-                                                    let open_btn = egui::Button::new(RichText::new("Open").size(10.5).color(Color32::WHITE))
-                                                        .fill(Color32::from_rgb(30, 41, 59))
-                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(71, 85, 105)))
-                                                        .rounding(egui::Rounding::same(4.0))
-                                                        .min_size(Vec2::new(48.0, 20.0));
-                                                    if ui.add(open_btn).on_hover_text("Open browser extensions page").clicked() {
-                                                        launch_browser_url = Some(ext_url.to_string());
-                                                    }
-                                                }
-                                            });
-                                        });
-                                    });
+                                // 2. Table Data Rows (Height 36px per browser row)
+                                for (idx, (name, ext_url, is_detected)) in browser_items.iter().enumerate() {
+                                    let (row_rect, row_resp) = ui.allocate_exact_size(Vec2::new(table_w, 36.0), egui::Sense::hover());
 
-                                if idx % 2 == 1 {
-                                    ui.end_row();
+                                    // Subtle row hover effect
+                                    if row_resp.hovered() {
+                                        let row_rounding = if idx == browser_items.len() - 1 {
+                                            egui::Rounding { nw: 0.0, ne: 0.0, sw: 6.0, se: 6.0 }
+                                        } else {
+                                            egui::Rounding::ZERO
+                                        };
+                                        ui.painter().rect_filled(row_rect, row_rounding, Color32::from_rgba_unmultiplied(255, 255, 255, 8));
+                                    }
+
+                                    // Row divider line
+                                    if idx < browser_items.len() - 1 {
+                                        ui.painter().line_segment(
+                                            [egui::pos2(row_rect.min.x, row_rect.max.y), egui::pos2(row_rect.max.x, row_rect.max.y)],
+                                            Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)),
+                                        );
+                                    }
+
+                                    // Column 1: Browser Dot & Name
+                                    let dot_center = egui::pos2(row_rect.min.x + 22.0, row_rect.center().y);
+                                    if *is_detected {
+                                        ui.painter().circle_filled(dot_center, 3.5, Color32::from_rgb(16, 185, 129));
+                                    } else {
+                                        ui.painter().circle_filled(dot_center, 3.0, Color32::from_rgb(100, 116, 139));
+                                    }
+
+                                    ui.painter().text(
+                                        egui::pos2(row_rect.min.x + 36.0, row_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        *name,
+                                        egui::FontId::proportional(12.5),
+                                        if *is_detected { Color32::WHITE } else { Color32::from_rgb(148, 163, 184) },
+                                    );
+
+                                    // Column 2: Status Badge (Detected vs Not Installed)
+                                    let status_x = row_rect.min.x + 220.0;
+                                    if *is_detected {
+                                        let badge_rect = egui::Rect::from_center_size(
+                                            egui::pos2(status_x + 46.0, row_rect.center().y),
+                                            Vec2::new(92.0, 22.0),
+                                        );
+                                        ui.painter().rect_filled(
+                                            badge_rect,
+                                            egui::Rounding::same(4.0),
+                                            Color32::from_rgba_unmultiplied(16, 185, 129, 25),
+                                        );
+                                        // Check icon + text
+                                        let check_r = egui::Rect::from_center_size(
+                                            egui::pos2(badge_rect.min.x + 14.0, badge_rect.center().y),
+                                            Vec2::splat(9.0),
+                                        );
+                                        draw_modern_icon(ui.painter(), ModernIcon::Check, check_r, Color32::from_rgb(16, 185, 129));
+                                        ui.painter().text(
+                                            egui::pos2(badge_rect.min.x + 24.0, badge_rect.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            "Detected",
+                                            egui::FontId::proportional(10.5),
+                                            Color32::from_rgb(52, 211, 153),
+                                        );
+                                    } else {
+                                        let badge_rect = egui::Rect::from_center_size(
+                                            egui::pos2(status_x + 48.0, row_rect.center().y),
+                                            Vec2::new(96.0, 22.0),
+                                        );
+                                        ui.painter().rect_filled(
+                                            badge_rect,
+                                            egui::Rounding::same(4.0),
+                                            Color32::from_rgba_unmultiplied(148, 163, 184, 15),
+                                        );
+                                        ui.painter().text(
+                                            badge_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            "Not Installed",
+                                            egui::FontId::proportional(10.0),
+                                            Color32::from_rgb(148, 163, 184),
+                                        );
+                                    }
+
+                                    // Column 3: Registry Hook Status
+                                    let hook_x = row_rect.min.x + 360.0;
+                                    if *is_detected {
+                                        ui.painter().circle_filled(
+                                            egui::pos2(hook_x + 4.0, row_rect.center().y),
+                                            3.0,
+                                            Color32::from_rgb(56, 189, 248),
+                                        );
+                                        ui.painter().text(
+                                            egui::pos2(hook_x + 14.0, row_rect.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            "Active (HKCU Native Host)",
+                                            egui::FontId::proportional(11.0),
+                                            Color32::from_rgb(56, 189, 248),
+                                        );
+                                    } else {
+                                        ui.painter().circle_filled(
+                                            egui::pos2(hook_x + 4.0, row_rect.center().y),
+                                            2.5,
+                                            Color32::from_rgb(100, 116, 139),
+                                        );
+                                        ui.painter().text(
+                                            egui::pos2(hook_x + 14.0, row_rect.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            "Standby (Ready for Install)",
+                                            egui::FontId::proportional(11.0),
+                                            Color32::from_rgb(100, 116, 139),
+                                        );
+                                    }
+
+                                    // Column 4: Action Button ("Open" / "—")
+                                    let act_center_x = h_rect.max.x - 56.0;
+                                    if *is_detected {
+                                        let btn_rect = egui::Rect::from_center_size(
+                                            egui::pos2(act_center_x, row_rect.center().y),
+                                            Vec2::new(76.0, 24.0),
+                                        );
+                                        let open_resp = ui.interact(btn_rect, ui.id().with(("browser_row_btn", idx)), egui::Sense::click())
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .on_hover_text(format!("Open {} extensions management page", name));
+
+                                        let btn_bg = if open_resp.is_pointer_button_down_on() {
+                                            Color32::from_rgb(15, 23, 42)
+                                        } else if open_resp.hovered() {
+                                            Color32::from_rgb(51, 65, 85)
+                                        } else {
+                                            Color32::from_rgb(30, 41, 59)
+                                        };
+
+                                        ui.painter().rect_filled(btn_rect, egui::Rounding::same(4.0), btn_bg);
+                                        ui.painter().rect_stroke(
+                                            btn_rect,
+                                            egui::Rounding::same(4.0),
+                                            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)),
+                                        );
+                                        ui.painter().text(
+                                            btn_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            "Open ↗",
+                                            egui::FontId::proportional(11.0),
+                                            if open_resp.hovered() { Color32::WHITE } else { Color32::from_rgb(226, 232, 240) },
+                                        );
+                                        if open_resp.clicked() {
+                                            launch_browser_url = Some(ext_url.to_string());
+                                        }
+                                    } else {
+                                        ui.painter().text(
+                                            egui::pos2(act_center_x, row_rect.center().y),
+                                            egui::Align2::CENTER_CENTER,
+                                            "—",
+                                            egui::FontId::proportional(12.0),
+                                            Color32::from_rgb(100, 116, 139),
+                                        );
+                                    }
                                 }
-                            }
-                        });
+                            });
                     });
 
-                    ui.add_space(10.0);
-
+                    // Optional Integration status message
                     if let Some((ref msg, is_success)) = self.browser_integration_msg {
+                        ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            ui.add_space(16.0);
+                            ui.add_space(28.0);
                             egui::Frame::none()
-                                .fill(if is_success { Color32::from_rgba_unmultiplied(16, 185, 129, 30) } else { Color32::from_rgba_unmultiplied(239, 68, 68, 30) })
-                                .stroke(Stroke::new(1.0_f32, if is_success { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) }))
+                                .fill(if is_success { Color32::from_rgba_unmultiplied(16, 185, 129, 20) } else { Color32::from_rgba_unmultiplied(239, 68, 68, 20) })
+                                .stroke(Stroke::NONE)
                                 .rounding(egui::Rounding::same(6.0))
                                 .inner_margin(Margin::symmetric(14.0, 8.0))
                                 .show(ui, |ui| {
-                                    ui.set_width(520.0);
+                                    ui.set_width(table_w - 28.0);
                                     ui.horizontal(|ui| {
                                         let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
                                         draw_modern_icon(ui.painter(), if is_success { ModernIcon::Check } else { ModernIcon::Close }, icon_r, if is_success { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) });
-                                        ui.add_space(4.0);
+                                        ui.add_space(6.0);
                                         ui.label(RichText::new(msg).size(11.5).color(if is_success { Color32::from_rgb(167, 243, 208) } else { Color32::from_rgb(254, 202, 202) }).strong());
                                     });
                                 });
                         });
-                        ui.add_space(8.0);
                     }
 
+                    ui.add_space(14.0);
+
+                    // 4 Action Buttons Row: Perfectly aligned across table width (664px)
                     ui.horizontal(|ui| {
-                        ui.add_space(16.0);
+                        ui.add_space(28.0);
                         ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
+                        let total_spacing = 3.0 * 10.0;
+                        let btn_w = (table_w - total_spacing) / 4.0;
+                        let btn_h = 34.0_f32;
 
-                        let auto_btn = egui::Button::new(
-                            RichText::new("Auto-Integrate All Browsers")
-                                .size(12.0)
-                                .color(Color32::WHITE)
-                                .strong(),
-                        )
-                        .fill(Color32::from_rgb(14, 116, 144))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(6, 182, 212)))
-                        .rounding(egui::Rounding::same(6.0))
-                        .min_size(Vec2::new(230.0, 32.0));
-
-                        if ui.add(auto_btn).clicked() {
+                        // Button 1: Auto-Integrate All Browsers (Ocean Blue)
+                        let (b1_rect, b1_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
+                        let b1_resp = b1_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let b1_bg = if b1_resp.is_pointer_button_down_on() {
+                            Color32::from_rgb(12, 74, 96)
+                        } else if b1_resp.hovered() {
+                            Color32::from_rgb(14, 116, 144)
+                        } else {
+                            Color32::from_rgb(8, 90, 115)
+                        };
+                        ui.painter().rect_filled(b1_rect, egui::Rounding::same(6.0), b1_bg);
+                        ui.painter().text(
+                            b1_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Auto-Integrate All",
+                            egui::FontId::proportional(11.5),
+                            Color32::WHITE,
+                        );
+                        if b1_resp.clicked() {
                             run_auto_integrate = true;
                         }
 
-                        let launch_chrome_btn = egui::Button::new(
-                            RichText::new("⚡ Launch Chrome Hook")
-                                .size(11.5)
-                                .color(Color32::WHITE)
-                                .strong(),
-                        )
-                        .fill(Color32::from_rgb(14, 165, 233))
-                        .rounding(egui::Rounding::same(6.0))
-                        .min_size(Vec2::new(145.0, 32.0));
-
-                        if ui.add(launch_chrome_btn).on_hover_text("Launch Chrome with Rapid Download Manager hook active").clicked() {
+                        // Button 2: Launch Chrome Hook (Sky Blue)
+                        let (b2_rect, b2_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
+                        let b2_resp = b2_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let b2_bg = if b2_resp.is_pointer_button_down_on() {
+                            Color32::from_rgb(3, 105, 161)
+                        } else if b2_resp.hovered() {
+                            Color32::from_rgb(14, 165, 233)
+                        } else {
+                            Color32::from_rgb(2, 132, 199)
+                        };
+                        ui.painter().rect_filled(b2_rect, egui::Rounding::same(6.0), b2_bg);
+                        ui.painter().text(
+                            b2_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Launch Chrome",
+                            egui::FontId::proportional(11.5),
+                            Color32::WHITE,
+                        );
+                        if b2_resp.on_hover_text("Launch Chrome with Rapid Download Manager hook active").clicked() {
                             launch_chrome_with_extension(None);
                         }
 
-                        let export_btn = egui::Button::new(
-                            RichText::new("Export Webstore Zip")
-                                .size(11.5)
-                                .color(Color32::from_rgb(226, 232, 240)),
-                        )
-                        .fill(GLASS_CARD)
-                        .stroke(Stroke::new(1.0_f32, GLASS_BORDER))
-                        .rounding(egui::Rounding::same(6.0))
-                        .min_size(Vec2::new(165.0, 32.0));
-
-                        if ui.add(export_btn).clicked() {
+                        // Button 3: Export Webstore Zip (Royal Indigo / Violet)
+                        let (b3_rect, b3_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
+                        let b3_resp = b3_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let b3_bg = if b3_resp.is_pointer_button_down_on() {
+                            Color32::from_rgb(67, 56, 202)
+                        } else if b3_resp.hovered() {
+                            Color32::from_rgb(99, 102, 241)
+                        } else {
+                            Color32::from_rgb(79, 70, 229)
+                        };
+                        ui.painter().rect_filled(b3_rect, egui::Rounding::same(6.0), b3_bg);
+                        ui.painter().text(
+                            b3_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Export Webstore Zip",
+                            egui::FontId::proportional(11.5),
+                            Color32::WHITE,
+                        );
+                        if b3_resp.clicked() {
                             export_zip = true;
                         }
 
-                        let close_btn = egui::Button::new(
-                            RichText::new("Close")
-                                .size(11.5)
-                                .color(Color32::from_rgb(203, 213, 225)),
-                        )
-                        .fill(Color32::from_rgb(30, 41, 59))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)))
-                        .rounding(egui::Rounding::same(6.0))
-                        .min_size(Vec2::new(85.0, 32.0));
-
-                        if ui.add(close_btn).clicked() {
+                        // Button 4: Close (Slate Dark)
+                        let (b4_rect, b4_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), egui::Sense::click());
+                        let b4_resp = b4_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let b4_bg = if b4_resp.is_pointer_button_down_on() {
+                            Color32::from_rgb(15, 23, 42)
+                        } else if b4_resp.hovered() {
+                            Color32::from_rgb(51, 65, 85)
+                        } else {
+                            Color32::from_rgb(30, 41, 59)
+                        };
+                        ui.painter().rect_filled(b4_rect, egui::Rounding::same(6.0), b4_bg);
+                        ui.painter().text(
+                            b4_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Close",
+                            egui::FontId::proportional(11.5),
+                            Color32::from_rgb(226, 232, 240),
+                        );
+                        if b4_resp.clicked() {
                             close_modal = true;
                         }
                     });
@@ -6352,52 +5840,7 @@ fn render_status_tray_pill(ui: &mut egui::Ui, is_compact: bool) {
     resp.on_hover_text("Rapid Download Manager is active in Windows Notification Area (System Tray)");
 }
 
-fn format_bytes(bytes: u64) -> String {
-    let kb = bytes as f64 / 1024.0;
-    if kb < 1024.0 {
-        format!("{:.1} KB", kb)
-    } else {
-        let mb = kb / 1024.0;
-        if mb < 1024.0 {
-            format!("{:.1} MB", mb)
-        } else {
-            format!("{:.2} GB", mb / 1024.0)
-        }
-    }
-}
 
-fn format_speed(bps: u64) -> String {
-    if bps == 0 {
-        return "--".to_string();
-    }
-    let kb = bps as f64 / 1024.0;
-    if kb < 1024.0 {
-        format!("{:.1} KB/s", kb)
-    } else {
-        format!("{:.2} MB/s", kb / 1024.0)
-    }
-}
-
-fn format_eta(seconds: u64) -> String {
-    if seconds == 0 {
-        return "--".to_string();
-    }
-    if seconds < 60 {
-        format!("{}s", seconds)
-    } else if seconds < 3600 {
-        let mins = seconds / 60;
-        let secs = seconds % 60;
-        format!("{}m {}s", mins, secs)
-    } else {
-        let hours = seconds / 3600;
-        let mins = (seconds % 3600) / 60;
-        format!("{}h {}m", hours, mins)
-    }
-}
-
-fn dirs_or_fallback() -> PathBuf {
-    rapid_core::AppPaths::default_downloads_dir()
-}
 
 fn main() -> Result<(), eframe::Error> {
     let _ = rapid_core::init_production_logging();
