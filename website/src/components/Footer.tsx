@@ -53,7 +53,7 @@ export default function Footer() {
               <li><a href="/#features" className="hover:text-indigo-400 transition-colors">Features</a></li>
               <li><a href="/#showcase" className="hover:text-indigo-400 transition-colors">Interface Preview</a></li>
               <li><Link href="/extension" className="hover:text-indigo-400 transition-colors">Browser Extension</Link></li>
-              <li><a href="/#benchmarks" className="hover:text-indigo-400 transition-colors">Comparison</a></li>
+              <li><a href="/#comparison" className="hover:text-indigo-400 transition-colors">Comparison</a></li>
             </ul>
           </div>
 
