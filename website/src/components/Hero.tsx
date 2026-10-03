@@ -17,15 +17,20 @@ export default function Hero() {
   const isDark = resolvedTheme === "dark";
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
-  return (
-    <section className="relative pt-12 pb-20 overflow-hidden">
-      {/* Subtle Ambient Radial Lighting */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[400px] bg-indigo-500/10 dark:bg-indigo-500/15 rounded-full blur-3xl pointer-events-none -z-10" />
+  const repoBase = "https://github.com/promahbubul/rapid_download_manager";
+  const exeUrl = `${repoBase}/releases/download/v1.0.5/RapidDownloadManager_Setup_v1.0.5.exe`;
+  const msixUrl = `${repoBase}/raw/main/dist/installer/RapidDownloadManager_v1.0.5.msix`;
+  const zipUrl = `${repoBase}/releases/download/v1.0.5/RapidDownloadManager_v1.0.5_Portable.zip`;
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-8">
+  return (
+    <section className="relative pt-10 pb-16 overflow-hidden">
+      {/* Subtle Ambient Radial Lighting */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-indigo-500/10 dark:bg-indigo-500/15 rounded-full blur-3xl pointer-events-none -z-10" />
+
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-6">
         {/* Release Pill Badge */}
         <div
-          className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-xs font-medium backdrop-blur-md transition-all hover:border-indigo-500/50"
+          className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border text-xs font-medium backdrop-blur-md"
           style={{
             backgroundColor: isDark ? "rgba(30, 41, 59, 0.6)" : "rgba(255, 255, 255, 0.9)",
             borderColor: isDark ? "rgba(99, 102, 241, 0.3)" : "rgba(99, 102, 241, 0.2)",
@@ -35,44 +40,70 @@ export default function Hero() {
           <img src={assetUrl("/assets/app_icon.png")} alt="icon" className="w-3.5 h-3.5" />
           <span className="font-semibold">Version 1.0.5</span>
           <span className="opacity-40">•</span>
-          <span>Native MEGA & Cloud Acceleration</span>
+          <span>Windows 10 & 11 (64-bit)</span>
           <span className="opacity-40">•</span>
           <span className="text-emerald-400 font-semibold">100% Free & Open Source</span>
         </div>
 
         {/* Headline */}
-        <div className="space-y-4 max-w-4xl mx-auto">
+        <div className="space-y-3 max-w-3xl mx-auto">
           <h1
-            className="text-4xl sm:text-6xl font-black tracking-tight leading-[1.12]"
+            className="text-4xl sm:text-5xl font-black tracking-tight leading-[1.15]"
             style={{ color: "var(--text-heading)" }}
           >
             High-Speed Download Accelerator.{" "}
             <span className="bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-400 bg-clip-text text-transparent">
-              Engineered in Rust.
+              Built in Rust.
             </span>
           </h1>
 
           <p
-            className="text-base sm:text-lg leading-relaxed max-w-2xl mx-auto"
+            className="text-sm sm:text-base leading-relaxed max-w-xl mx-auto"
             style={{ color: "var(--text-muted)" }}
           >
-            Maximize your bandwidth with up to 32 parallel streams, recursive cloud folder acceleration, and 1-click browser integration. Ultra-lightweight and memory-safe.
+            Up to 32 parallel streams, recursive cloud folder acceleration, and 1-click browser integration. Ultra-lightweight with zero telemetry.
           </p>
         </div>
 
-        {/* Download Action & Package Links */}
-        <div className="space-y-4 pt-2">
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {/* Primary Download Button */}
+        {/* Direct Download Actions */}
+        <div className="space-y-3 pt-1">
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
+            {/* Primary Setup .exe Button */}
             <a
-              href="#download"
-              className="inline-flex items-center gap-3 px-7 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm sm:text-base shadow-lg shadow-indigo-600/25 transition-all hover:scale-102 cursor-pointer"
+              href={exeUrl}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs sm:text-sm shadow-md shadow-indigo-600/25 transition-all hover:scale-102 cursor-pointer"
             >
-              <WindowsIcon className="w-5 h-5" />
-              <span>Download for Windows</span>
-              <span className="text-xs opacity-80 font-normal px-2 py-0.5 rounded-md bg-white/20">
+              <WindowsIcon className="w-4 h-4" />
+              <span>Download Setup (.exe)</span>
+              <span className="text-[10px] opacity-80 font-mono px-1.5 py-0.2 rounded bg-white/20">
                 v1.0.5
               </span>
+            </a>
+
+            {/* MSIX Store Package Button */}
+            <a
+              href={msixUrl}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-semibold transition-colors hover:bg-slate-500/10 cursor-pointer"
+              style={{
+                borderColor: "var(--border-subtle)",
+                backgroundColor: "var(--bg-card)",
+                color: "var(--text-heading)",
+              }}
+            >
+              <span>Store (MSIX)</span>
+            </a>
+
+            {/* Portable .zip Button */}
+            <a
+              href={zipUrl}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-semibold transition-colors hover:bg-slate-500/10 cursor-pointer"
+              style={{
+                borderColor: "var(--border-subtle)",
+                backgroundColor: "var(--bg-card)",
+                color: "var(--text-heading)",
+              }}
+            >
+              <span>Portable (.zip)</span>
             </a>
 
             {/* GitHub Star Button */}
@@ -80,33 +111,24 @@ export default function Hero() {
               href="https://github.com/promahbubul/rapid_download_manager"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl border text-sm font-semibold transition-colors hover:bg-slate-500/10 cursor-pointer"
+              className="p-2.5 rounded-xl border transition-colors hover:bg-slate-500/10 cursor-pointer flex items-center justify-center"
               style={{
                 borderColor: "var(--border-subtle)",
                 backgroundColor: "var(--bg-card)",
                 color: "var(--text-heading)",
               }}
+              title="Star on GitHub"
             >
               <GithubIcon className="w-4 h-4" />
-              <span>Star on GitHub</span>
             </a>
           </div>
 
-          {/* Quick Package Navigation */}
-          <div className="flex flex-wrap items-center justify-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
-            <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Windows 10 / 11 (64-bit)</span>
-            </span>
-            <span className="opacity-40">•</span>
-            <span>Formats:</span>
-            <a href="#download" className="hover:text-indigo-400 font-medium underline">Store (MSIX)</a>
-            <span className="opacity-40">•</span>
-            <a href="#download" className="hover:text-indigo-400 font-medium underline">Setup (.exe)</a>
-            <span className="opacity-40">•</span>
-            <a href="#download" className="hover:text-indigo-400 font-medium underline">Portable (.zip)</a>
-            <span className="opacity-40">•</span>
-            <Link href="/extension" className="hover:text-indigo-400 font-medium underline">Browser Extension</Link>
+          {/* Secondary Browser Extension Link */}
+          <div className="flex items-center justify-center gap-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
+            <span>Auto-capture downloads with</span>
+            <Link href="/extension" className="text-indigo-400 hover:underline font-medium">
+              Companion Browser Extension →
+            </Link>
           </div>
         </div>
 

@@ -33,9 +33,7 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Standard, clean, uncluttered navigation links (only 4 primary sections)
   const navLinks = [
-    { name: "Features", href: "/#features" },
     { name: "Docs", href: "/docs" },
     { name: "Extension", href: "/extension" },
     { name: "Changelog", href: "/changelog" },
