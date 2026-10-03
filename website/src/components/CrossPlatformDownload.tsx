@@ -21,7 +21,7 @@ export default function CrossPlatformDownload() {
   const isDark = resolvedTheme === "dark";
 
   const repoBase = "https://github.com/promahbubul/rapid_download_manager";
-  const releaseUrl = `${repoBase}/releases/latest`;
+  const releaseDownloadBase = `${repoBase}/releases/download/v1.0.5`;
   const rawBase = `${repoBase}/raw/main/dist/installer`;
 
   const packages = [
@@ -30,7 +30,7 @@ export default function CrossPlatformDownload() {
       badge: "Recommended",
       badgeColor: "bg-indigo-600 text-white",
       description: "Official Windows MSIX container with sandboxed execution, zero admin requirements, and auto-updates.",
-      specs: ["Windows 10 / 11 (x64)", "Size: ~60 MB (.msix)", "Store Certified"],
+      specs: ["Windows 10 / 11 (x64)", "Size: ~63 MB (.msix)", "Store Certified"],
       primaryUrl: `${rawBase}/RapidDownloadManager_v1.0.5.msix`,
       primaryLabel: "Download MSIX Package",
       icon: <WindowsIcon className="w-6 h-6 text-indigo-400" />,
@@ -41,8 +41,8 @@ export default function CrossPlatformDownload() {
       badge: "Classic Installer",
       badgeColor: "bg-slate-500/15 text-slate-300",
       description: "Guided Windows setup wizard with Start Menu shortcuts, desktop icon, autostart toggle, and uninstaller.",
-      specs: ["Windows 10 / 11 (x64)", "Size: ~49 MB (.exe)", "Inno Setup Wizard"],
-      primaryUrl: `${rawBase}/RapidDownloadManager_Setup_v1.0.4.exe`,
+      specs: ["Windows 10 / 11 (x64)", "Size: ~50 MB (.exe)", "Inno Setup Wizard"],
+      primaryUrl: `${releaseDownloadBase}/RapidDownloadManager_Setup_v1.0.5.exe`,
       primaryLabel: "Download Setup (.exe)",
       icon: <Package className="w-6 h-6 text-emerald-400" />,
       featured: false,
@@ -53,7 +53,7 @@ export default function CrossPlatformDownload() {
       badgeColor: "bg-slate-500/15 text-slate-300",
       description: "No administrative rights or installation needed. Extract anywhere and run rapid-gui.exe immediately.",
       specs: ["Windows 10 / 11 (x64)", "Size: ~61 MB (.zip)", "Extract & Run"],
-      primaryUrl: `${rawBase}/RapidDownloadManager_v1.0.5_Portable.zip`,
+      primaryUrl: `${releaseDownloadBase}/RapidDownloadManager_v1.0.5_Portable.zip`,
       primaryLabel: "Download Portable (.zip)",
       icon: <FolderArchive className="w-6 h-6 text-cyan-400" />,
       featured: false,
