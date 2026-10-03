@@ -49,11 +49,10 @@ export default function Footer() {
               Product
             </div>
             <ul className="space-y-1.5" style={{ color: "var(--text-muted)" }}>
-              <li><a href="/#download" className="hover:text-indigo-400 transition-colors">Download Hub</a></li>
+              <li><a href="/#download" className="hover:text-indigo-400 transition-colors">Download</a></li>
               <li><a href="/#features" className="hover:text-indigo-400 transition-colors">Features</a></li>
-              <li><a href="/#showcase" className="hover:text-indigo-400 transition-colors">Interface Preview</a></li>
               <li><Link href="/extension" className="hover:text-indigo-400 transition-colors">Browser Extension</Link></li>
-              <li><a href="/#comparison" className="hover:text-indigo-400 transition-colors">Comparison</a></li>
+              <li><Link href="/changelog" className="hover:text-indigo-400 transition-colors">Changelog (v1.0.5)</Link></li>
             </ul>
           </div>
 

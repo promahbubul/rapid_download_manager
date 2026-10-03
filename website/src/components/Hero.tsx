@@ -2,14 +2,8 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import {
-  Download,
   CheckCircle2,
-  Shield,
-  Zap,
-  Cpu,
-  Cloud,
   ExternalLink,
   Maximize2,
   X,
@@ -39,7 +33,7 @@ export default function Hero() {
           }}
         >
           <img src={assetUrl("/assets/app_icon.png")} alt="icon" className="w-3.5 h-3.5" />
-          <span className="font-semibold">Version 1.0.5 Released</span>
+          <span className="font-semibold">Version 1.0.5</span>
           <span className="opacity-40">•</span>
           <span>Native MEGA & Cloud Acceleration</span>
           <span className="opacity-40">•</span>
@@ -62,7 +56,7 @@ export default function Hero() {
             className="text-base sm:text-lg leading-relaxed max-w-2xl mx-auto"
             style={{ color: "var(--text-muted)" }}
           >
-            Turbocharge your downloads with up to 32 parallel TCP streams, recursive MEGA.nz and Google Drive folder acceleration, and 1-click browser integration. Ultra-lightweight, memory-safe, and zero telemetry.
+            Maximize your bandwidth with up to 32 parallel streams, recursive cloud folder acceleration, and 1-click browser integration. Ultra-lightweight and memory-safe.
           </p>
         </div>
 
@@ -113,45 +107,6 @@ export default function Hero() {
             <a href="#download" className="hover:text-indigo-400 font-medium underline">Portable (.zip)</a>
             <span className="opacity-40">•</span>
             <Link href="/extension" className="hover:text-indigo-400 font-medium underline">Browser Extension</Link>
-          </div>
-        </div>
-
-        {/* 4 Crisp Metric Highlights */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 pt-2 max-w-3xl mx-auto text-left">
-          <div className="p-4 rounded-xl border" style={{ borderColor: "var(--border-subtle)", backgroundColor: "var(--bg-card)" }}>
-            <div className="flex items-center gap-2 text-indigo-400 mb-1">
-              <Zap className="w-4 h-4" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Speed</span>
-            </div>
-            <div className="text-xl font-bold" style={{ color: "var(--text-heading)" }}>Up to 32x</div>
-            <div className="text-xs" style={{ color: "var(--text-muted)" }}>Parallel socket streams</div>
-          </div>
-
-          <div className="p-4 rounded-xl border" style={{ borderColor: "var(--border-subtle)", backgroundColor: "var(--bg-card)" }}>
-            <div className="flex items-center gap-2 text-emerald-400 mb-1">
-              <Cpu className="w-4 h-4" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Memory</span>
-            </div>
-            <div className="text-xl font-bold text-emerald-400">&lt; 25 MB</div>
-            <div className="text-xs" style={{ color: "var(--text-muted)" }}>Idle RAM footprint</div>
-          </div>
-
-          <div className="p-4 rounded-xl border" style={{ borderColor: "var(--border-subtle)", backgroundColor: "var(--bg-card)" }}>
-            <div className="flex items-center gap-2 text-cyan-400 mb-1">
-              <Cloud className="w-4 h-4" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Cloud</span>
-            </div>
-            <div className="text-xl font-bold" style={{ color: "var(--text-heading)" }}>MEGA & Drive</div>
-            <div className="text-xs" style={{ color: "var(--text-muted)" }}>Recursive folder crawler</div>
-          </div>
-
-          <div className="p-4 rounded-xl border" style={{ borderColor: "var(--border-subtle)", backgroundColor: "var(--bg-card)" }}>
-            <div className="flex items-center gap-2 text-purple-400 mb-1">
-              <Shield className="w-4 h-4" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Privacy</span>
-            </div>
-            <div className="text-xl font-bold" style={{ color: "var(--text-heading)" }}>0 Telemetry</div>
-            <div className="text-xs" style={{ color: "var(--text-muted)" }}>100% Rust memory safety</div>
           </div>
         </div>
 

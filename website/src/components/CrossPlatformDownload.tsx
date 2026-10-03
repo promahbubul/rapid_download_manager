@@ -26,36 +26,36 @@ export default function CrossPlatformDownload() {
 
   const packages = [
     {
-      title: "Microsoft Store (MSIX)",
+      title: "Microsoft Store",
       badge: "Recommended",
       badgeColor: "bg-indigo-600 text-white",
-      description: "Official Windows MSIX container with sandboxed execution, zero admin requirements, and auto-updates.",
-      specs: ["Windows 10 / 11 (x64)", "Size: ~63 MB (.msix)", "Store Certified"],
+      description: "Official sandboxed Windows package with automatic background updates and zero admin requirements.",
+      meta: "Windows 10 / 11 (64-bit) • 63 MB",
       primaryUrl: `${rawBase}/RapidDownloadManager_v1.0.5.msix`,
-      primaryLabel: "Download MSIX Package",
-      icon: <WindowsIcon className="w-6 h-6 text-indigo-400" />,
+      primaryLabel: "Download MSIX",
+      icon: <WindowsIcon className="w-5 h-5 text-indigo-400" />,
       featured: true,
     },
     {
-      title: "Windows Setup (.exe)",
-      badge: "Classic Installer",
+      title: "Windows Installer",
+      badge: "Setup Wizard",
       badgeColor: "bg-slate-500/15 text-slate-300",
-      description: "Guided Windows setup wizard with Start Menu shortcuts, desktop icon, autostart toggle, and uninstaller.",
-      specs: ["Windows 10 / 11 (x64)", "Size: ~50 MB (.exe)", "Inno Setup Wizard"],
+      description: "Traditional Windows installation wizard with Start Menu shortcuts and automatic uninstaller.",
+      meta: "Windows 10 / 11 (64-bit) • 50 MB",
       primaryUrl: `${releaseDownloadBase}/RapidDownloadManager_Setup_v1.0.5.exe`,
       primaryLabel: "Download Setup (.exe)",
-      icon: <Package className="w-6 h-6 text-emerald-400" />,
+      icon: <Package className="w-5 h-5 text-emerald-400" />,
       featured: false,
     },
     {
-      title: "Portable Standalone (.zip)",
-      badge: "Zero Install",
+      title: "Portable Archive",
+      badge: "Zero-Install",
       badgeColor: "bg-slate-500/15 text-slate-300",
-      description: "No administrative rights or installation needed. Extract anywhere and run rapid-gui.exe immediately.",
-      specs: ["Windows 10 / 11 (x64)", "Size: ~61 MB (.zip)", "Extract & Run"],
+      description: "No installation or admin permissions needed. Extract anywhere and launch immediately.",
+      meta: "Windows 10 / 11 (64-bit) • 61 MB",
       primaryUrl: `${releaseDownloadBase}/RapidDownloadManager_v1.0.5_Portable.zip`,
       primaryLabel: "Download Portable (.zip)",
-      icon: <FolderArchive className="w-6 h-6 text-cyan-400" />,
+      icon: <FolderArchive className="w-5 h-5 text-cyan-400" />,
       featured: false,
     },
   ];
@@ -63,35 +63,32 @@ export default function CrossPlatformDownload() {
   return (
     <section
       id="download"
-      className="py-20 border-t"
+      className="py-16 border-t"
       style={{
         backgroundColor: "var(--bg-page)",
         borderColor: "var(--border-subtle)",
       }}
     >
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
         {/* Section Header */}
-        <div className="text-center max-w-2xl mx-auto space-y-3">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 border border-indigo-500/20">
-            Official Distribution
-          </div>
+        <div className="text-center max-w-xl mx-auto space-y-2">
           <h2
-            className="text-3xl sm:text-4xl font-extrabold tracking-tight"
+            className="text-2xl sm:text-3xl font-extrabold tracking-tight"
             style={{ color: "var(--text-heading)" }}
           >
             Download Rapid Download Manager
           </h2>
-          <p className="text-sm sm:text-base leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            Current Production Release: <strong className="text-indigo-400">v1.0.5</strong>. Free, open source, and virus-scanned.
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Version <strong className="text-indigo-400">1.0.5</strong> • Free & Open Source for Windows 10 & 11
           </p>
         </div>
 
         {/* 3 Windows Distribution Packages */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {packages.map((pkg, idx) => (
             <div
               key={idx}
-              className={`p-6 sm:p-7 rounded-2xl border flex flex-col justify-between transition-all duration-300 hover:scale-[1.02] hover:shadow-xl relative ${
+              className={`p-6 rounded-2xl border flex flex-col justify-between transition-all duration-300 hover:shadow-xl relative ${
                 pkg.featured ? "ring-2 ring-indigo-500/40" : ""
               }`}
               style={{
@@ -99,18 +96,18 @@ export default function CrossPlatformDownload() {
                 borderColor: pkg.featured ? "rgba(99, 102, 241, 0.4)" : "var(--border-subtle)",
               }}
             >
-              <div className="space-y-4">
+              <div className="space-y-3.5">
                 <div className="flex items-center justify-between">
-                  <div className="w-12 h-12 rounded-xl bg-slate-500/10 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-xl bg-slate-500/10 flex items-center justify-center">
                     {pkg.icon}
                   </div>
-                  <span className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${pkg.badgeColor}`}>
+                  <span className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${pkg.badgeColor}`}>
                     {pkg.badge}
                   </span>
                 </div>
 
                 <div>
-                  <h3 className="text-lg font-bold" style={{ color: "var(--text-heading)" }}>
+                  <h3 className="text-base sm:text-lg font-bold" style={{ color: "var(--text-heading)" }}>
                     {pkg.title}
                   </h3>
                   <p className="text-xs sm:text-sm mt-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
@@ -118,20 +115,15 @@ export default function CrossPlatformDownload() {
                   </p>
                 </div>
 
-                <div className="space-y-1.5 pt-2 border-t" style={{ borderColor: "var(--border-subtle)" }}>
-                  {pkg.specs.map((spec, sIdx) => (
-                    <div key={sIdx} className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                      <span>{spec}</span>
-                    </div>
-                  ))}
+                <div className="text-[11px] font-mono pt-1 text-slate-400">
+                  {pkg.meta}
                 </div>
               </div>
 
-              <div className="pt-6">
+              <div className="pt-5">
                 <a
                   href={pkg.primaryUrl}
-                  className={`w-full py-3 px-4 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
+                  className={`w-full py-2.5 px-4 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md ${
                     pkg.featured
                       ? "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/25"
                       : "border hover:bg-slate-500/10 text-indigo-400"
