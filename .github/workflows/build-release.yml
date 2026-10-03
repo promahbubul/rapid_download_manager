@@ -23,6 +23,13 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Ensure extension.zip exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "extension.zip")) {
+            Compress-Archive -Path "extension\*" -DestinationPath "extension.zip" -Force
+          }
+
       - name: Build Release Binary
         run: |
           cargo build --release --target x86_64-pc-windows-msvc -p rapid-gui -p rapid-cli

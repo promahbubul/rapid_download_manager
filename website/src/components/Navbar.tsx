@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { GithubIcon } from "./Icons";
 
+import { assetUrl } from "@/utils/assets";
+
 export default function Navbar() {
   const { theme, resolvedTheme, setTheme } = useTheme();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -40,9 +42,10 @@ export default function Navbar() {
   ];
 
   // Exact software titlebar logo: dark logo for dark mode, dark-text variant for light mode
-  const logoSrc = resolvedTheme === "light"
+  const rawLogo = resolvedTheme === "light"
     ? "/assets/titlebar_logo_light.png"
     : "/assets/titlebar_logo.png";
+  const logoSrc = assetUrl(rawLogo);
 
   return (
     <header

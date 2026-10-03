@@ -1,46 +1,22 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React from "react";
+import Link from "next/link";
 import {
   Download,
-  Apple,
-  Terminal,
   CheckCircle2,
-  ChevronRight,
   Shield,
   Zap,
   Cpu,
   Eye,
 } from "lucide-react";
-import { GithubIcon, WindowsIcon, ChromeIcon } from "./Icons";
+import { GithubIcon, WindowsIcon } from "./Icons";
 import { useTheme } from "../context/ThemeContext";
-
-type PlatformType = "windows" | "macos" | "linux";
+import { assetUrl } from "@/utils/assets";
 
 export default function Hero() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
-
-  const [detectedPlatform, setDetectedPlatform] = useState<PlatformType>("windows");
-  const [detectedLabel, setDetectedLabel] = useState("Windows 10 / 11 (64-bit)");
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const ua = window.navigator.userAgent.toLowerCase();
-    if (ua.includes("win")) {
-      setDetectedPlatform("windows");
-      setDetectedLabel("Windows 10 / 11 (64-bit)");
-    } else if (ua.includes("mac") || ua.includes("darwin")) {
-      setDetectedPlatform("macos");
-      setDetectedLabel("macOS (Apple Silicon & Intel)");
-    } else if (ua.includes("linux")) {
-      setDetectedPlatform("linux");
-      setDetectedLabel("Linux (.deb / AppImage)");
-    } else {
-      setDetectedPlatform("windows");
-      setDetectedLabel("Windows 10 / 11 (64-bit)");
-    }
-  }, []);
 
   return (
     <section className="relative pt-12 pb-16 overflow-hidden">
@@ -56,7 +32,7 @@ export default function Hero() {
             color: isDark ? "#c7d2fe" : "#4338ca",
           }}
         >
-          <img src="/assets/app_icon.png" alt="icon" className="w-3.5 h-3.5" />
+          <img src={assetUrl("/assets/app_icon.png")} alt="icon" className="w-3.5 h-3.5" />
           <span className="font-semibold">Rapid Download Manager v1.0.5 GA</span>
           <span className="opacity-40">•</span>
           <span>Pure Memory-Safe Rust</span>
@@ -82,20 +58,18 @@ export default function Hero() {
           </p>
         </div>
 
-        {/* Dynamic Device-Aware CTA & Platform Selector */}
+        {/* Download Action & Package Links */}
         <div className="space-y-4 pt-2">
           <div className="flex flex-wrap items-center justify-center gap-3">
-            {/* Primary Download Button for Detected Device */}
+            {/* Primary Download Button */}
             <a
               href="#download"
-              className="inline-flex items-center gap-3 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm sm:text-base shadow-lg shadow-indigo-600/20 transition-all hover:scale-102"
+              className="inline-flex items-center gap-3 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm sm:text-base shadow-lg shadow-indigo-600/20 transition-all hover:scale-102 cursor-pointer"
             >
-              {detectedPlatform === "windows" && <WindowsIcon className="w-5 h-5" />}
-              {detectedPlatform === "macos" && <Apple className="w-5 h-5" />}
-              {detectedPlatform === "linux" && <Terminal className="w-5 h-5" />}
-              <span>Download for {detectedPlatform === "windows" ? "Windows" : detectedPlatform === "macos" ? "macOS" : "Linux"}</span>
+              <WindowsIcon className="w-5 h-5" />
+              <span>Download for Windows</span>
               <span className="text-xs opacity-75 font-normal px-2 py-0.5 rounded-md bg-white/20">
-                5.7 MB
+                v1.0.5 GA
               </span>
             </a>
 
@@ -116,21 +90,21 @@ export default function Hero() {
             </a>
           </div>
 
-          {/* Quick Platform Switcher Navigation */}
+          {/* Quick Package Navigation */}
           <div className="flex flex-wrap items-center justify-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
             <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Detected: {detectedLabel}</span>
+              <span>Windows 10 / 11 (64-bit)</span>
             </span>
             <span className="opacity-40">•</span>
-            <span>Switch to:</span>
-            <a href="#download" className="hover:text-indigo-400 font-medium underline">Windows (.msix / .exe)</a>
+            <span>Available Packages:</span>
+            <a href="#download" className="hover:text-indigo-400 font-medium underline">MSIX Package</a>
             <span className="opacity-40">•</span>
-            <a href="#download" className="hover:text-indigo-400 font-medium underline">macOS (.dmg)</a>
+            <a href="#download" className="hover:text-indigo-400 font-medium underline">Setup (.exe)</a>
             <span className="opacity-40">•</span>
-            <a href="#download" className="hover:text-indigo-400 font-medium underline">Linux (.deb / AppImage)</a>
+            <a href="#download" className="hover:text-indigo-400 font-medium underline">Portable (.zip)</a>
             <span className="opacity-40">•</span>
-            <a href="/extension" className="hover:text-indigo-400 font-medium underline">Browser Extension</a>
+            <Link href="/extension" className="hover:text-indigo-400 font-medium underline">Browser Extension</Link>
           </div>
         </div>
 

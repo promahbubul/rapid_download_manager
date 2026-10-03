@@ -1,22 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import { Mail, MessageSquare, Send, CheckCircle2, ArrowLeft, Sparkles } from "lucide-react";
+import { Mail, MessageSquare, ArrowLeft, Shield, ExternalLink, Bug, FileCode } from "lucide-react";
 import { GithubIcon } from "@/components/Icons";
 import { useTheme } from "@/context/ThemeContext";
 
 export default function ContactPage() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
-  const [submitted, setSubmitted] = useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitted(true);
-  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -43,177 +37,134 @@ export default function ContactPage() {
           </h1>
 
           <p className="text-sm sm:text-base leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            Have a question, encountered an unexpected bug, or want to suggest a new feature? We are always glad to help!
+            Rapid Download Manager is an open-source project. If you have an inquiry, discovered a bug, or want to contribute, we welcome your feedback.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-14">
-          {/* Contact Card 1: Email */}
-          <div className="p-6 rounded-2xl border space-y-3"
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+          {/* Card 1: Email */}
+          <div
+            className="p-6 rounded-2xl border flex flex-col justify-between"
             style={{
               backgroundColor: "var(--bg-card)",
               borderColor: "var(--border-subtle)",
             }}
           >
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/15 text-indigo-400 flex items-center justify-center">
-              <Mail className="w-5 h-5" />
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/15 text-indigo-400 flex items-center justify-center">
+                <Mail className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
+                Direct Email
+              </h3>
+              <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                Contact lead developer Mahbubul Alam for security disclosures, partnerships, or direct questions.
+              </p>
             </div>
-            <h3 className="text-sm font-bold" style={{ color: "var(--text-heading)" }}>Direct Developer Email</h3>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Reach out directly to lead architect Mahbubul Alam for urgent inquiries.
-            </p>
-            <a
-              href="mailto:mahbublalam500@gmail.com"
-              className="text-xs font-mono font-bold text-indigo-400 hover:underline block pt-1"
-            >
-              mahbublalam500@gmail.com
-            </a>
+            <div className="pt-6">
+              <a
+                href="mailto:mahbublalam500@gmail.com"
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-colors"
+              >
+                <Mail className="w-4 h-4" />
+                <span>mahbublalam500@gmail.com</span>
+              </a>
+            </div>
           </div>
 
-          {/* Contact Card 2: GitHub Issues */}
-          <div className="p-6 rounded-2xl border space-y-3"
+          {/* Card 2: GitHub Issues */}
+          <div
+            className="p-6 rounded-2xl border flex flex-col justify-between"
             style={{
               backgroundColor: "var(--bg-card)",
               borderColor: "var(--border-subtle)",
             }}
           >
-            <div className="w-10 h-10 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center">
-              <GithubIcon className="w-5 h-5" />
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center">
+                <GithubIcon className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
+                GitHub Tracker
+              </h3>
+              <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                Submit bug reports, feature requests, or browse ongoing development roadmaps on GitHub.
+              </p>
             </div>
-            <h3 className="text-sm font-bold" style={{ color: "var(--text-heading)" }}>GitHub Issue Tracker</h3>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Report a bug, submit diagnostic logs, or discuss roadmap feature requests.
-            </p>
-            <a
-              href="https://github.com/promahbubul/rapid_download_manager/issues"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs font-bold text-purple-400 hover:underline block pt-1"
-            >
-              Open a GitHub Issue &rarr;
-            </a>
+            <div className="pt-6">
+              <a
+                href="https://github.com/promahbubul/rapid_download_manager/issues"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border font-semibold text-xs transition-colors hover:bg-slate-500/10"
+                style={{
+                  borderColor: "var(--border-subtle)",
+                  backgroundColor: "var(--bg-card)",
+                  color: "var(--text-heading)",
+                }}
+              >
+                <Bug className="w-4 h-4" />
+                <span>Open an Issue &rarr;</span>
+              </a>
+            </div>
           </div>
 
-          {/* Contact Card 3: Microsoft Store */}
-          <div className="p-6 rounded-2xl border space-y-3"
+          {/* Card 3: Microsoft Publisher */}
+          <div
+            className="p-6 rounded-2xl border flex flex-col justify-between"
             style={{
               backgroundColor: "var(--bg-card)",
               borderColor: "var(--border-subtle)",
             }}
           >
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
-              <Sparkles className="w-5 h-5" />
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+                <Shield className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
+                Verified Publisher
+              </h3>
+              <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                Published under verified Microsoft Partner Center developer account: <strong>promahbubul</strong>.
+              </p>
             </div>
-            <h3 className="text-sm font-bold" style={{ color: "var(--text-heading)" }}>Microsoft Partner Center</h3>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Published under verified developer account: <strong>promahbubul</strong>.
-            </p>
-            <div className="text-xs font-mono text-emerald-400 pt-1">
-              Seller ID: 96219170
+            <div className="pt-6">
+              <div
+                className="w-full px-3 py-2 rounded-xl border text-center font-mono text-xs"
+                style={{
+                  borderColor: "var(--border-subtle)",
+                  color: "var(--text-muted)",
+                  backgroundColor: isDark ? "rgba(15, 23, 42, 0.6)" : "rgba(241, 245, 249, 0.8)",
+                }}
+              >
+                Seller ID: 96219170
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Interactive Feedback Form */}
-        <div className="p-8 rounded-2xl border shadow-xl"
+        {/* Diagnostic Logging Guidance */}
+        <div
+          className="p-6 sm:p-8 rounded-2xl border space-y-3"
           style={{
             backgroundColor: "var(--bg-card)",
             borderColor: "var(--border-subtle)",
           }}
         >
-          <h2 className="text-xl font-bold mb-2" style={{ color: "var(--text-heading)" }}>
-            Send Us a Quick Message
-          </h2>
-          <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>
-            Feel free to send feedback or questions regarding Rapid Download Manager.
+          <div className="flex items-center gap-2 font-bold text-sm" style={{ color: "var(--text-heading)" }}>
+            <FileCode className="w-4 h-4 text-indigo-400" />
+            <span>Reporting a Bug? Help Us Fix It Faster</span>
+          </div>
+          <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            When filing an issue, including the diagnostic log output helps us resolve connection issues quickly.
+            All diagnostic logs are stored locally in:
           </p>
-
-          {submitted ? (
-            <div className="p-6 rounded-xl border bg-emerald-500/10 border-emerald-500/30 text-emerald-400 text-center space-y-2">
-              <CheckCircle2 className="w-8 h-8 mx-auto" />
-              <div className="font-bold text-sm">Thank You for Your Feedback!</div>
-              <div className="text-xs opacity-90">We will review your message promptly.</div>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold mb-1.5" style={{ color: "var(--text-heading)" }}>
-                    Your Name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Mahbubul Alam"
-                    className="w-full px-3.5 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-indigo-500"
-                    style={{
-                      backgroundColor: "var(--bg-page)",
-                      borderColor: "var(--border-subtle)",
-                      color: "var(--text-heading)",
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold mb-1.5" style={{ color: "var(--text-heading)" }}>
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="e.g. you@example.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-indigo-500"
-                    style={{
-                      backgroundColor: "var(--bg-page)",
-                      borderColor: "var(--border-subtle)",
-                      color: "var(--text-heading)",
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold mb-1.5" style={{ color: "var(--text-heading)" }}>
-                  Subject / Topic
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Feature request for custom proxy authentication"
-                  className="w-full px-3.5 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-indigo-500"
-                  style={{
-                    backgroundColor: "var(--bg-page)",
-                    borderColor: "var(--border-subtle)",
-                    color: "var(--text-heading)",
-                  }}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold mb-1.5" style={{ color: "var(--text-heading)" }}>
-                  Message
-                </label>
-                <textarea
-                  rows={4}
-                  required
-                  placeholder="Type your message or details here..."
-                  className="w-full px-3.5 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-indigo-500"
-                  style={{
-                    backgroundColor: "var(--bg-page)",
-                    borderColor: "var(--border-subtle)",
-                    color: "var(--text-heading)",
-                  }}
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold text-xs flex items-center gap-2 shadow-md shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:scale-102 transition-all"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Send Message</span>
-              </button>
-            </form>
-          )}
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-indigo-300 overflow-x-auto">
+            <code>%APPDATA%\RapidDownloadManager\gui_log.txt</code>
+          </div>
+          <p className="text-xs text-emerald-400 font-medium pt-1">
+            Note: Rapid Download Manager features an automated credential redactor. All passwords, session cookies, and authentication tokens are automatically masked before any diagnostic lines are written to disk.
+          </p>
         </div>
       </main>
 

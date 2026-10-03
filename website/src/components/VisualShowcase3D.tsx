@@ -12,6 +12,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
+import { assetUrl } from "@/utils/assets";
 
 interface ViewItem {
   id: string;
@@ -37,7 +38,7 @@ export default function VisualShowcase3D() {
       name: "Live Dashboard",
       badge: "16 Sockets",
       icon: <Activity className="w-4 h-4 text-emerald-400" />,
-      img: "/assets/screenshot_dashboard.png",
+      img: assetUrl("/assets/screenshot_dashboard.png"),
       title: "Real-Time 16-Segment Download Engine",
       desc: "Live visual tracking of parallel HTTP socket ranges, transfer rates, ETA, chunk completion integrity, and pause/resume states.",
       highlights: [
@@ -51,7 +52,7 @@ export default function VisualShowcase3D() {
       name: "New Download Dialog",
       badge: "Batch & Headers",
       icon: <Zap className="w-4 h-4 text-indigo-400" />,
-      img: "/assets/screenshot_add.png",
+      img: assetUrl("/assets/screenshot_add.png"),
       title: "Intelligent URL & Header Interception",
       desc: "Paste links, configure custom authentication cookies, specify output directories, and customize stream parallelism on the fly.",
       highlights: [
@@ -65,7 +66,7 @@ export default function VisualShowcase3D() {
       name: "Browser Bridge",
       badge: "Chrome & Edge",
       icon: <Globe className="w-4 h-4 text-cyan-400" />,
-      img: "/assets/screenshot_browser.png",
+      img: assetUrl("/assets/screenshot_browser.png"),
       title: "Zero-Latency Browser Native Messaging",
       desc: "Automatically intercept downloads from Chrome, Brave, Edge, and Firefox via lightweight Manifest V3 JSON IPC host.",
       highlights: [
@@ -79,7 +80,7 @@ export default function VisualShowcase3D() {
       name: "Task Scheduler",
       badge: "Bandwidth Control",
       icon: <Clock className="w-4 h-4 text-purple-400" />,
-      img: "/assets/screenshot_scheduler.png",
+      img: assetUrl("/assets/screenshot_scheduler.png"),
       title: "Automated Queue & Speed Throttling",
       desc: "Set overnight download schedules, throttle peak bandwidth limits, and configure automatic system sleep or shutdown.",
       highlights: [
@@ -93,7 +94,7 @@ export default function VisualShowcase3D() {
       name: "Rust Core Architecture",
       badge: "Tokio Engine",
       icon: <Cpu className="w-4 h-4 text-pink-400" />,
-      img: "/assets/screenshot_about.png",
+      img: assetUrl("/assets/screenshot_about.png"),
       title: "Pure Memory-Safe Rust Cryptography",
       desc: "Built with Tokio async I/O and Rustls 0.23, providing uncompromised security, zero garbage collection pauses, and tiny RAM usage.",
       highlights: [
@@ -173,7 +174,7 @@ export default function VisualShowcase3D() {
               <div className="w-3 h-3 rounded-full bg-amber-500/80" />
               <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
               <span className="ml-2 text-xs font-semibold text-slate-400 flex items-center gap-1.5">
-                <img src="/assets/app_icon.png" alt="icon" className="w-3.5 h-3.5" />
+                <img src={assetUrl("/assets/app_icon.png")} alt="icon" className="w-3.5 h-3.5" />
                 Rapid Download Manager — {currentView.name}
               </span>
             </div>
@@ -247,7 +248,7 @@ export default function VisualShowcase3D() {
           >
             <div className="px-4 py-3 border-b border-slate-800 bg-slate-950 flex items-center justify-between text-white">
               <div className="flex items-center gap-2 font-semibold text-sm">
-                <img src="/assets/app_icon.png" alt="logo" className="w-4 h-4" />
+                <img src={assetUrl("/assets/app_icon.png")} alt="logo" className="w-4 h-4" />
                 <span>{currentView.title}</span>
               </div>
               <button

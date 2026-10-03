@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
+import Link from "next/link";
 import {
-  Apple,
   Terminal,
   Download,
   Copy,
@@ -13,43 +13,27 @@ import {
   ExternalLink,
   Laptop,
   CheckCircle2,
+  FolderArchive,
 } from "lucide-react";
 import { ChromeIcon, WindowsIcon } from "./Icons";
 import { useTheme } from "../context/ThemeContext";
 
-type Platform = "windows" | "macos" | "linux" | "extension" | "cli";
+type TabType = "windows" | "extension" | "cli";
 
 export default function CrossPlatformDownload() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
-  const [detectedOS, setDetectedOS] = useState<Platform>("windows");
-  const [selectedPlatform, setSelectedPlatform] = useState<Platform>("windows");
+  const [activeTab, setActiveTab] = useState<TabType>("windows");
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const ua = window.navigator.userAgent.toLowerCase();
-    if (ua.includes("win")) {
-      setDetectedOS("windows");
-      setSelectedPlatform("windows");
-    } else if (ua.includes("mac") || ua.includes("darwin")) {
-      setDetectedOS("macos");
-      setSelectedPlatform("macos");
-    } else if (ua.includes("linux")) {
-      setDetectedOS("linux");
-      setSelectedPlatform("linux");
-    } else {
-      setDetectedOS("windows");
-      setSelectedPlatform("windows");
-    }
-  }, []);
 
   const copyCommand = (cmd: string, id: string) => {
     navigator.clipboard.writeText(cmd);
     setCopiedCmd(id);
     setTimeout(() => setCopiedCmd(null), 2000);
   };
+
+  const latestReleaseUrl = "https://github.com/promahbubul/rapid_download_manager/releases/latest";
 
   return (
     <section id="download" className="py-20 border-t"
@@ -61,45 +45,30 @@ export default function CrossPlatformDownload() {
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Section Header */}
         <div className="text-center max-w-2xl mx-auto mb-10 space-y-3">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 border border-indigo-500/20">
+            Official Distribution
+          </div>
           <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight" style={{ color: "var(--text-heading)" }}>
-            Download & Installation
+            Download Rapid Download Manager
           </h2>
           <p className="text-sm sm:text-base" style={{ color: "var(--text-muted)" }}>
-            Choose the recommended binary for your operating system or install via your preferred package manager.
+            Engineered in 100% memory-safe Rust for Windows. Free, open source, and zero telemetry.
           </p>
-
-          {/* Detected Device Badge */}
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium"
-            style={{
-              backgroundColor: "var(--bg-card)",
-              borderColor: "var(--border-subtle)",
-            }}
-          >
-            <span style={{ color: "var(--text-muted)" }}>Your System:</span>
-            <span className="font-semibold text-indigo-400 capitalize flex items-center gap-1.5">
-              {detectedOS === "windows" && <WindowsIcon className="w-3.5 h-3.5" />}
-              {detectedOS === "macos" && <Apple className="w-3.5 h-3.5" />}
-              {detectedOS === "linux" && <Terminal className="w-3.5 h-3.5" />}
-              <span>{detectedOS} (Ready to Install)</span>
-            </span>
-          </div>
         </div>
 
-        {/* Platform Selection Tabs */}
+        {/* Category Tabs */}
         <div className="flex flex-wrap items-center justify-center gap-2 mb-10">
           {[
-            { id: "windows", name: "Windows", icon: <WindowsIcon className="w-4 h-4" /> },
-            { id: "macos", name: "macOS", icon: <Apple className="w-4 h-4" /> },
-            { id: "linux", name: "Linux", icon: <Terminal className="w-4 h-4" /> },
+            { id: "windows", name: "Windows Desktop", icon: <WindowsIcon className="w-4 h-4" /> },
             { id: "extension", name: "Browser Extension", icon: <ChromeIcon className="w-4 h-4" /> },
             { id: "cli", name: "Terminal CLI", icon: <Terminal className="w-4 h-4" /> },
           ].map((tab) => {
-            const isSelected = selectedPlatform === tab.id;
+            const isSelected = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => setSelectedPlatform(tab.id as Platform)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
+                onClick={() => setActiveTab(tab.id as TabType)}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
                   isSelected
                     ? "bg-indigo-600 text-white font-semibold shadow-sm"
                     : "border hover:bg-slate-500/10"
@@ -117,393 +86,269 @@ export default function CrossPlatformDownload() {
           })}
         </div>
 
-        {/* Tab 1: WINDOWS */}
-        {selectedPlatform === "windows" && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Windows 1: MSIX */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
+        {/* Tab 1: WINDOWS DESKTOP */}
+        {activeTab === "windows" && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Option 1: MSIX */}
+              <div
+                className="p-6 rounded-2xl border flex flex-col justify-between transition-all duration-300 hover:shadow-xl group"
+                style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                      <WindowsIcon className="w-5 h-5" />
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      Recommended
+                    </span>
+                  </div>
+                  <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
+                    MSIX Package
+                  </h3>
+                  <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    Official Microsoft Store format. Clean sandbox isolation, verified digital signature, and zero registry clutter.
+                  </p>
+                  <div className="text-[11px] font-mono text-slate-400 pt-1">
+                    v1.0.5 GA • 64-bit Windows 10/11
+                  </div>
+                </div>
+                <div className="pt-6">
+                  <a
+                    href={latestReleaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download .MSIX</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Option 2: EXE Setup */}
+              <div
+                className="p-6 rounded-2xl border flex flex-col justify-between transition-all duration-300 hover:shadow-xl group"
+                style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+              >
+                <div className="space-y-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400">
+                    <Package className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
+                    Setup Installer (.exe)
+                  </h3>
+                  <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    Standard Windows installation wizard built with Inno Setup. Creates Start Menu shortcuts and native URI associations.
+                  </p>
+                  <div className="text-[11px] font-mono text-slate-400 pt-1">
+                    v1.0.5 GA • Standard User (No Admin Required)
+                  </div>
+                </div>
+                <div className="pt-6">
+                  <a
+                    href={latestReleaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border font-semibold text-xs transition-colors hover:bg-slate-500/10 cursor-pointer"
+                    style={{
+                      borderColor: "var(--border-subtle)",
+                      backgroundColor: "var(--bg-card)",
+                      color: "var(--text-heading)",
+                    }}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download Setup .EXE</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Option 3: Portable ZIP */}
+              <div
+                className="p-6 rounded-2xl border flex flex-col justify-between transition-all duration-300 hover:shadow-xl group"
+                style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+              >
+                <div className="space-y-3">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+                    <FolderArchive className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
+                    Portable Archive (.zip)
+                  </h3>
+                  <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    Completely standalone. Extract to any folder or run directly from a USB stick without installing or modifying system settings.
+                  </p>
+                  <div className="text-[11px] font-mono text-slate-400 pt-1">
+                    Includes: GUI, CLI & Extension installer
+                  </div>
+                </div>
+                <div className="pt-6">
+                  <a
+                    href={latestReleaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border font-semibold text-xs transition-colors hover:bg-slate-500/10 cursor-pointer"
+                    style={{
+                      borderColor: "var(--border-subtle)",
+                      backgroundColor: "var(--bg-card)",
+                      color: "var(--text-heading)",
+                    }}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download Portable .ZIP</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            {/* Platform Roadmap Notice */}
+            <div
+              className="p-4 rounded-xl border text-center text-xs flex flex-col sm:flex-row items-center justify-center gap-2"
+              style={{
+                backgroundColor: isDark ? "rgba(30, 41, 59, 0.4)" : "rgba(241, 245, 249, 0.8)",
+                borderColor: "var(--border-subtle)",
+                color: "var(--text-muted)",
+              }}
+            >
+              <Laptop className="w-4 h-4 text-indigo-400" />
+              <span>Looking for macOS or Linux? Native UNIX builds are actively being developed on our open-source roadmap.</span>
+              <a
+                href="https://github.com/promahbubul/rapid_download_manager"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-indigo-400 font-semibold hover:underline"
+              >
+                Follow on GitHub &rarr;
+              </a>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: BROWSER EXTENSION */}
+        {activeTab === "extension" && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+            {/* Firefox AMO */}
+            <div
+              className="p-6 rounded-2xl border flex flex-col justify-between"
               style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
             >
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
-                    <WindowsIcon className="w-5 h-5" />
-                  </div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                    Recommended
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                    Official Add-on
                   </span>
                 </div>
                 <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  MSIX Package
+                  Mozilla Firefox
                 </h3>
                 <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Official Microsoft Store package. Clean sandbox installation, zero registry clutter, and automated background updates.
+                  Verified extension on Mozilla Add-ons (AMO). Intercepts file downloads with 1-click installation directly from your browser.
                 </p>
-                <div className="text-[11px] font-mono text-slate-400 pt-1">
-                  Size: <span className="text-indigo-400 font-semibold">5.71 MB</span> • 64-bit
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium pt-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Works with Firefox & Firefox-based forks</span>
                 </div>
-              </div>
-              <div className="pt-6">
-                <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download .MSIX (5.71 MB)</span>
-                </a>
-              </div>
-            </div>
-
-            {/* Windows 2: EXE */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-400">
-                  <Package className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Setup Installer (.exe)
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Standard Windows desktop installer wizard. Creates Start Menu shortcuts and native protocol handlers.
-                </p>
-                <div className="text-[11px] font-mono text-slate-400 pt-1">
-                  Size: <span className="text-indigo-400 font-semibold">5.85 MB</span> • 64-bit
-                </div>
-              </div>
-              <div className="pt-6">
-                <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-colors hover:bg-slate-500/10"
-                  style={{
-                    borderColor: "var(--border-subtle)",
-                    backgroundColor: "var(--bg-card)",
-                    color: "var(--text-heading)",
-                  }}
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download .EXE Setup</span>
-                </a>
-              </div>
-            </div>
-
-            {/* Windows 3: WinGet */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400">
-                  <Terminal className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Windows Package Manager
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Install directly from PowerShell or Windows Terminal using official Microsoft WinGet repo.
-                </p>
-                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-indigo-300 overflow-x-auto">
-                  <span>winget install promahbubul.RapidDownloadManager</span>
-                </div>
-              </div>
-              <div className="pt-6">
-                <button
-                  onClick={() => copyCommand("winget install promahbubul.RapidDownloadManager", "winget")}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-colors cursor-pointer"
-                >
-                  {copiedCmd === "winget" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedCmd === "winget" ? "Copied Command!" : "Copy WinGet Command"}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 2: MACOS */}
-        {selectedPlatform === "macos" && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* macOS Apple Silicon */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
-                  <Apple className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Apple Silicon DMG
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Tailored native ARM64 build for M1, M2, M3, and M4 Macs. Excellent energy efficiency.
-                </p>
-                <div className="text-[11px] font-mono text-slate-400 pt-1">
-                  Size: 6.2 MB • macOS 12 Monterey+
-                </div>
-              </div>
-              <div className="pt-6">
-                <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download .DMG (Apple Silicon)</span>
-                </a>
-              </div>
-            </div>
-
-            {/* macOS Intel */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-slate-500/10 flex items-center justify-center text-slate-400">
-                  <Apple className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Intel x86_64 DMG
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Optimized for Intel-based MacBook Pro, iMac, and Mac mini hardware.
-                </p>
-                <div className="text-[11px] font-mono text-slate-400 pt-1">
-                  Size: 6.8 MB • macOS 11 Big Sur+
-                </div>
-              </div>
-              <div className="pt-6">
-                <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-colors hover:bg-slate-500/10"
-                  style={{
-                    borderColor: "var(--border-subtle)",
-                    backgroundColor: "var(--bg-card)",
-                    color: "var(--text-heading)",
-                  }}
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download .DMG (Intel)</span>
-                </a>
-              </div>
-            </div>
-
-            {/* Homebrew */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400">
-                  <Terminal className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Homebrew Cask
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Install and update smoothly using standard macOS command line tools.
-                </p>
-                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-amber-300 overflow-x-auto">
-                  <span>brew install --cask rapid-download-manager</span>
-                </div>
-              </div>
-              <div className="pt-6">
-                <button
-                  onClick={() => copyCommand("brew install --cask rapid-download-manager", "brew")}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-colors cursor-pointer"
-                >
-                  {copiedCmd === "brew" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedCmd === "brew" ? "Copied Brew Command!" : "Copy Brew Command"}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 3: LINUX */}
-        {selectedPlatform === "linux" && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Linux 1: .deb */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-400">
-                  <Package className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Debian / Ubuntu (.deb)
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Native DEB package for Ubuntu, Debian, Pop!_OS, and Linux Mint.
-                </p>
-                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-rose-300 overflow-x-auto">
-                  <span>sudo dpkg -i rdm_1.0.5_amd64.deb</span>
-                </div>
-              </div>
-              <div className="pt-6">
-                <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download .DEB (5.1 MB)</span>
-                </a>
-              </div>
-            </div>
-
-            {/* Linux 2: AppImage */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-                  <Layers className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Universal AppImage
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Single standalone binary that runs on any modern Linux distribution without installation.
-                </p>
-                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-emerald-300 overflow-x-auto">
-                  <span>chmod +x RapidDownloadManager.AppImage</span>
-                </div>
-              </div>
-              <div className="pt-6">
-                <a
-                  href="https://github.com/promahbubul/rapid_download_manager/releases/latest"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-colors hover:bg-slate-500/10"
-                  style={{
-                    borderColor: "var(--border-subtle)",
-                    backgroundColor: "var(--bg-card)",
-                    color: "var(--text-heading)",
-                  }}
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download .AppImage</span>
-                </a>
-              </div>
-            </div>
-
-            {/* Linux 3: Cargo & AUR */}
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400">
-                  <Terminal className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Rust Cargo & Arch AUR
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Compile with native CPU optimization from crates.io or install with pacman/yay.
-                </p>
-                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-cyan-300 overflow-x-auto">
-                  <span>cargo install rdm-cli --locked</span>
-                </div>
-              </div>
-              <div className="pt-6">
-                <button
-                  onClick={() => copyCommand("cargo install rdm-cli --locked", "cargo")}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-colors cursor-pointer"
-                >
-                  {copiedCmd === "cargo" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedCmd === "cargo" ? "Copied Cargo Command!" : "Copy Cargo Command"}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 4: EXTENSIONS */}
-        {selectedPlatform === "extension" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
-                  <ChromeIcon className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Chrome, Brave & Edge
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Manifest V3 compliant extension with background service worker and instant context-menu download integration.
-                </p>
-              </div>
-              <div className="pt-6">
-                <a
-                  href="/extension"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-sm transition-colors"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  <span>Extension Setup & Installation</span>
-                </a>
-              </div>
-            </div>
-
-            <div className="p-6 rounded-xl border flex flex-col justify-between"
-              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
-            >
-              <div className="space-y-3">
-                <div className="w-9 h-9 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-400">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Mozilla Firefox Add-on
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                  Full support for Mozilla Firefox with secure native messaging and automatic link interception.
-                </p>
               </div>
               <div className="pt-6">
                 <a
                   href="https://addons.mozilla.org/en-US/firefox/addon/rapid-download-manager-integra/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border font-semibold text-xs transition-all hover:bg-orange-500/15 hover:border-orange-500/50 text-orange-400"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 hover:opacity-95 text-white font-semibold text-xs shadow-sm transition-opacity cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>Install from Firefox Add-ons</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Chromium Extension */}
+            <div
+              className="p-6 rounded-2xl border flex flex-col justify-between"
+              style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
+            >
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                    Manifest V3
+                  </span>
+                </div>
+                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
+                  Chrome, Edge, Brave & Opera
+                </h3>
+                <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                  Companion browser package included with every desktop release. Register once with <code className="px-1 py-0.5 rounded bg-slate-500/10 font-mono text-[11px]">install_extension.bat</code>.
+                </p>
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium pt-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Preserves cookies, session auth, and referrers</span>
+                </div>
+              </div>
+              <div className="pt-6">
+                <Link
+                  href="/extension"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border font-semibold text-xs transition-colors hover:bg-slate-500/10 cursor-pointer"
                   style={{
                     borderColor: "var(--border-subtle)",
                     backgroundColor: "var(--bg-card)",
+                    color: "var(--text-heading)",
                   }}
                 >
-                  <ExternalLink className="w-4 h-4 text-orange-400" />
-                  <span>Add to Firefox (AMO)</span>
-                </a>
+                  <span>View Extension Installation Guide &rarr;</span>
+                </Link>
               </div>
             </div>
           </div>
         )}
 
-        {/* Tab 5: CLI */}
-        {selectedPlatform === "cli" && (
-          <div className="max-w-2xl mx-auto p-6 rounded-xl border space-y-4"
+        {/* Tab 3: CLI BINARY */}
+        {activeTab === "cli" && (
+          <div
+            className="p-6 sm:p-8 rounded-2xl border max-w-4xl mx-auto space-y-6"
             style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)" }}
           >
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
-                <Terminal className="w-5 h-5" />
+            <div>
+              <div className="flex items-center gap-2 text-indigo-400 text-xs font-semibold uppercase tracking-wider mb-1">
+                <Terminal className="w-4 h-4" />
+                <span>Headless High-Speed CLI</span>
               </div>
-              <div>
-                <h3 className="text-base font-bold" style={{ color: "var(--text-heading)" }}>
-                  Terminal CLI & Automation
-                </h3>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  Headless daemon for bash scripts, remote servers, and NAS devices.
-                </p>
+              <h3 className="text-lg font-bold" style={{ color: "var(--text-heading)" }}>
+                Rapid CLI (`rapid-cli.exe`)
+              </h3>
+              <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+                The standalone CLI binary is included in the portable release package. It provides the same 16-chunk acceleration engine directly from Windows Terminal or PowerShell scripts.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs" style={{ color: "var(--text-muted)" }}>
+                <span className="font-semibold">Example Usage:</span>
+                <button
+                  onClick={() => copyCommand("rapid-cli.exe --url https://example.com/largefile.iso --chunks 16", "cli-cmd")}
+                  className="flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                >
+                  {copiedCmd === "cli-cmd" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedCmd === "cli-cmd" ? "Copied!" : "Copy Command"}</span>
+                </button>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-indigo-300 overflow-x-auto">
+                <code>rapid-cli.exe --url https://example.com/largefile.iso --chunks 16</code>
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <div className="text-xs font-semibold text-slate-400">1-Line Shell Installer:</div>
-              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-indigo-400 flex items-center justify-between">
-                <span>curl -sSL https://rdm.app/install.sh | bash</span>
-                <button
-                  onClick={() => copyCommand("curl -sSL https://rdm.app/install.sh | bash", "cli-curl")}
-                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white"
-                >
-                  {copiedCmd === "cli-curl" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
+            <div className="pt-2 flex flex-wrap items-center justify-between gap-4 border-t border-slate-700/20">
+              <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Requires no administrative permissions and runs seamlessly in CI/CD pipelines or automated batch scripts.
               </div>
+              <Link
+                href="/docs"
+                className="text-xs font-semibold text-indigo-400 hover:underline inline-flex items-center gap-1"
+              >
+                <span>Read CLI Documentation</span>
+                <span>&rarr;</span>
+              </Link>
             </div>
           </div>
         )}

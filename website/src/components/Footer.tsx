@@ -4,14 +4,16 @@ import React from "react";
 import Link from "next/link";
 import { GithubIcon } from "./Icons";
 import { useTheme } from "../context/ThemeContext";
+import { assetUrl } from "@/utils/assets";
 
 export default function Footer() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
-  const logoSrc = resolvedTheme === "light"
+  const rawLogo = resolvedTheme === "light"
     ? "/assets/titlebar_logo_light.png"
     : "/assets/titlebar_logo.png";
+  const logoSrc = assetUrl(rawLogo);
 
   return (
     <footer
@@ -51,7 +53,7 @@ export default function Footer() {
               <li><a href="/#features" className="hover:text-indigo-400 transition-colors">Features</a></li>
               <li><a href="/#showcase" className="hover:text-indigo-400 transition-colors">Interface Preview</a></li>
               <li><Link href="/extension" className="hover:text-indigo-400 transition-colors">Browser Extension</Link></li>
-              <li><Link href="/benchmarks" className="hover:text-indigo-400 transition-colors">Speed Benchmarks</Link></li>
+              <li><a href="/#benchmarks" className="hover:text-indigo-400 transition-colors">Comparison</a></li>
             </ul>
           </div>
 

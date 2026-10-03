@@ -31,6 +31,7 @@ test*.py
 test*.html
 dev_watch.*
 *.zip
+!extension.zip
 /yt-dlp.exe
 /scripts/archive_patches/
 /assets/debug_renders/
@@ -41,6 +42,8 @@ dev_watch.*
 !assets/*.png
 !crates/rapid-gui/assets/*
 !store_listing/assets/*
+!website/public/assets/*
+!website/public/assets/**/*.png
 # Environment & Secrets (Security Audit Safeguards)
 .env
 .env.*
